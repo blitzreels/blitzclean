@@ -1,0 +1,13 @@
+name: macOS checks
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  checks:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Typecheck, test and lint
+        run: ./scripts/check.sh
+      - name: Package app and verify signature
+        run: ./scripts/build-app.sh

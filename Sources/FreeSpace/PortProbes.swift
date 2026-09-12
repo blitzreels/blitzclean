@@ -1,0 +1,336 @@
+import AppKit
+import CryptoKit
+import Foundation
+import ImageIO
+
+enum PortProbeKind: String, Equatable, Sendable {
+  case web
+  case api
+  case text
+  case silent
+
+  var title: String {
+    switch self {
+    case .web:
+      "Web app"
+    case .api:
+      "JSON API"
+    case .text:
+      "Text service"
+    case .silent:
+      "Not HTTP"
+    }
+  }
+}
+
+struct PortProbe: Equatable, Sendable {
+  let port: Int
+  let kind: PortProbeKind
+  let title: String?
+  let faviconData: Data?
+  let finalURL: String?
+  let probedAt: Date
+
+  var label: String? {
+    if let title, !title.isEmpty {
+      return title
+    }
+
+    switch kind {
+    case .api, .text:
+      return kind.title
+    case .web, .silent:
+      return nil
+    }
+  }
+}
+
+enum HTMLMetadataParser {
+  static func title(_ html: String) -> String? {
+    let candidates = [
+      firstMatch(html, pattern: "<title[^>]*>([^<]{1,200})</title>"),
+      firstMatch(
+        html,
+        pattern: "<meta[^>]+property=[\"']og:site_name[\"'][^>]+content=[\"']([^\"']{1,120})[\"']"),
+      firstMatch(
+        html,
+        pattern: "<meta[^>]+name=[\"']application-name[\"'][^>]+content=[\"']([^\"']{1,120})[\"']"),
+    ]
+
+    for candidate in candidates {
+      if let candidate {
+        let cleaned = decodeEntities(candidate)
+          .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+          .trimmingCharacters(in: .whitespacesAndNewlines)
+        if !cleaned.isEmpty {
+          return String(cleaned.prefix(90))
+        }
+      }
+    }
+
+    return nil
+  }
+
+  static func iconHref(_ html: String) -> String? {
+    guard let regex = try? NSRegularExpression(pattern: "<link[^>]+>", options: [.caseInsensitive])
+    else {
+      return nil
+    }
+
+    let range = NSRange(html.startIndex..., in: html)
+    var fallback: String?
+    for match in regex.matches(in: html, options: [], range: range) {
+      guard let tagRange = Range(match.range, in: html) else {
+        continue
+      }
+
+      let tag = String(html[tagRange])
+      guard let rel = attribute("rel", in: tag)?.lowercased(), rel.contains("icon"),
+        let href = attribute("href", in: tag), !href.isEmpty
+      else {
+        continue
+      }
+
+      if rel.contains("apple-touch") {
+        fallback = fallback ?? href
+        continue
+      }
+
+      return href
+    }
+
+    return fallback
+  }
+
+  static func attribute(_ name: String, in tag: String) -> String? {
+    firstMatch(tag, pattern: "\\b\(name)\\s*=\\s*[\"']([^\"']*)[\"']")
+      ?? firstMatch(tag, pattern: "\\b\(name)\\s*=\\s*([^\\s\"'>]+)")
+  }
+
+  private static func firstMatch(_ text: String, pattern: String) -> String? {
+    guard
+      let regex = try? NSRegularExpression(
+        pattern: pattern, options: [.caseInsensitive, .dotMatchesLineSeparators]),
+      let match = regex.firstMatch(
+        in: text, options: [], range: NSRange(text.startIndex..., in: text)),
+      match.numberOfRanges > 1,
+      let range = Range(match.range(at: 1), in: text)
+    else {
+      return nil
+    }
+
+    return String(text[range])
+  }
+
+  private static func decodeEntities(_ text: String) -> String {
+    var result = text
+    let replacements = [
+      "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": "\"", "&#39;": "'", "&apos;": "'",
+      "&nbsp;": " ", "&mdash;": "—", "&ndash;": "–", "&#8212;": "—", "&#x27;": "'",
+    ]
+    for (entity, value) in replacements {
+      result = result.replacingOccurrences(of: entity, with: value)
+    }
+
+    return result
+  }
+}
+
+struct PortProber: Sendable {
+  private let session: URLSession
+
+  init() {
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.timeoutIntervalForRequest = 2.5
+    configuration.timeoutIntervalForResource = 4
+    configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+    configuration.httpAdditionalHeaders = ["Accept": "text/html,application/json;q=0.9,*/*;q=0.5"]
+    session = URLSession(configuration: configuration)
+  }
+
+  func probe(port: Int) async -> PortProbe {
+    guard let url = URL(string: "http://localhost:\(port)/") else {
+      return silent(port)
+    }
+
+    guard let (data, response) = try? await session.data(from: url),
+      let http = response as? HTTPURLResponse
+    else {
+      return silent(port)
+    }
+
+    let contentType = (http.value(forHTTPHeaderField: "Content-Type") ?? "").lowercased()
+    let body = String(decoding: data.prefix(256_000), as: UTF8.self)
+    let finalURL = http.url?.absoluteString
+
+    if contentType.contains("json") {
+      return PortProbe(
+        port: port, kind: .api, title: nil, faviconData: nil, finalURL: finalURL, probedAt: .now)
+    }
+
+    if contentType.contains("html") || body.range(of: "<html", options: .caseInsensitive) != nil {
+      let title = HTMLMetadataParser.title(body)
+      let favicon = await favicon(base: http.url ?? url, html: body)
+      return PortProbe(
+        port: port, kind: .web, title: title, faviconData: favicon, finalURL: finalURL,
+        probedAt: .now)
+    }
+
+    let firstLine = body.split(whereSeparator: \.isNewline).first.map { line in
+      String(line.trimmingCharacters(in: .whitespaces).prefix(60))
+    }
+    return PortProbe(
+      port: port,
+      kind: .text,
+      title: firstLine?.isEmpty == false ? firstLine : nil,
+      faviconData: nil,
+      finalURL: finalURL,
+      probedAt: .now
+    )
+  }
+
+  private func favicon(base: URL, html: String) async -> Data? {
+    var candidates: [URL] = []
+    if let href = HTMLMetadataParser.iconHref(html) {
+      if href.hasPrefix("data:") {
+        return dataURIPayload(href)
+      }
+
+      if let resolved = URL(string: href, relativeTo: base)?.absoluteURL {
+        candidates.append(resolved)
+      }
+    }
+
+    if let root = URL(string: "/favicon.ico", relativeTo: base)?.absoluteURL {
+      candidates.append(root)
+    }
+
+    for candidate in candidates {
+      guard let (data, response) = try? await session.data(from: candidate),
+        let http = response as? HTTPURLResponse, http.statusCode == 200,
+        data.count > 16, data.count < 2_000_000,
+        NSImage(data: data) != nil
+      else {
+        continue
+      }
+
+      return data
+    }
+
+    return nil
+  }
+
+  private func dataURIPayload(_ uri: String) -> Data? {
+    guard let comma = uri.firstIndex(of: ",") else {
+      return nil
+    }
+
+    let header = uri[uri.index(after: uri.startIndex)..<comma]
+    let payload = String(uri[uri.index(after: comma)...])
+    if header.contains("base64") {
+      return Data(base64Encoded: payload, options: [.ignoreUnknownCharacters])
+    }
+
+    return payload.removingPercentEncoding?.data(using: .utf8)
+  }
+
+  private func silent(_ port: Int) -> PortProbe {
+    PortProbe(
+      port: port, kind: .silent, title: nil, faviconData: nil, finalURL: nil, probedAt: .now)
+  }
+}
+
+@MainActor
+enum ProcessIconResolver {
+  private static let cache: NSCache<NSString, NSImage> = {
+    let value = NSCache<NSString, NSImage>()
+    value.countLimit = 128
+    value.totalCostLimit = 8 * 1_024 * 1_024
+    return value
+  }()
+  private static let brandApps: [DevProcessKind: [String]] = [
+    .claudeCode: ["/Applications/Claude.app", "com.anthropic.claudefordesktop"],
+    .codex: [
+      "/Applications/Codex.app", "/Applications/ChatGPT.app", "com.openai.codex", "com.openai.chat",
+    ],
+    .simulator: ["com.apple.iphonesimulator"],
+    .shell: ["com.apple.Terminal"],
+  ]
+  private static let agentApps: [String: [String]] = [
+    "cursor-agent": ["/Applications/Cursor.app", "com.todesktop.230313mzl4w4u92"],
+    "gemini": ["/Applications/Google Gemini.app"],
+    "copilot": ["/Applications/GitHub Copilot.app"],
+    "droid": ["/Applications/Factory.app"],
+  ]
+
+  static func icon(for process: DevProcess, probes: [Int: PortProbe]) -> NSImage? {
+    for port in process.listeningPorts {
+      if let image = favicon(probes[port]) {
+        return image
+      }
+    }
+
+    let candidates: [String]
+    if process.kind == .aiAgent {
+      candidates = agentApps[process.name] ?? []
+    } else {
+      candidates = brandApps[process.kind] ?? []
+    }
+
+    for candidate in candidates {
+      if let image = appIcon(candidate) {
+        return image
+      }
+    }
+
+    return nil
+  }
+
+  static func favicon(_ probe: PortProbe?) -> NSImage? {
+    guard let probe, let data = probe.faviconData, data.count < 2_000_000 else {
+      return nil
+    }
+
+    let key = "favicon:" + SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    if let cached = cache.object(forKey: key as NSString) {
+      return cached
+    }
+
+    guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+      let thumbnail = CGImageSourceCreateThumbnailAtIndex(
+        source, 0,
+        [
+          kCGImageSourceCreateThumbnailFromImageAlways: true,
+          kCGImageSourceThumbnailMaxPixelSize: 64,
+          kCGImageSourceCreateThumbnailWithTransform: true,
+        ] as CFDictionary)
+    else {
+      return nil
+    }
+    let image = NSImage(cgImage: thumbnail, size: NSSize(width: 32, height: 32))
+    cache.setObject(image, forKey: key as NSString, cost: 64 * 64 * 4)
+    return image
+  }
+
+  private static func appIcon(_ candidate: String) -> NSImage? {
+    if let cached = cache.object(forKey: candidate as NSString) {
+      return cached
+    }
+
+    let url: URL?
+    if candidate.hasPrefix("/") {
+      url =
+        FileManager.default.fileExists(atPath: candidate) ? URL(fileURLWithPath: candidate) : nil
+    } else {
+      url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: candidate)
+    }
+
+    guard let url else {
+      return nil
+    }
+
+    let image = NSWorkspace.shared.icon(forFile: url.path)
+    cache.setObject(image, forKey: candidate as NSString, cost: 256 * 256 * 4)
+    return image
+  }
+}

@@ -1,0 +1,15 @@
+/.build/
+/dist/
+/.swiftpm/
+.DS_Store
+._*
+/artifacts/
+/RESOURCE-INCIDENT-*.md
+/script/import-cleanup-history.py
+/.env
+/.env.*
+*.p12
+*.p8
+*.mobileprovision
+/output/
+/tmp/
