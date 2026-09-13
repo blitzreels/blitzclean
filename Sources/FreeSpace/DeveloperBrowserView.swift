@@ -7,7 +7,6 @@ struct DeveloperBrowserView: View {
   @ObservedObject var processes: DevProcessModel
   @ObservedObject var workspaces: WorkspaceController
   @ObservedObject var history: CleanupOverviewModel
-  @Environment(\.openWindow) private var openWindow
   @State private var search = ""
   @State private var removableOnly = false
   @State private var confirmation: DeveloperArtifact?
@@ -27,13 +26,11 @@ struct DeveloperBrowserView: View {
       LazyVStack(alignment: .leading, spacing: 18) {
         header
         HStack(spacing: 14) {
-          TextField("Search project, path or framework", text: $search)
-            .textFieldStyle(.roundedBorder)
-            .accessibilityLabel("Search developer folders")
+          BlitzSearchField(title: "Search folders", text: $search)
           Toggle("Ready to review", isOn: $removableOnly).toggleStyle(.checkbox)
           Button("Choose folder…") { chooseFolder() }
             .disabled(model.isScanning || !model.deleting.isEmpty)
-          Button("Refresh folders", systemImage: "arrow.clockwise") { model.scan() }
+          Button("Scan") { model.scan() }
             .disabled(model.isScanning || !model.deleting.isEmpty)
         }
         if let folder = model.selectedFolder {
@@ -80,9 +77,8 @@ struct DeveloperBrowserView: View {
             : "Dependency folders stay on disk until you remove them. A lockfile supplies the restore command; active projects remain protected."
         )
         .font(.caption).foregroundStyle(.secondary)
-      }.padding(28)
+      }.padding(24)
     }
-    .navigationTitle(kind.rawValue)
     .task { model.loadIfNeeded() }
     .alert(
       kind == .worktree
@@ -105,130 +101,75 @@ struct DeveloperBrowserView: View {
   }
 
   private var header: some View {
-    VStack(alignment: .leading, spacing: 16) {
-      HStack(spacing: 14) {
-        Image(systemName: kind == .worktree ? "arrow.triangle.branch" : "shippingbox.fill")
-          .font(.system(size: 30)).foregroundStyle(AppBrand.accent)
-        VStack(alignment: .leading, spacing: 6) {
-          Text(
-            kind == .worktree
-              ? "Finished branches. Reclaimed space." : "Your dependencies, by size."
-          )
-          .font(.title.bold())
-          Text(
-            kind == .worktree
-              ? "Browse linked checkouts and see what prevents removal."
-              : "An npkill-style browser with project protection and cleanup receipts."
-          )
-          .foregroundStyle(.secondary)
-        }
+    HStack {
+      Text(
+        "\(ByteText.full(items.filter { blocker($0) == nil }.compactMap(\.bytes).reduce(0, +))) available to remove"
+      )
+      .font(.system(size: 15, weight: .semibold)).monospacedDigit()
+      Spacer()
+      if model.sessionGain > 0 {
+        Text("\(ByteText.full(model.sessionGain)) reclaimed")
+          .font(.system(size: 12)).foregroundStyle(.secondary).monospacedDigit()
       }
-      HStack(spacing: 24) {
-        VStack(alignment: .leading, spacing: 5) {
-          Text("SPACE TO REVIEW").font(.caption2).foregroundStyle(.secondary)
-          Text(ByteText.full(items.filter { blocker($0) == nil }.compactMap(\.bytes).reduce(0, +)))
-            .font(.title2.weight(.semibold)).monospacedDigit()
-        }
-        Divider().frame(height: 40)
-        VStack(alignment: .leading, spacing: 5) {
-          Text("RECLAIMED THIS SESSION").font(.caption2).foregroundStyle(.secondary)
-          Text(ByteText.full(model.sessionGain)).font(.title2.weight(.semibold)).monospacedDigit()
-        }
-        Spacer()
-        VStack(alignment: .trailing, spacing: 5) {
-          Text("Need RAM back?").font(.callout.weight(.medium))
-          Button("Manage running processes") { openWindow(id: "processes") }
-          Text("Disk cleanup does not directly release RAM.").font(.caption).foregroundStyle(
-            .secondary)
-        }
-      }.panelCard(padding: 18)
     }
   }
 
   private func row(_ artifact: DeveloperArtifact) -> some View {
-    let running = processes.resources.filter {
-      $0.directory.map { DeveloperPath.contains(.init(path: $0, root: artifact.projectPath)) }
-        ?? false
-    }
     let reason = blocker(artifact)
-    return VStack(alignment: .leading, spacing: 13) {
-      HStack(alignment: .top, spacing: 14) {
-        TechnologyIcon(technology: artifact.technology, size: 42)
+    return VStack(alignment: .leading, spacing: 8) {
+      HStack(spacing: 12) {
+        TechnologyIcon(technology: artifact.technology, size: 28)
         VStack(alignment: .leading, spacing: 5) {
-          Text(artifact.name).font(.headline)
-          Text(
-            artifact.technology.rawValue
-              + (artifact.internalVolume ? " · Mac storage" : " · External storage")
-          )
-          .font(.caption).foregroundStyle(.secondary)
-          Text(artifact.path).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-            .truncationMode(.middle).textSelection(.enabled).help(artifact.path)
-        }
-        Spacer()
-        VStack(alignment: .trailing, spacing: 5) {
-          Text(artifact.bytes.map(ByteText.full) ?? "Size unavailable")
-            .font(.title3.weight(.semibold)).monospacedDigit()
-          if !running.isEmpty {
-            Text(
-              "\(running.count) processes · \(ByteText.compact(running.compactMap(\.memoryBytes).reduce(0, +))) RAM"
-            )
-            .font(.caption).foregroundStyle(.secondary)
-          } else {
-            Text("No running process observed").font(.caption).foregroundStyle(.secondary)
+          Text(artifact.name).font(.system(size: 13, weight: .medium))
+          Text(artifact.path).font(.system(size: 11)).foregroundStyle(.secondary)
+            .lineLimit(1).truncationMode(.middle).textSelection(.enabled).help(artifact.path)
+          if let message = model.messages[artifact.id] ?? reason {
+            Text(message).font(.system(size: 11)).foregroundStyle(.secondary).textSelection(
+              .enabled)
           }
+        }
+        Spacer(minLength: 16)
+        Text(artifact.bytes.map(ByteText.full) ?? "—")
+          .font(.system(size: 13, weight: .medium)).monospacedDigit()
+        Menu {
+          Button("Show in Finder") {
+            NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: artifact.path)])
+          }
+          if let command = artifact.reinstallCommand {
+            Button("Copy restore command") {
+              NSPasteboard.general.clearContents()
+              NSPasteboard.general.setString(command, forType: .string)
+            }
+          }
+        } label: {
+          Image(systemName: "ellipsis")
+        }.menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+          .accessibilityLabel("Actions for \(artifact.name)").help("More actions")
+        if model.deleting.contains(artifact.id) {
+          ProgressView().controlSize(.small)
+        } else {
+          Button("Remove…", role: .destructive) { confirmation = artifact }
+            .controlSize(.small).disabled(reason != nil)
         }
       }
       if let git = artifact.worktree {
-        HStack(spacing: 10) {
-          Label(
-            git.record.branch?.replacingOccurrences(of: "refs/heads/", with: "") ?? "Detached HEAD",
-            systemImage: "arrow.triangle.branch"
+        HStack(spacing: 8) {
+          Text(
+            git.record.branch?.replacingOccurrences(of: "refs/heads/", with: "") ?? "Detached HEAD"
           )
           .lineLimit(1).truncationMode(.middle)
           Spacer()
-          Label(
-            git.merge.rawValue,
-            systemImage: git.merge == .merged ? "checkmark.circle" : "questionmark.circle"
-          )
-          .foregroundStyle(git.merge == .merged ? Color.green : .secondary)
+          Text(git.merge.rawValue)
           if let base = git.base {
             Text(
               "into "
-                + base.replacingOccurrences(of: "refs/remotes/", with: "")
-                .replacingOccurrences(of: "refs/heads/", with: "")
-            )
-            .foregroundStyle(.secondary)
+                + base.replacingOccurrences(of: "refs/remotes/", with: "").replacingOccurrences(
+                  of: "refs/heads/", with: ""))
           }
-        }.font(.caption)
+        }.font(.system(size: 11)).foregroundStyle(.secondary)
       }
-      HStack(spacing: 12) {
-        if let message = model.messages[artifact.id] {
-          Text(message).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
-        } else if let reason {
-          Label(reason, systemImage: "lock.fill").font(.caption).foregroundStyle(.secondary)
-        } else {
-          Label("Ready to review", systemImage: "checkmark.circle").font(.caption).foregroundStyle(
-            .green)
-        }
-        Spacer()
-        if let command = artifact.reinstallCommand {
-          Button("Copy restore command") {
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(command, forType: .string)
-          }.help("Run \(command) in \(artifact.projectPath)")
-        }
-        Button("Finder") {
-          NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: artifact.path)])
-        }
-        if model.deleting.contains(artifact.id) {
-          ProgressView().controlSize(.small)
-          Text("Removing…").font(.caption).foregroundStyle(.secondary)
-        } else {
-          Button("Remove…", role: .destructive) { confirmation = artifact }
-            .disabled(reason != nil)
-        }
-      }
-    }.panelCard(padding: 18)
+    }.padding(.vertical, 14)
+      .overlay(alignment: .bottom) { Divider() }
   }
 
   private func blocker(_ artifact: DeveloperArtifact) -> String? {

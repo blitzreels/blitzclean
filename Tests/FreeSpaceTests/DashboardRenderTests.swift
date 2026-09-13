@@ -22,7 +22,7 @@ struct DashboardRenderTests {
 
     let view = BlitzTrayView(
       monitor: monitor, memory: memoryRescue,
-      cleanup: QuickCleanModel(), navigation: CleanNavigation(),
+      navigation: CleanNavigation(),
       launchAtLogin: LaunchAtLoginController())
 
     for key in [

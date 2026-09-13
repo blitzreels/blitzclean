@@ -818,12 +818,14 @@ private struct CleanupItemRow: View {
         .frame(width: 105, alignment: .trailing)
 
         if let processes = item.activeProcesses, !processes.isEmpty {
-          RunningProcessBadge(
+          RunningProcessDisclosure(
             processes: processes,
             isExpanded: $showsProcesses
           )
         } else {
-          StatusBadge(availability: item.cleanupAvailability)
+          if case .blocked = item.cleanupAvailability {
+            StorageAvailabilityLabel(availability: item.cleanupAvailability)
+          }
         }
 
         VStack(alignment: .trailing, spacing: 2) {
@@ -884,7 +886,7 @@ private struct CleanupItemRow: View {
   }
 }
 
-private struct RunningProcessBadge: View {
+private struct RunningProcessDisclosure: View {
   let processes: [ProjectProcessInfo]
   @Binding var isExpanded: Bool
 
@@ -898,9 +900,6 @@ private struct RunningProcessBadge: View {
       }
       .font(.caption2.weight(.medium))
       .foregroundStyle(.orange)
-      .padding(.horizontal, 7)
-      .padding(.vertical, 3)
-      .background(.orange.opacity(0.12), in: Capsule())
     }
     .buttonStyle(.plain)
     .help("Show process names, PIDs, listening ports, and stop controls")
@@ -1038,16 +1037,13 @@ private enum DependencyVisibility: String, CaseIterable, Identifiable {
   }
 }
 
-private struct StatusBadge: View {
+private struct StorageAvailabilityLabel: View {
   let availability: StorageCleanupAvailability?
 
   var body: some View {
     Text(label)
       .font(.caption2.weight(.medium))
       .foregroundStyle(color)
-      .padding(.horizontal, 7)
-      .padding(.vertical, 3)
-      .background(color.opacity(0.12), in: Capsule())
       .help(helpText)
   }
 
@@ -1141,9 +1137,6 @@ private struct SimulatorDeviceRow: View {
       Text(device.state)
         .font(.caption2.weight(.medium))
         .foregroundStyle(device.state == "Booted" ? .green : .secondary)
-        .padding(.horizontal, 7)
-        .padding(.vertical, 3)
-        .background(.quaternary, in: Capsule())
 
       Text(ByteText.full(device.bytes))
         .fontWeight(.semibold)
@@ -1389,16 +1382,9 @@ private struct DockerCategoryRow: View {
       }
       .frame(width: 150, alignment: .trailing)
 
-      Text(category.isProtected ? "Protected" : "Rebuildable")
-        .font(.caption2.weight(.medium))
-        .foregroundStyle(category.isProtected ? Color.green : Color.blue)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(
-          (category.isProtected ? Color.green : Color.blue).opacity(0.12),
-          in: Capsule()
-        )
-        .frame(width: 88)
+      if category.isProtected {
+        Text("Protected").font(.caption).foregroundStyle(.secondary)
+      }
     }
     .padding(.horizontal, 14)
     .padding(.vertical, 12)

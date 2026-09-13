@@ -8,6 +8,9 @@ See what is using your resources, quit the apps you choose, and review files you
 Everything runs locally. No account, subscription, telemetry SDK, or cloud inference.
 The dark interface and mint-green controls share the BlitzReels / BlitzRecorder design system.
 
+The app has four main sections: Overview, Memory, CPU, and Storage.
+Storage groups Caches, Large files, and Dependencies in one workspace.
+
 ## What it does
 
 - **Readable menu bar:** labeled CPU and RAM percentages, free disk space, pressure colors,

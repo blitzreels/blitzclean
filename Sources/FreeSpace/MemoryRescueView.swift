@@ -88,24 +88,13 @@ struct MemoryGuardControls: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 9) {
-      HStack {
-        Toggle(
-          "Early memory alerts",
-          isOn: Binding(
-            get: { model.alertsEnabled }, set: { model.setAlertsEnabled($0) }
-          ))
-        Spacer()
-        Button("Test alert") { Task { await model.testNotification() } }
-        Button("Notification settings") {
-          if let url = URL(
-            string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension")
-          {
-            NSWorkspace.shared.open(url)
-          }
-        }
-      }
       Toggle(
-        "Early disk alerts · \(DiskSpacePolicy.reserveLabel) reserve",
+        "Memory alerts",
+        isOn: Binding(
+          get: { model.alertsEnabled }, set: { model.setAlertsEnabled($0) }
+        ))
+      Toggle(
+        "Disk alerts · \(DiskSpacePolicy.reserveLabel) reserve",
         isOn: Binding(
           get: { model.diskAlertsEnabled }, set: { model.setDiskAlertsEnabled($0) }
         ))
@@ -114,15 +103,16 @@ struct MemoryGuardControls: View {
           ? model.notificationStatus : "Alerts paused; monitoring continues"
       )
       .font(.caption).foregroundStyle(.secondary)
-      if let disk = model.diskAssessment {
-        Text(disk.detail).font(.caption).foregroundStyle(.secondary)
-      }
-      if let sample = model.sample {
-        Text(
-          "Pressure \(sample.pressure.title.lowercased()) · swap \(sample.swapUsed.map(ByteText.full) ?? "unavailable") · compressed \(ByteText.full(sample.compressed))"
-        )
-        .font(.caption).monospacedDigit()
-      }
+      HStack {
+        Button("Test alert") { Task { await model.testNotification() } }
+        Button("Notification settings") {
+          if let url = URL(
+            string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension")
+          {
+            NSWorkspace.shared.open(url)
+          }
+        }
+      }.padding(.top, 4).controlSize(.small)
     }
     .panelCard()
   }

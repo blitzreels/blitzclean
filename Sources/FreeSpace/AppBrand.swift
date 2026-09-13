@@ -3,7 +3,10 @@ import SwiftUI
 
 enum AppBrand {
   static let name = "BlitzClean"
-  static let tagline = "A little breathing room."
+  static var version: String {
+    Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+      ?? "Development"
+  }
   static let accent = BlitzUI.mint
   static let bundleIdentifier = "com.blitzreels.BlitzClean"
   static let repositoryURL = URL(string: "https://github.com/blitzreels/blitzclean")!

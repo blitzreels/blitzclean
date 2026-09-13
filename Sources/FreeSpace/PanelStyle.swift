@@ -72,6 +72,7 @@ private struct PanelCardModifier: ViewModifier {
       .overlay {
         RoundedRectangle(cornerRadius: PanelMetrics.cardRadius, style: .continuous)
           .strokeBorder(BlitzUI.panelStroke, lineWidth: 1)
+          .allowsHitTesting(false)
       }
   }
 }
@@ -93,9 +94,8 @@ struct PanelSectionHeader<Trailing: View>: View {
 
   var body: some View {
     HStack(alignment: .firstTextBaseline) {
-      Text(title.uppercased())
-        .font(.caption2.weight(.semibold))
-        .tracking(0.6)
+      Text(title)
+        .font(.system(size: 13, weight: .semibold))
         .foregroundStyle(.secondary)
       Spacer()
       trailing()

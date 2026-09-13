@@ -294,9 +294,6 @@ private struct DevProcessRow: View {
             Text(projectName)
               .font(.caption.weight(.medium))
               .foregroundStyle(.secondary)
-              .padding(.horizontal, 6)
-              .padding(.vertical, 1)
-              .background(.fill.tertiary, in: Capsule())
               .help(process.workingDirectory ?? "")
           }
         }

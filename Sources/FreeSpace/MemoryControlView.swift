@@ -27,15 +27,6 @@ struct MemoryControlView: View {
     VStack(spacing: 0) {
       ScrollView {
         VStack(alignment: .leading, spacing: 20) {
-          HStack {
-            VStack(alignment: .leading, spacing: 6) {
-              Text("Give your Mac room to breathe.").font(.title.bold())
-              Text("Quit the apps you choose to release their memory.").foregroundStyle(.secondary)
-            }
-            Spacer()
-            Label(model.pressure.title, systemImage: "circle.fill")
-              .font(.callout).foregroundStyle(model.pressure.tone.color)
-          }
           VStack(spacing: 16) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
               Text(ByteText.full(monitor.snapshot.ramUsed)).font(
@@ -50,31 +41,38 @@ struct MemoryControlView: View {
               samples: monitor.resourceSamples, kind: .memory, color: AppBrand.accent,
               seconds: seconds
             ).frame(height: 100)
-            HStack {
+            HStack(spacing: 24) {
               memoryStat(
                 .init(title: "Available", value: ByteText.compact(monitor.snapshot.ramAvailable)))
               memoryStat(
-                .init(
-                  title: "Compressed",
-                  value: model.sample.map { ByteText.compact($0.compressed) } ?? "—"))
-              memoryStat(
-                .init(
-                  title: "Wired",
-                  value: monitor.memoryStats.map { ByteText.compact($0.wired) } ?? "—"))
-              memoryStat(
                 .init(title: "Swap", value: model.sample?.swapUsed.map(ByteText.compact) ?? "—"))
+              memoryStat(.init(title: "Pressure", value: model.pressure.title))
             }
+            DisclosureGroup("Memory details") {
+              VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 24) {
+                  memoryStat(
+                    .init(
+                      title: "Compressed",
+                      value: model.sample.map { ByteText.compact($0.compressed) } ?? "—"))
+                  memoryStat(
+                    .init(
+                      title: "Wired",
+                      value: monitor.memoryStats.map { ByteText.compact($0.wired) } ?? "—"))
+                }
+                Text(
+                  "Available RAM includes reclaimable caches. App footprints include helpers and swapped memory; they do not add up to physical RAM used."
+                )
+                .font(.system(size: 12)).foregroundStyle(.secondary)
+              }.padding(.top, 10)
+            }.font(.system(size: 12)).foregroundStyle(.secondary)
           }.panelCard(padding: 20)
-          Text(
-            "Available RAM includes reclaimable memory. macOS manages compression and file caches; quitting an app releases its allocations. App footprints include helpers and can include swapped memory."
-          )
-          .font(.caption).foregroundStyle(.secondary)
           HStack {
-            TextField("Find an app", text: $query).textFieldStyle(.roundedBorder).frame(
+            BlitzSearchField(title: "Search apps", text: $query).frame(
               maxWidth: 260)
             Toggle("Show protected", isOn: $showProtected).toggleStyle(.checkbox)
             Spacer()
-            Button("Refresh", systemImage: "arrow.clockwise") { model.refresh() }
+            Button("Refresh") { model.refresh() }
               .disabled(model.isRefreshing || releasing)
           }
           if let result = result ?? model.statusMessage {
@@ -84,7 +82,8 @@ struct MemoryControlView: View {
             ContentUnavailableView(
               model.isRefreshing
                 ? "Reading running apps" : query.isEmpty ? "No apps to review" : "No matching apps",
-              systemImage: "memorychip")
+              systemImage: "memorychip"
+            ).frame(maxWidth: .infinity)
           }
           LazyVStack(spacing: 0) {
             ForEach(visibleCandidates) { candidate in
@@ -101,36 +100,25 @@ struct MemoryControlView: View {
                 AppMemoryIcon(app: candidate.app)
                 VStack(alignment: .leading, spacing: 4) {
                   Text(candidate.app.name).font(.callout.weight(.semibold))
-                  Text(candidate.reason).font(.caption).foregroundStyle(.secondary).lineLimit(2)
-                  if let growth = candidate.growth, abs(growth) > 10 * 1_024 * 1_024 {
-                    Text(
-                      "\(growth > 0 ? "+" : "−")\(ByteText.compact(UInt64(abs(growth)))) over recent samples"
-                    )
-                    .font(.caption2).foregroundStyle(growth > 0 ? Color.orange : .secondary)
+                  if candidate.protected {
+                    Text(candidate.reason).font(.system(size: 11)).foregroundStyle(.secondary)
+                      .lineLimit(1)
                   }
                 }
                 Spacer()
                 VStack(alignment: .trailing, spacing: 4) {
                   Text(ByteText.full(candidate.app.memoryBytes)).font(.callout.weight(.semibold))
                     .monospacedDigit()
-                  Text("\(candidate.app.childProcessCount) helpers").font(.caption2)
-                    .foregroundStyle(.secondary)
                 }.frame(minWidth: 90)
-                if candidate.protected {
-                  Image(systemName: "shield.fill").foregroundStyle(.secondary).frame(width: 60)
-                    .help(candidate.reason)
-                } else {
-                  Button("Quit…") { pending = [candidate.app] }.disabled(releasing).frame(width: 60)
-                }
-              }.padding(14)
+              }.help("\(candidate.reason) · \(candidate.app.childProcessCount) helpers").padding(
+                .vertical, 12)
               Divider()
             }
-          }.panelCard(padding: 0)
-        }.padding(28)
+          }
+        }.padding(24)
       }
       Divider()
       HStack(spacing: 14) {
-        Image(systemName: "shield.lefthalf.filled").foregroundStyle(AppBrand.accent)
         VStack(alignment: .leading, spacing: 4) {
           Text(
             selectedApps.isEmpty
@@ -138,7 +126,7 @@ struct MemoryControlView: View {
               : "\(selectedApps.count) selected · \(ByteText.full(selectedApps.reduce(0) { $0 + $1.memoryBytes })) footprint"
           )
           .font(.callout.weight(.semibold))
-          Text("Actual recovered RAM is measured after quitting.").font(.caption).foregroundStyle(
+          Text("Apps receive a normal quit request.").font(.caption).foregroundStyle(
             .secondary)
         }
         Spacer()
@@ -146,7 +134,7 @@ struct MemoryControlView: View {
         Button(releasing ? "Releasing…" : "Free RAM…") { pending = selectedApps }
           .buttonStyle(BlitzButtonStyle(.accent)).controlSize(.large)
           .disabled(selectedApps.isEmpty || releasing)
-      }.padding(20).background(.bar)
+      }.padding(.horizontal, 24).padding(.vertical, 14).background(BlitzUI.sidebarBackground)
     }
     .task { model.refresh() }
     .confirmationDialog(
@@ -174,9 +162,10 @@ struct MemoryControlView: View {
   }
 
   private func memoryStat(_ input: Stat) -> some View {
-    VStack(alignment: .leading, spacing: 5) {
-      Text(input.title).font(.caption).foregroundStyle(.secondary)
-      Text(input.value).font(.callout.weight(.semibold)).monospacedDigit()
+    HStack {
+      Text(input.title).font(.system(size: 12)).foregroundStyle(.secondary)
+      Spacer()
+      Text(input.value).font(.system(size: 12, weight: .medium)).monospacedDigit()
     }.frame(maxWidth: .infinity, alignment: .leading)
   }
 

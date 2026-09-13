@@ -5,7 +5,9 @@ The legacy `FreeSpace` target produces the `BlitzClean` executable.
 
 ## Main experience
 
-- `BlitzDashboardView`: navigation for Overview, Memory, CPU, Clean storage, and Large files.
+- `BlitzDashboardView`: navigation for Overview, Memory, CPU, and Storage.
+- `BlitzStorageView`: shared Caches, Large files, and Dependencies workspace.
+- `BlitzDesign`: shared buttons, search fields, and neutral selection controls matched to BlitzRecorder.
 - `BlitzTrayView`: compact live status and actions. Opening it never starts a disk scan.
 - `SystemMonitor`: two-second host CPU/VM samples; bounded CPU and memory histories.
 - `CPUProcessReader`: per-process CPU deltas from `proc_pid_rusage`, with process-start identity checks.

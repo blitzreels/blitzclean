@@ -21,7 +21,7 @@ struct FreeSpaceApp: App {
   var body: some Scene {
     MenuBarExtra {
       BlitzTrayView(
-        monitor: monitor, memory: memoryRescue, cleanup: quickClean,
+        monitor: monitor, memory: memoryRescue,
         navigation: cleanNavigation, launchAtLogin: launchAtLogin)
     } label: {
       MenuBarHealthLabel(snapshot: monitor.snapshot, risk: memoryRescue.risk)
@@ -31,7 +31,7 @@ struct FreeSpaceApp: App {
     Window(AppBrand.name, id: "dashboard") {
       BlitzDashboardView(
         monitor: monitor, memory: memoryRescue, cleanup: quickClean,
-        storage: storageBreakdown, navigation: cleanNavigation, launchAtLogin: launchAtLogin,
+        storage: storageBreakdown, navigation: cleanNavigation,
         developerBrowser: developerBrowser, processes: devProcesses, workspaces: workspaces)
     }
     .defaultSize(width: 1080, height: 820)

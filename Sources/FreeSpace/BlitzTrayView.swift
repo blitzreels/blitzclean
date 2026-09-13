@@ -4,7 +4,6 @@ import SwiftUI
 struct BlitzTrayView: View {
   @ObservedObject var monitor: SystemMonitor
   @ObservedObject var memory: MemoryRescueModel
-  @ObservedObject var cleanup: QuickCleanModel
   @ObservedObject var navigation: CleanNavigation
   @ObservedObject var launchAtLogin: LaunchAtLoginController
   @Environment(\.openWindow) private var openWindow
@@ -13,10 +12,7 @@ struct BlitzTrayView: View {
     VStack(spacing: 0) {
       HStack(spacing: 10) {
         BrandMark().scaleEffect(0.8).frame(width: 32, height: 32)
-        VStack(alignment: .leading, spacing: 3) {
-          Text(AppBrand.name).font(.headline)
-          Text("by BlitzReels").font(.caption2).foregroundStyle(.secondary)
-        }
+        Text(AppBrand.name).font(.system(size: 13, weight: .semibold))
         Spacer()
         Menu {
           MenuBarDisplayMenuItems()
@@ -41,55 +37,39 @@ struct BlitzTrayView: View {
               kind: .cpu, color: BlitzUI.mint, page: .cpu))
           trayMetric(
             .init(
-              title: "RAM used", value: PercentText.make(monitor.snapshot.ramUsedRatio),
+              title: "Memory", value: ByteText.compact(monitor.snapshot.ramUsed),
               kind: .memory, color: AppBrand.accent, page: .memory))
         }
         HStack {
-          Circle().fill(memory.pressure.tone.color).frame(width: 7, height: 7)
           Text("Pressure: \(memory.pressure.title.lowercased())").font(.caption)
+            .foregroundStyle(memory.pressure.tone.color)
           Spacer()
           Text("\(ByteText.compact(monitor.snapshot.ramAvailable)) available").font(.caption)
             .monospacedDigit().foregroundStyle(.secondary)
         }
-        HStack {
-          Text("Swap \(memory.sample?.swapUsed.map(ByteText.compact) ?? "—")")
-          Spacer()
-          Text(
-            "\(ByteText.compact(monitor.snapshot.ramUsed)) / \(ByteText.compact(monitor.snapshot.ramTotal)) RAM"
-          )
-        }.font(.caption2).foregroundStyle(.secondary)
-        Button {
-          open(.memory)
-        } label: {
-          Label("Free RAM…", systemImage: "memorychip").frame(maxWidth: .infinity)
-        }.buttonStyle(BlitzButtonStyle(.accent)).controlSize(.large)
+        Button("Free RAM…") { open(.memory) }
+          .buttonStyle(BlitzButtonStyle(.secondary)).frame(
+            maxWidth: .infinity, alignment: .trailing)
         Divider()
         HStack {
-          Label("Disk free", systemImage: "internaldrive").font(.callout)
+          Text("Storage").font(.system(size: 13, weight: .medium))
           Spacer()
-          Text(ByteText.full(monitor.snapshot.diskAvailable)).font(.title3.weight(.semibold))
+          Text("\(ByteText.full(monitor.snapshot.diskAvailable)) free").font(.system(size: 13))
             .monospacedDigit()
         }
         CapacityBar(
           usedRatio: 1 - Double(monitor.snapshot.diskAvailable)
             / Double(max(1, monitor.snapshot.diskTotal)), tone: MenuBarTones.disk(monitor.snapshot))
-        HStack {
-          Text(
-            cleanup.scannedAt == nil
-              ? "Find files you can remove"
-              : "\(ByteText.compact(cleanup.totalBytes)) caches to review"
-          )
-          .font(.caption).foregroundStyle(.secondary)
-          Spacer()
-          Button("Clean storage…") { open(.cleanup) }.buttonStyle(BlitzButtonStyle(.secondary))
-        }
+        Button("Clean storage…") { open(.storage) }
+          .buttonStyle(BlitzButtonStyle(.secondary)).frame(
+            maxWidth: .infinity, alignment: .trailing)
       }.padding(16)
       Divider()
       Button {
         open(.overview)
       } label: {
         HStack {
-          Text("Open BlitzClean").font(.callout.weight(.semibold))
+          Text("Open BlitzClean").font(.system(size: 12, weight: .medium))
           Spacer()
           Image(systemName: "arrow.up.right.square")
         }.padding(16).contentShape(Rectangle())
@@ -116,7 +96,7 @@ struct BlitzTrayView: View {
           samples: monitor.resourceSamples, kind: input.kind, color: input.color, seconds: 60
         )
         .frame(height: 36)
-      }.frame(maxWidth: .infinity, alignment: .leading).panelCard(padding: 12)
+      }.frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 4)
     }.buttonStyle(.plain)
   }
 
@@ -132,19 +112,27 @@ struct BlitzSettingsView: View {
   @ObservedObject var launchAtLogin: LaunchAtLoginController
 
   var body: some View {
-    Form {
-      Section("Menu bar") { MenuBarDisplayMenuItems() }
-      Section("Startup") {
+    ScrollView {
+      VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: 16) {
+          Text("Show in menu bar").font(.system(size: 13, weight: .semibold))
+          MenuBarDisplayControls()
+        }.panelCard(padding: 16)
         Toggle(
           "Launch at login",
-          isOn: Binding(get: { launchAtLogin.enabled }, set: { launchAtLogin.setEnabled($0) }))
-      }
-      Section("Alerts") { MemoryGuardControls(model: memory) }
-      Section("About BlitzClean") {
-        Text("BlitzClean 1.0 · by BlitzReels").font(.headline)
-        Text("Open source under the MIT license. Metrics and cleanup history stay on your Mac.")
-        Link("Source code and issues", destination: AppBrand.repositoryURL)
-      }
-    }.formStyle(.grouped).padding(10).frame(width: 560, height: 580).blitzTheme()
+          isOn: Binding(get: { launchAtLogin.enabled }, set: { launchAtLogin.setEnabled($0) })
+        )
+        .panelCard(padding: 16)
+        MemoryGuardControls(model: memory)
+        VStack(alignment: .leading, spacing: 8) {
+          Text("BlitzClean \(AppBrand.version) · by BlitzReels")
+            .font(.system(size: 13, weight: .medium))
+          Text("Open source under MIT. Metrics and cleanup history stay on your Mac.")
+            .font(.system(size: 12)).foregroundStyle(.secondary)
+          Link("Source code and issues", destination: AppBrand.repositoryURL)
+        }
+      }.font(.system(size: 13)).toggleStyle(BlitzSwitchStyle())
+        .frame(maxWidth: .infinity, alignment: .leading).padding(24)
+    }.frame(width: 560, height: 620).blitzTheme()
   }
 }

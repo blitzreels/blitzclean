@@ -186,13 +186,19 @@ enum MenuBarLabelRenderer {
 }
 
 struct MenuBarDisplayMenuItems: View {
+  var body: some View {
+    Section("Show in menu bar") { MenuBarDisplayControls() }
+  }
+}
+
+struct MenuBarDisplayControls: View {
   @AppStorage(MenuBarPreferenceKey.showHealth) private var showHealth = true
   @AppStorage(MenuBarPreferenceKey.showCPU) private var showCPU = true
   @AppStorage(MenuBarPreferenceKey.showMemory) private var showMemory = true
   @AppStorage(MenuBarPreferenceKey.showDisk) private var showDisk = true
 
   var body: some View {
-    Section("Show in menu bar") {
+    Group {
       Toggle("CPU", isOn: $showCPU)
       Toggle("Memory", isOn: $showMemory)
       Toggle("Disk free", isOn: $showDisk)

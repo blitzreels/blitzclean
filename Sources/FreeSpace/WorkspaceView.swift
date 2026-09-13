@@ -54,13 +54,7 @@ struct WorkspaceView: View {
             .padding(.vertical, 5)
         }
         .listStyle(.sidebar)
-        VStack(alignment: .leading, spacing: 8) {
-          Label(memory.risk.title, systemImage: "circle.fill")
-            .foregroundStyle(memory.risk.tone.color)
-          Text("Local tools. Your control.").foregroundStyle(.secondary)
-          Text("v1.0 · Open source").foregroundStyle(.tertiary)
-        }
-        .font(.caption).padding(16)
+
       }
       .navigationSplitViewColumnWidth(min: 190, ideal: 210, max: 250)
     } detail: {
@@ -85,6 +79,7 @@ struct WorkspaceView: View {
         case .settings: WorkspaceSettingsView(memory: memory, storage: storage)
         }
       }
+      .navigationTitle(section?.rawValue ?? "Developer tools")
       .toolbar {
         ToolbarItemGroup {
           Button("Review apps", systemImage: "memorychip") { openWindow(id: "memory-rescue") }
@@ -104,22 +99,17 @@ struct WorkspaceView: View {
   private var overview: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: 26) {
-        VStack(alignment: .leading, spacing: 8) {
-          Text("Make room for your next build.").font(.system(size: 30, weight: .semibold))
-          Text("Clear the leftovers. Know what’s running. Keep the work that matters.")
-            .font(.title3).foregroundStyle(.secondary)
-        }
         HStack(spacing: 14) {
           OverviewMetric(
-            title: "AVAILABLE STORAGE", value: ByteText.full(monitor.snapshot.diskAvailable),
+            title: "Available storage", value: ByteText.full(monitor.snapshot.diskAvailable),
             detail: "\(DiskSpacePolicy.reserveLabel) healthy reserve", symbol: "internaldrive",
             color: .primary)
           OverviewMetric(
-            title: "MEMORY PRESSURE", value: memory.pressure.title,
+            title: "Memory pressure", value: memory.pressure.title,
             detail: "Swap \(memory.sample?.swapUsed.map(ByteText.full) ?? "unavailable")",
             symbol: "memorychip", color: memory.risk.tone.color)
           OverviewMetric(
-            title: "BACKGROUND TOOLS", value: "\(processes.resources.filter(\.isTool).count)",
+            title: "Background tools", value: "\(processes.resources.filter(\.isTool).count)",
             detail: ByteText.full(
               processes.resources.filter(\.isTool).compactMap(\.memoryBytes).reduce(0, +))
               + " observed footprint",
