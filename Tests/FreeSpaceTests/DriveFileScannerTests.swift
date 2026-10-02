@@ -100,26 +100,14 @@ struct DriveFileScannerTests {
     for index in 0..<3_000 {
       try Data([1]).write(to: root.appendingPathComponent("\(index).bin"))
     }
-    let progressReady = AsyncStream<Void>.makeStream()
-    let resume = DispatchSemaphore(value: 0)
-    defer {
-      resume.signal()
-      progressReady.continuation.finish()
-    }
     let worker = Task.detached {
       DriveFileScanner.scan(
         .init(
           roots: [root.path], minimumBytes: 0, resultLimit: 5_000,
           progress: { _ in
-            guard !Task.isCancelled else { return }
-            progressReady.continuation.yield()
-            _ = resume.wait(timeout: .now() + 5)
+            withUnsafeCurrentTask { $0?.cancel() }
           }))
     }
-    var iterator = progressReady.stream.makeAsyncIterator()
-    _ = await iterator.next()
-    worker.cancel()
-    resume.signal()
     let result = await worker.value
     let complete = result.complete
     let count = result.files.count

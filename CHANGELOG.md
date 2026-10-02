@@ -35,6 +35,8 @@
 - Preserve the menu bar when the dashboard closes.
 - Update the README, privacy, architecture, roadmap, and release documentation.
 - Add universal release packaging and explicit ad-hoc signing for certificate-free CI checks.
+- Keep command-deadline timers off shared worker queues and make cancellation tests independent of CPU count.
+- Install FFmpeg in CI so media export integration tests run on clean hosts.
 - Exclude local storage-cleanup reports from source control.
 
 Earlier local 1.0.x builds were not published as GitHub releases.

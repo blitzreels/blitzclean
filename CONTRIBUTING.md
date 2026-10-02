@@ -1,9 +1,13 @@
 # Contributing to BlitzClean
 
 Use macOS 14+ and a Swift 6 toolchain. Run `./script/build_and_run.sh` to build and install the native app.
+Install FFmpeg/FFprobe with `brew install ffmpeg` to run the media integration tests.
 Run `./scripts/check.sh` before opening a pull request, followed by `./scripts/build-app.sh` for packaging changes.
 Without a local signing certificate, use `BLITZCLEAN_SIGNING_IDENTITY=-` for an ad-hoc development build.
 See [Releasing](docs/RELEASING.md) for signed universal downloads and notarization.
+
+The check script runs native integration cases sequentially so timing-sensitive fixtures do not compete on small runners.
+Concurrency behavior is still exercised inside the relevant tests.
 
 Keep changes focused. Explain the user-visible behavior and include the relevant validation.
 Screenshots must use synthetic project names and data; do not publish a contributor's running processes or history.

@@ -119,6 +119,7 @@ They are for local development, not notarized distribution.
 ./scripts/build-app.sh
 ```
 
+The media integration tests require FFmpeg/FFprobe (`brew install ffmpeg`).
 Checks cover compilation, Swift tests, formatting, property lists, and shell syntax.
 See [Releasing](docs/RELEASING.md) for universal packaging, signing, notarization, and checksums.
 

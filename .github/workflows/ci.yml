@@ -7,6 +7,10 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
+      - name: Install media test dependency
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+        run: brew install ffmpeg
       - name: Typecheck, test and lint
         run: ./scripts/check.sh
       - name: Package app and verify signature

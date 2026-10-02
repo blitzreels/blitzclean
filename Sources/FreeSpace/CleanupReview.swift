@@ -174,6 +174,9 @@ struct CleanupCommandResult: Sendable {
 }
 
 enum CleanupActivity {
+  private static let deadlines = DispatchQueue(
+    label: "com.blitzreels.BlitzClean.cleanup-deadlines", qos: .userInitiated)
+
   static func command(_ arguments: [String]) -> CleanupCommandResult {
     runCommand(
       CleanupCommandRequest(executable: "/usr/sbin/lsof", arguments: arguments, timeout: 8))
@@ -193,8 +196,8 @@ enum CleanupActivity {
     let deadline = DispatchWorkItem {
       if process.isRunning { kill(process.processIdentifier, SIGKILL) }
     }
-    DispatchQueue.global().asyncAfter(deadline: .now() + request.timeout, execute: timeout)
-    DispatchQueue.global().asyncAfter(deadline: .now() + request.timeout + 1, execute: deadline)
+    deadlines.asyncAfter(deadline: .now() + request.timeout, execute: timeout)
+    deadlines.asyncAfter(deadline: .now() + request.timeout + 1, execute: deadline)
     let data = pipe.fileHandleForReading.readDataToEndOfFile()
     process.waitUntilExit()
     timeout.cancel()

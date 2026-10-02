@@ -2,6 +2,9 @@ import Darwin
 import Foundation
 
 enum DeveloperCommand {
+  private static let deadlines = DispatchQueue(
+    label: "com.blitzreels.BlitzClean.inspection-deadlines", qos: .userInitiated)
+
   struct Request: Sendable {
     let executable: String
     let arguments: [String]
@@ -25,7 +28,7 @@ enum DeveloperCommand {
     let deadline = DispatchWorkItem {
       if process.isRunning { kill(process.processIdentifier, SIGKILL) }
     }
-    DispatchQueue.global(qos: .utility).asyncAfter(
+    deadlines.asyncAfter(
       deadline: .now() + request.timeout, execute: deadline)
     var data = Data()
     var limited = false
