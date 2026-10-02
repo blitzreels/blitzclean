@@ -10,7 +10,7 @@ New chart and export stores use `~/Library/Application Support/BlitzClean`.
 
 | Store | Retention and contents |
 | --- | --- |
-| Cleanup ledger | At most 200 runs, including reviewed paths and measured space changes. |
+| Cleanup ledger | At most 1,000 records, including reviewed paths and measured space changes. |
 | Memory incidents | At most 1,440 events from the last 24 hours, including app/tool and project names. |
 | Pressure trace | Up to 240 recent samples/actions and top project summaries. |
 | CPU/RAM charts | Two-second detail for 15 minutes and five-minute points for seven days; at most 512 KiB on disk. |

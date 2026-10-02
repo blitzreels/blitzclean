@@ -8,7 +8,7 @@
 - Reviewed cache/developer cleanup, Trash for personal files, and Remove again history.
 - Media filters, exact duplicates, and optional local FFmpeg exports.
 - Project/AI-worker visibility, pressure warnings, and opt-in project pausing.
-- Universal release packaging with Developer ID signing and optional notarization.
+- Developer ID signed and notarized universal downloads.
 
 ## Next
 

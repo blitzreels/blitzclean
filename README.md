@@ -33,8 +33,8 @@ Release notes identify the supported architectures, signing, and notarization st
 The 1.1.0 archive supports Apple silicon and Intel Macs running macOS 14 or later.
 Extract `BlitzClean.app`, move it to Applications, and open it; use Settings to enable launch at login.
 
-Notarization is separate from code signing: a Developer ID signature alone does not guarantee Gatekeeper acceptance.
-Use the release's stated status before installing, or build locally with the steps below.
+The 1.1.0 download is Developer ID signed, notarized by Apple, and includes a stapled ticket.
+A SHA-256 checksum accompanies the archive.
 
 ## What you can do
 

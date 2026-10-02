@@ -55,7 +55,7 @@ The chart store in `~/Library/Application Support/BlitzClean` keeps two-second s
 and five-minute points for seven days.
 It is capped at 512 KiB, and the week-long chart is reduced to about 450 visible points.
 Export history keeps at most 100 entries / 512 KiB. Incident history retains at most 1,440 events
-from the last 24 hours; cleanup history keeps 200 runs. JSON files use owner-only permissions.
+from the last 24 hours; cleanup history keeps 1,000 records. JSON files use owner-only permissions.
 No local incident log, preference export, build artifact, or machine screenshot belongs in Git.
 
 ## Media processing
