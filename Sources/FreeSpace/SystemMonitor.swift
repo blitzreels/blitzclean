@@ -1,3 +1,4 @@
+import AppKit
 import Darwin
 import Foundation
 
@@ -55,7 +56,7 @@ enum MacHealthStatus: Equatable, Sendable {
     case .healthy:
       "Healthy"
     case .warning:
-      "Needs attention"
+      "Running low"
     case .critical:
       "Critical"
     case .unknown:
@@ -73,7 +74,6 @@ struct SystemSnapshot: Equatable, Sendable {
   let cpuUsage: Double?
   let thermalStatus: ThermalStatus
   let updatedAt: Date
-  let developerVolume: VolumeCapacity?
 
   var ramUsed: UInt64 {
     ramTotal - min(ramTotal, ramAvailable)
@@ -126,8 +126,7 @@ struct SystemSnapshot: Equatable, Sendable {
       memoryPressure: .unknown,
       cpuUsage: nil,
       thermalStatus: .unknown,
-      updatedAt: .now,
-      developerVolume: nil
+      updatedAt: .now
     )
   )
 
@@ -140,7 +139,6 @@ struct SystemSnapshot: Equatable, Sendable {
     cpuUsage = input.cpuUsage
     thermalStatus = input.thermalStatus
     updatedAt = input.updatedAt
-    developerVolume = input.developerVolume
   }
 }
 
@@ -194,26 +192,6 @@ struct SystemSnapshotInput {
   let cpuUsage: Double?
   let thermalStatus: ThermalStatus
   let updatedAt: Date
-  let developerVolume: VolumeCapacity?
-}
-
-struct VolumeCapacity: Equatable, Sendable {
-  let name: String
-  let path: String
-  let available: UInt64
-  let total: UInt64
-
-  var used: UInt64 {
-    total > available ? total - available : 0
-  }
-
-  var availableRatio: Double {
-    guard total > 0 else {
-      return 0
-    }
-
-    return Double(available) / Double(total)
-  }
 }
 
 final class SystemMetricsProvider {
@@ -232,8 +210,7 @@ final class SystemMetricsProvider {
         memoryPressure: MemoryPressureReader().current(),
         cpuUsage: cpuUsage(),
         thermalStatus: thermalStatus(),
-        updatedAt: .now,
-        developerVolume: DeveloperLocations.volumePath.flatMap { volumeCapacity($0) }
+        updatedAt: .now
       )
     )
   }
@@ -313,24 +290,6 @@ final class SystemMetricsProvider {
     guard let stats = VMMemoryStatsReader.current() else { return (0, 0) }
     return (stats.available, stats.total)
   }
-
-  private func volumeCapacity(_ path: String) -> VolumeCapacity? {
-    guard
-      FileManager.default.fileExists(atPath: path),
-      let attributes = try? FileManager.default.attributesOfFileSystem(forPath: path)
-    else {
-      return nil
-    }
-
-    let available = (attributes[.systemFreeSize] as? NSNumber)?.uint64Value ?? 0
-    let total = (attributes[.systemSize] as? NSNumber)?.uint64Value ?? 0
-    return VolumeCapacity(
-      name: URL(fileURLWithPath: path).lastPathComponent,
-      path: path,
-      available: available,
-      total: total
-    )
-  }
 }
 
 private struct CPUTicks {
@@ -364,7 +323,7 @@ final class SystemMonitor: NSObject, ObservableObject {
 
   private let provider: SystemMetricsProvider
   private var memoryHistory = MemoryHistory(capacity: 151)
-  private var history = ResourceHistory(capacity: 451)
+  private var history = ResourceHistory.persisted
   @Published private(set) var resourceSamples: [ResourceSample] = []
   @Published private(set) var topCPUProcesses: [LiveCPUProcess] = []
   @Published private(set) var memoryStats: VMMemoryStats?
@@ -372,6 +331,9 @@ final class SystemMonitor: NSObject, ObservableObject {
   private var previousCounterTime: TimeInterval?
   private var samplingProcesses = false
   private var timer: Timer?
+  private var lastHistorySave = Date.distantPast
+  private var historyLoadFailed = false
+  @Published private(set) var historyPersistenceError: String?
 
   override convenience init() {
     self.init(provider: SystemMetricsProvider())
@@ -384,6 +346,19 @@ final class SystemMonitor: NSObject, ObservableObject {
     memoryHistory.append(snapshot: initialSnapshot)
     memorySamples = memoryHistory.samples
     super.init()
+    if Bundle.main.bundleIdentifier == AppBrand.bundleIdentifier {
+      do {
+        history.restore(try ResourceHistoryStore.application.load())
+        resourceSamples = history.samples
+      } catch {
+        historyLoadFailed = true
+        historyPersistenceError =
+          "Saved activity history could not be read. The file was preserved."
+      }
+      NotificationCenter.default.addObserver(
+        self, selector: #selector(persistResourceHistory),
+        name: NSApplication.willTerminateNotification, object: nil)
+    }
     let timer = Timer(
       timeInterval: 2,
       target: self,
@@ -402,8 +377,23 @@ final class SystemMonitor: NSObject, ObservableObject {
     memorySamples = memoryHistory.samples
     history.append(refreshedSnapshot)
     resourceSamples = history.samples
+    if Date.now.timeIntervalSince(lastHistorySave) >= 30 { persistResourceHistory() }
     memoryStats = VMMemoryStatsReader.current()
     sampleProcesses()
+  }
+
+  @objc private func persistResourceHistory() {
+    guard Bundle.main.bundleIdentifier == AppBrand.bundleIdentifier else { return }
+    if historyLoadFailed,
+      FileManager.default.fileExists(atPath: ResourceHistoryStore.application.url.path)
+    {
+      return
+    }
+    lastHistorySave = .now
+    do {
+      try ResourceHistoryStore.application.save(resourceSamples)
+      if !historyLoadFailed { historyPersistenceError = nil }
+    } catch { historyPersistenceError = "Activity history could not be saved." }
   }
 
   private func sampleProcesses() {

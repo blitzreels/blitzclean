@@ -124,7 +124,7 @@ enum GitWorktrees {
     } else if record.prunable || identity == nil {
       blocker = "Missing folder or symbolic link"
     } else if record.branch == nil {
-      blocker = "Detached HEAD — preserve its commits"
+      blocker = "Detached HEAD. Save its commits first."
     } else if input.keptDirectories.contains(where: {
       DeveloperPath.contains(.init(path: record.path, root: $0))
     }) {
@@ -150,7 +150,7 @@ enum GitWorktrees {
         let entries = status.output.split(separator: "\0")
         blocker =
           entries.allSatisfy { $0.hasPrefix("!! ") }
-          ? "Ignored files remain — review them first"
+          ? "Has ignored files. Review them first."
           : "Uncommitted or untracked files"
       }
     }

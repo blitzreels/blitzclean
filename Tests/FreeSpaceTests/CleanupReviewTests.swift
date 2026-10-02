@@ -87,14 +87,14 @@ struct CleanupReviewTests {
   @Test
   func historyIsBoundedAndKeepsNewestWins() {
     var ledger = CleanupLedger()
-    for index in 0..<220 {
+    for index in 0..<1_020 {
       ledger.record(
         CleanupWin(
           id: String(index), date: Date(timeIntervalSince1970: Double(index)), title: "Fixture",
           paths: ["/fixture"], before: nil, after: nil))
     }
-    #expect(ledger.wins.count == 200)
-    #expect(ledger.wins.first?.id == "219")
+    #expect(ledger.wins.count == 1_000)
+    #expect(ledger.wins.first?.id == "1019")
     #expect(ledger.wins.last?.id == "20")
     #expect(ledger.internalGains == 0)
   }

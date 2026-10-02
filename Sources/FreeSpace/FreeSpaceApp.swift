@@ -7,7 +7,6 @@ struct FreeSpaceApp: App {
   @StateObject private var launchAtLogin = LaunchAtLoginController()
   @StateObject private var storageBreakdown = StorageBreakdownModel()
   @StateObject private var dockerStorage = DockerStorageModel()
-  @StateObject private var storageNavigation = StorageNavigationModel()
   @StateObject private var memoryRescue = MemoryRescueModel()
   @StateObject private var appRecovery = AppRecoveryModel()
   @StateObject private var devProcesses = DevProcessModel()
@@ -22,9 +21,12 @@ struct FreeSpaceApp: App {
     MenuBarExtra {
       BlitzTrayView(
         monitor: monitor, memory: memoryRescue,
-        navigation: cleanNavigation, launchAtLogin: launchAtLogin)
+        navigation: cleanNavigation)
     } label: {
-      MenuBarHealthLabel(snapshot: monitor.snapshot, risk: memoryRescue.risk)
+      MenuBarHealthLabel(
+        snapshot: monitor.snapshot, risk: max(memoryRescue.risk, memoryRescue.capacity.risk)
+      )
+      .environmentObject(cleanNavigation)
     }
     .menuBarExtraStyle(.window)
 
@@ -32,60 +34,43 @@ struct FreeSpaceApp: App {
       BlitzDashboardView(
         monitor: monitor, memory: memoryRescue, cleanup: quickClean,
         storage: storageBreakdown, navigation: cleanNavigation,
-        developerBrowser: developerBrowser, processes: devProcesses, workspaces: workspaces)
+        developerBrowser: developerBrowser, processes: devProcesses, workspaces: workspaces,
+        services: .init(
+          recovery: appRecovery, docker: dockerStorage,
+          folders: folderExplorer,
+          launchAtLogin: launchAtLogin))
     }
+    .windowStyle(.hiddenTitleBar)
     .defaultSize(width: 1080, height: 820)
     .opensOnlyOnRequest()
-
-    Settings {
-      BlitzSettingsView(memory: memoryRescue, launchAtLogin: launchAtLogin)
+    .commands {
+      CommandGroup(replacing: .sidebar) {}
+      CommandGroup(replacing: .newItem) {
+        Button("Open BlitzClean") {
+          NotificationCenter.default.post(name: .openWorkspace, object: nil)
+        }.keyboardShortcut("0")
+      }
+      CommandGroup(replacing: .appSettings) {
+        Button("Settings…") {
+          cleanNavigation.page = .settings
+          NotificationCenter.default.post(name: .openWorkspace, object: nil)
+        }.keyboardShortcut(",")
+      }
+      CommandMenu("Tools") {
+        Button("Revive frozen app…") {
+          NotificationCenter.default.post(name: .openAppRecovery, object: nil)
+        }.keyboardShortcut("r", modifiers: [.command, .shift])
+      }
     }
 
-    Window("BlitzClean · Developer tools", id: "workspace") {
-      WorkspaceView(
-        monitor: monitor, memory: memoryRescue, processes: devProcesses,
-        workspaces: workspaces, storage: storageBreakdown, docker: dockerStorage,
-        storageNavigation: storageNavigation, folders: folderExplorer,
-        developerBrowser: developerBrowser
-      )
-      .blitzTheme()
-    }
-    .defaultSize(width: 1240, height: 820)
-    .opensOnlyOnRequest()
-
-    Window("Storage", id: "storage-breakdown") {
-      StorageBreakdownView(
-        model: storageBreakdown,
-        monitor: monitor,
-        dockerStorage: dockerStorage,
-        navigation: storageNavigation,
-        folderExplorer: folderExplorer
-      ).blitzTheme()
-    }
-    .defaultSize(width: 960, height: 700)
-    .opensOnlyOnRequest()
-
-    Window("Memory Rescue", id: "memory-rescue") {
-      MemoryRescueView(model: memoryRescue).blitzTheme()
-    }
-    .defaultSize(width: 820, height: 720)
-    .opensOnlyOnRequest()
-
-    Window("App Recovery", id: "app-recovery") {
-      AppRecoveryView(memory: memoryRescue, model: appRecovery).blitzTheme()
-    }
-    .defaultSize(width: 860, height: 720)
-    .opensOnlyOnRequest()
-
-    Window("Processes", id: "processes") {
-      DevProcessView(model: devProcesses).blitzTheme()
-    }
-    .defaultSize(width: 760, height: 620)
-    .opensOnlyOnRequest()
   }
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+  func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+    false
+  }
+
   func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool
   {
     NotificationCenter.default.post(name: .openWorkspace, object: nil)
@@ -101,6 +86,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   }
 
   func applicationDidFinishLaunching(_ notification: Notification) {
+    NSApp.appearance = NSAppearance(named: .darkAqua)
     NSApp.setActivationPolicy(.regular)
   }
 }
@@ -127,6 +113,8 @@ struct InitialWindowRequest {
       pending = "storage-breakdown"
     } else if arguments.contains("--memory-rescue") {
       pending = "memory-rescue"
+    } else if arguments.contains("--app-recovery") {
+      pending = "app-recovery"
     } else if !arguments.contains("--background") {
       pending = "dashboard"
     }

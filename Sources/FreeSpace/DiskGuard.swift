@@ -77,7 +77,9 @@ struct DiskAssessment: Sendable {
       parts.append("swap grew \(ByteText.compact(swapGrowth))")
     }
     if let minutesToReserve {
-      parts.append("10 GiB reserve in ~\(max(1, Int(minutesToReserve)))m at this rate")
+      let reserve =
+        sample.available > DiskSpacePolicy.reserveBytes ? DiskSpacePolicy.reserveLabel : "10 GiB"
+      parts.append("\(reserve) reserve in ~\(max(1, Int(minutesToReserve)))m at this rate")
     }
     return parts.joined(separator: " · ")
   }
@@ -106,13 +108,15 @@ struct DiskRiskEvaluator {
     }
     let gib: UInt64 = 1_024 * 1_024 * 1_024
     let rate = elapsed >= 60 ? Double(lost) / elapsed * 60 : 0
+    let reserve =
+      sample.available > DiskSpacePolicy.reserveBytes ? DiskSpacePolicy.reserveBytes : 10 * gib
     let minutes: Double? =
-      rate >= Double(gib) / 2 && sample.available > 10 * gib
-      ? Double(sample.available - 10 * gib) / rate : nil
+      rate >= Double(gib) / 2 && sample.available > reserve
+      ? Double(sample.available - reserve) / rate : nil
     let capacityRisk = DiskSpacePolicy.risk(sample.available)
-    let risk: DiskRisk =
-      capacityRisk == .warning && minutes.map({ $0 <= 20 }) == true
-      ? .critical : capacityRisk
+    let forecastRisk: DiskRisk =
+      minutes.map { $0 <= 5 ? .critical : $0 <= 20 ? .warning : .normal } ?? .normal
+    let risk = max(capacityRisk, forecastRisk)
     return DiskAssessment(
       sample: sample, risk: risk, lostBytes: lost, elapsed: elapsed, swapGrowth: swapGrowth,
       minutesToReserve: minutes)

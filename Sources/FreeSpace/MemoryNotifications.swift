@@ -3,6 +3,7 @@ import UserNotifications
 
 extension Notification.Name {
   static let openWorkspace = Notification.Name("FreeSpace.openWorkspace")
+  static let openAppRecovery = Notification.Name("BlitzClean.openAppRecovery")
   static let openMemoryRescue = Notification.Name("FreeSpace.openMemoryRescue")
   static let openStorageReview = Notification.Name("FreeSpace.openStorageReview")
 }
@@ -85,7 +86,7 @@ final class MemoryNotifications: NSObject, UNUserNotificationCenterDelegate {
   func send(_ alert: Alert) async -> Bool {
     guard isAppBundle, authorized else { return false }
     let content = UNMutableNotificationContent()
-    content.title = alert.isTest ? "Test — Memory alerts ready" : alert.risk.title
+    content.title = alert.isTest ? "Test alert" : alert.risk.title
     content.body = alert.detail
     content.categoryIdentifier = "memory"
     content.sound = .default

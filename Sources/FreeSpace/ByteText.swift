@@ -18,6 +18,12 @@ enum ByteText {
       ) + " GB"
     }
 
+    if input.bytes < 1_000 { return "\(input.bytes) B" }
+    if input.bytes < 1_000_000 {
+      return (Double(input.bytes) / 1_000).formatted(
+        .number.precision(.fractionLength(input.fractionDigits))
+      ) + " KB"
+    }
     let megabytes = Double(input.bytes) / 1_000_000
     return megabytes.formatted(
       .number.precision(.fractionLength(input.fractionDigits))

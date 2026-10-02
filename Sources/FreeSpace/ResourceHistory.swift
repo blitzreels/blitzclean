@@ -1,7 +1,7 @@
 import Darwin
 import Foundation
 
-struct ResourceSample: Identifiable, Equatable, Sendable {
+struct ResourceSample: Codable, Identifiable, Equatable, Sendable {
   let date: Date
   let cpu: Double?
   let memory: Double
@@ -11,11 +11,64 @@ struct ResourceSample: Identifiable, Equatable, Sendable {
 struct ResourceHistory: Sendable {
   private(set) var samples: [ResourceSample] = []
   let capacity: Int
+  private let archiveInterval: TimeInterval
+  private let archiveRetention: TimeInterval
+
+  init(capacity: Int) {
+    self.capacity = capacity
+    archiveInterval = 0
+    archiveRetention = 0
+  }
+
+  private init(_ configuration: Configuration) {
+    capacity = configuration.recentCapacity
+    archiveInterval = configuration.archiveInterval
+    archiveRetention = configuration.archiveRetention
+  }
+
+  private struct Configuration {
+    let recentCapacity: Int
+    let archiveInterval: TimeInterval
+    let archiveRetention: TimeInterval
+  }
+
+  static var persisted: Self {
+    .init(
+      .init(recentCapacity: 451, archiveInterval: 300, archiveRetention: 7 * 86_400))
+  }
+
+  mutating func restore(_ saved: [ResourceSample]) {
+    samples = saved
+    compact(now: .now)
+  }
 
   mutating func append(_ snapshot: SystemSnapshot) {
     samples.append(
       .init(date: snapshot.updatedAt, cpu: snapshot.cpuUsage, memory: snapshot.ramUsedRatio))
-    if samples.count > max(1, capacity) { samples.removeFirst(samples.count - max(1, capacity)) }
+    compact(now: snapshot.updatedAt)
+  }
+
+  private mutating func compact(now: Date) {
+    guard archiveInterval > 0 else {
+      samples = Array(samples.suffix(max(1, capacity)))
+      return
+    }
+    let oldest = now.addingTimeInterval(-archiveRetention)
+    let recentCutoff = now.addingTimeInterval(-900)
+    var archive: [Int: ResourceSample] = [:]
+    var recent: [ResourceSample] = []
+    for sample in samples where sample.date >= oldest && sample.date <= now {
+      if sample.date >= recentCutoff {
+        recent.append(sample)
+      } else {
+        let bucket = Int(sample.date.timeIntervalSince1970 / archiveInterval)
+        if let previous = archive[bucket], previous.date >= sample.date { continue }
+        archive[bucket] = sample
+      }
+    }
+    samples =
+      archive.values.sorted { $0.date < $1.date }
+      + recent.sorted { $0.date < $1.date }.suffix(max(1, capacity))
   }
 }
 

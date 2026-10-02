@@ -131,7 +131,7 @@ enum DeveloperArtifactScanner {
     if identity == nil {
       blocker = "Folder missing or replaced by a link"
     } else if context.origin != .project || context.cleanupTargetPath != path {
-      blocker = "Managed cache — use Storage"
+      blocker = "Managed cache. Clean it from Storage."
     } else if input.keptDirectories.contains(where: {
       DeveloperPath.contains(.init(path: root, root: $0))
     }) {
@@ -148,7 +148,7 @@ enum DeveloperArtifactScanner {
       blocker = "Could not verify running processes"
     }
     let internalVolume = CleanupVolume.read(path)?.isInternal == true
-    if blocker == nil, !internalVolume { blocker = "External drive — review in Finder" }
+    if blocker == nil, !internalVolume { blocker = "On an external drive. Review it in Finder." }
     let artifact = DeveloperArtifact(
       kind: .dependencies, path: path, projectPath: root,
       technology: ProjectTechnology.detect(.init(directory: root, processName: "node")),

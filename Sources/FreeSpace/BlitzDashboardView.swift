@@ -6,6 +6,9 @@ enum CleanPage: String, CaseIterable, Identifiable {
   case memory = "Memory"
   case cpu = "CPU"
   case storage = "Storage"
+  case recovery = "Revive apps"
+  case projects = "Projects"
+  case settings = "Settings"
   var id: Self { self }
   var symbol: String {
     switch self {
@@ -13,20 +16,78 @@ enum CleanPage: String, CaseIterable, Identifiable {
     case .memory: "memorychip"
     case .cpu: "cpu"
     case .storage: "internaldrive"
+    case .recovery: "waveform.path.ecg"
+    case .projects: "folder"
+    case .settings: "gearshape"
+    }
+  }
+
+  static let main: [Self] = [.overview, .memory, .cpu, .storage, .recovery, .projects]
+
+  static func destination(for window: String) -> Self? {
+    switch window {
+    case "workspace": .projects
+    case "storage-breakdown": .storage
+    case "memory-rescue", "processes": .memory
+    case "app-recovery": .recovery
+    default: nil
+    }
+  }
+
+  /// Pages removed in 1.0.12 open where their feature lives now.
+  static func restored(_ value: String?) -> Self {
+    switch value {
+    case "AI workers", "Processes", "History": .memory
+    case "Worktrees", "Developer storage": .storage
+    case "Project folders": .settings
+    default: value.flatMap(Self.init(rawValue:)) ?? .overview
     }
   }
 }
 
 enum CleanStoragePage: String, CaseIterable {
-  case caches = "Caches"
-  case files = "Large files"
-  case dependencies = "Dependencies"
+  case browse = "Browse"
+  case mac = "Inventory"
+  case cleanup = "Cleanup"
+
+  static func restored(_ value: String?) -> Self {
+    switch value {
+    case "Mac": .mac
+    case "Caches", "Dependencies": .cleanup
+    case "Files & media", "Files": .browse
+    default: value.flatMap(Self.init(rawValue:)) ?? .browse
+    }
+  }
 }
 
 @MainActor
 final class CleanNavigation: ObservableObject {
-  @Published var page = CleanPage.overview
-  @Published var storagePage = CleanStoragePage.caches
+  private let defaults: UserDefaults
+  @Published var page: CleanPage {
+    didSet { defaults.set(page.rawValue, forKey: "navigation.page") }
+  }
+  @Published var storagePage: CleanStoragePage {
+    didSet { defaults.set(storagePage.rawValue, forKey: "navigation.storagePage") }
+  }
+
+  init(_ defaults: UserDefaults = .standard) {
+    self.defaults = defaults
+    let savedPage = defaults.string(forKey: "navigation.page")
+    page = CleanPage.restored(savedPage)
+    storagePage =
+      savedPage == "Developer storage" || savedPage == "Worktrees"
+      ? .cleanup : CleanStoragePage.restored(defaults.string(forKey: "navigation.storagePage"))
+    defaults.set(page.rawValue, forKey: "navigation.page")
+    defaults.set(storagePage.rawValue, forKey: "navigation.storagePage")
+  }
+
+}
+
+struct DashboardServices {
+  let recovery: AppRecoveryModel
+  let docker: DockerStorageModel
+  let folders: FolderExplorerModel
+  let launchAtLogin: LaunchAtLoginController
 }
 
 struct BlitzDashboardView: View {
@@ -38,139 +99,115 @@ struct BlitzDashboardView: View {
   @ObservedObject var developerBrowser: DeveloperBrowserModel
   @ObservedObject var processes: DevProcessModel
   @ObservedObject var workspaces: WorkspaceController
-  @Environment(\.openWindow) private var openWindow
+  let services: DashboardServices
 
   var body: some View {
-    NavigationSplitView {
-      VStack(alignment: .leading, spacing: 0) {
-        HStack(spacing: 8) {
-          BrandMark().frame(width: 32, height: 32)
-          Text(AppBrand.name).font(.system(size: 15, weight: .semibold))
-        }.padding(20)
-        VStack(spacing: 4) {
-          ForEach(CleanPage.allCases) { page in
-            Button {
-              navigation.page = page
-            } label: {
-              Label(page.rawValue, systemImage: page.symbol)
-                .font(.system(size: 13, weight: .medium))
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 12).frame(height: 38)
-            }
-            .buttonStyle(BlitzSelectionButtonStyle(isSelected: navigation.page == page))
-            .accessibilityValue(navigation.page == page ? "Selected" : "")
-          }
-        }.padding(.horizontal, 12)
-        Spacer()
-        VStack(alignment: .leading, spacing: 4) {
-          Button("Developer tools", systemImage: "terminal") { openWindow(id: "workspace") }
-          SettingsLink { Label("Settings", systemImage: "gearshape") }
-        }.buttonStyle(BlitzButtonStyle(.quiet)).padding(12)
-      }.background(BlitzUI.sidebarBackground)
-        .navigationSplitViewColumnWidth(min: 180, ideal: 200, max: 230)
-    } detail: {
-      Group {
-        switch navigation.page {
-        case .overview: overview
-        case .memory: MemoryControlView(monitor: monitor, model: memory)
-        case .cpu: CPUControlView(monitor: monitor)
-        case .storage:
-          BlitzStorageView(
-            monitor: monitor, cleanup: cleanup, storage: storage, navigation: navigation,
-            developerBrowser: developerBrowser, processes: processes, workspaces: workspaces)
+    HStack(spacing: 0) {
+      BlitzSidebar(navigation: navigation, recovery: services.recovery)
+      Rectangle().fill(BlitzUI.separator).frame(width: 1)
+      VStack(spacing: 0) {
+        if navigation.page != .recovery {
+          BlitzPageHeader(title: navigation.page.rawValue) {}
+          Rectangle().fill(BlitzUI.separator).frame(height: 1)
         }
-      }
-      .navigationTitle(navigation.page.rawValue)
+        pageContent
+      }.frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(BlitzUI.canvasBackground)
     }
+    .ignoresSafeArea(.container, edges: .top)
+    .toolbar(removing: .sidebarToggle)
+    .navigationTitle(AppBrand.name)
     .blitzTheme()
-    .frame(minWidth: 900, minHeight: 620)
+    .frame(minWidth: 920, minHeight: 640)
+    .blitzDropdownHost()
     .task {
       monitor.refresh()
       memory.refresh()
     }
-  }
-
-  private var overview: some View {
-    ScrollView {
-      VStack(alignment: .leading, spacing: 20) {
-        HStack(spacing: 16) {
-          ResourceCard(
-            title: "Memory", value: ByteText.compact(monitor.snapshot.ramUsed),
-            detail: "of \(ByteText.compact(monitor.snapshot.ramTotal)) used",
-            samples: monitor.resourceSamples, kind: .memory,
-            action: { navigation.page = .memory })
-          ResourceCard(
-            title: "CPU", value: monitor.snapshot.cpuUsage.map(PercentText.make) ?? "—",
-            detail: "\(ProcessInfo.processInfo.activeProcessorCount) cores",
-            samples: monitor.resourceSamples, kind: .cpu,
-            action: { navigation.page = .cpu })
-        }
-        HStack(spacing: 24) {
-          VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline) {
-              Text("Storage").font(.system(size: 13, weight: .semibold))
-              Spacer()
-              Text(
-                "\(ByteText.full(monitor.snapshot.diskAvailable)) free of \(ByteText.full(monitor.snapshot.diskTotal))"
-              )
-              .font(.system(size: 12)).foregroundStyle(.secondary).monospacedDigit()
-            }
-            CapacityBar(
-              usedRatio: 1 - Double(monitor.snapshot.diskAvailable)
-                / Double(max(1, monitor.snapshot.diskTotal)),
-              tone: MenuBarTones.disk(monitor.snapshot))
-          }
-          Button("Clean storage…") { navigation.page = .storage }
-            .buttonStyle(BlitzButtonStyle(.accent))
-        }.panelCard(padding: 20)
-        VStack(spacing: 0) {
-          HStack {
-            Text("Apps using the most memory").font(.system(size: 13, weight: .semibold))
-            Spacer()
-            Button("Free RAM…") { navigation.page = .memory }
-              .buttonStyle(BlitzButtonStyle(.secondary))
-          }.padding(.bottom, 12)
-          ForEach(memory.apps.prefix(4)) { app in
-            HStack(spacing: 10) {
-              AppMemoryIcon(app: app)
-              Text(app.name).font(.system(size: 13)).lineLimit(1)
-              Spacer()
-              Text(ByteText.compact(app.memoryBytes)).font(.system(size: 13))
-                .monospacedDigit().foregroundStyle(.secondary)
-            }.padding(.vertical, 10)
-          }
-        }.padding(.top, 4)
-      }.padding(24)
+    .onChange(of: memory.scannedAt) {
+      guard navigation.page != .recovery else { return }
+      let apps = memory.apps.filter(\.isRecoveryEligible)
+      Task { await services.recovery.noteProcessStates(apps) }
     }
   }
+
+  @ViewBuilder private var pageContent: some View {
+    switch navigation.page {
+    case .overview:
+      BlitzOverviewView(
+        monitor: monitor, memory: memory, repeats: storage.repeats, processes: processes,
+        recovery: services.recovery, navigation: navigation)
+    case .memory: MemoryControlView(monitor: monitor, model: memory, processes: processes)
+    case .cpu: CPUControlView(monitor: monitor)
+    case .storage:
+      BlitzStorageView(
+        monitor: monitor, cleanup: cleanup, storage: storage, navigation: navigation,
+        docker: services.docker, folders: services.folders,
+        worktrees: .init(model: developerBrowser, processes: processes, workspaces: workspaces))
+    case .recovery:
+      AppRecoveryView(memory: memory, model: services.recovery)
+    case .projects:
+      WorkspaceProjectsView(processes: processes, controller: workspaces)
+    case .settings:
+      BlitzSettingsView(memory: memory, launchAtLogin: services.launchAtLogin, storage: storage)
+    }
+  }
+
 }
 
-private struct ResourceCard: View {
-  let title: String
-  let value: String
-  let detail: String
-  let samples: [ResourceSample]
-  let kind: ResourceKind
-  let action: () -> Void
+private struct BlitzSidebar: View {
+  @ObservedObject var navigation: CleanNavigation
+  @ObservedObject var recovery: AppRecoveryModel
+
+  private var selection: CleanPage { navigation.page }
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 12) {
-      Button(action: action) {
-        HStack {
-          Text(title).font(.system(size: 13, weight: .semibold))
-          Spacer()
-          Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold))
-            .foregroundStyle(.secondary)
-        }.contentShape(Rectangle())
-      }.buttonStyle(.plain).help("Open \(title.lowercased())")
-      HStack(alignment: .firstTextBaseline, spacing: 8) {
-        Text(value).font(.system(size: 30, weight: .semibold)).monospacedDigit()
-        Text(detail).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
+    VStack(alignment: .leading, spacing: 2) {
+      Color.clear.frame(height: BlitzUI.toolbarHeight).contentShape(Rectangle())
+        .blitzWindowDrag()
+      ForEach(Array(CleanPage.main.enumerated()), id: \.element) { index, page in
+        item(page, shortcut: index + 1)
       }
-      ResourcePlot(samples: samples, kind: kind, color: BlitzUI.mint, seconds: 300)
-        .frame(height: 90)
-        .help("Usage over the last 5 minutes")
-    }.frame(maxWidth: .infinity, alignment: .leading).panelCard(padding: 20)
+      Spacer(minLength: 16)
+      item(.settings, shortcut: nil)
+    }
+    .padding(.horizontal, 12)
+    .padding(.bottom, 14)
+    .frame(width: 212)
+    .frame(maxHeight: .infinity, alignment: .top)
+    .background(BlitzUI.panelBackground)
+    .accessibilityElement(children: .contain)
+    .accessibilityLabel("App navigation")
+  }
+
+  @ViewBuilder private func item(_ page: CleanPage, shortcut: Int?) -> some View {
+    let selected = selection == page
+    let button = Button {
+      if page == .storage { navigation.storagePage = .browse }
+      navigation.page = page
+    } label: {
+      HStack(spacing: 10) {
+        Image(systemName: page.symbol).symbolVariant(selected ? .fill : .none)
+          .font(.system(size: 14, weight: .medium)).frame(width: 20)
+        Text(page.rawValue).font(BlitzType.callout).lineLimit(1)
+        Spacer(minLength: 4)
+        if page == .recovery, recovery.attentionCount > 0 {
+          Text("\(recovery.attentionCount)").font(BlitzType.captionEmphasis).monospacedDigit()
+            .foregroundStyle(.black.opacity(0.88))
+            .padding(.horizontal, 6).frame(minWidth: 18, minHeight: 18)
+            .background(BlitzUI.warning, in: .capsule)
+            .accessibilityLabel("\(recovery.attentionCount) apps need attention")
+        }
+      }.frame(maxWidth: .infinity, alignment: .leading)
+    }
+    .blitzButton(selected ? .secondary : .quiet)
+    .accessibilityAddTraits(selected ? .isSelected : [])
+    if let shortcut {
+      button.keyboardShortcut(KeyEquivalent(Character("\(shortcut)")), modifiers: .command)
+        .help("\(page.rawValue) · ⌘\(shortcut)")
+    } else {
+      button.help(page.rawValue)
+    }
   }
 }
 
@@ -178,6 +215,6 @@ struct AppMemoryIcon: View {
   let app: MemoryApp
   var body: some View {
     Image(nsImage: NSWorkspace.shared.icon(forFile: app.bundleURL.path))
-      .resizable().frame(width: 24, height: 24)
+      .resizable().frame(width: 28, height: 28).accessibilityHidden(true)
   }
 }

@@ -13,9 +13,9 @@ enum MetricTone: Equatable {
     case .good:
       BlitzUI.mint
     case .warning:
-      .orange
+      BlitzUI.warning
     case .critical:
-      .red
+      BlitzUI.recordRed
     }
   }
 
@@ -55,7 +55,7 @@ enum MetricTone: Equatable {
 
 enum PanelMetrics {
   static let cardRadius: CGFloat = 12
-  static let cardPadding: CGFloat = 12
+  static let cardPadding: CGFloat = 16
   static let innerRadius: CGFloat = 6
 }
 
@@ -71,7 +71,7 @@ private struct PanelCardModifier: ViewModifier {
       )
       .overlay {
         RoundedRectangle(cornerRadius: PanelMetrics.cardRadius, style: .continuous)
-          .strokeBorder(BlitzUI.panelStroke, lineWidth: 1)
+          .strokeBorder(BlitzUI.separator, lineWidth: 1)
           .allowsHitTesting(false)
       }
   }
@@ -95,12 +95,12 @@ struct PanelSectionHeader<Trailing: View>: View {
   var body: some View {
     HStack(alignment: .firstTextBaseline) {
       Text(title)
-        .font(.system(size: 13, weight: .semibold))
-        .foregroundStyle(.secondary)
+        .font(BlitzType.section)
+        .foregroundStyle(BlitzUI.primaryText)
       Spacer()
       trailing()
-        .font(.caption2)
-        .foregroundStyle(.tertiary)
+        .font(BlitzType.caption)
+        .foregroundStyle(BlitzUI.tertiaryText)
     }
   }
 }

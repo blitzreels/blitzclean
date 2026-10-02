@@ -13,3 +13,4 @@
 *.mobileprovision
 /output/
 /tmp/
+/reports/

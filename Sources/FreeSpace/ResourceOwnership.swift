@@ -118,6 +118,7 @@ enum ResourceOwnership {
 @MainActor
 enum ResourceSnapshotCache {
   static var groups: [ResourceGroup] = []
+  static var pressure = PressureAssessment.checking
   static var scannedAt: Date?
 
   static var recentGroups: [ResourceGroup]? {

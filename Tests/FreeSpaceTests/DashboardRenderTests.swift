@@ -22,8 +22,7 @@ struct DashboardRenderTests {
 
     let view = BlitzTrayView(
       monitor: monitor, memory: memoryRescue,
-      navigation: CleanNavigation(),
-      launchAtLogin: LaunchAtLoginController())
+      navigation: CleanNavigation())
 
     for key in [
       MenuBarPreferenceKey.showCPU, MenuBarPreferenceKey.showMemory, MenuBarPreferenceKey.showDisk,

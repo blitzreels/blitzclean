@@ -46,20 +46,11 @@ struct ProjectProcessScanner: Sendable {
   }
 
   private func commandOutput(_ request: ProcessCommandRequest) -> String {
-    let process = Process()
-    let pipe = Pipe()
-    process.executableURL = URL(fileURLWithPath: request.executable)
-    process.arguments = request.arguments
-    process.standardOutput = pipe
-    process.standardError = FileHandle.nullDevice
-
-    guard (try? process.run()) != nil else {
-      return ""
-    }
-
-    let data = pipe.fileHandleForReading.readDataToEndOfFile()
-    process.waitUntilExit()
-    return String(decoding: data, as: UTF8.self)
+    DeveloperCommand.run(
+      .init(
+        executable: request.executable, arguments: request.arguments,
+        timeout: 3, maximumBytes: 4 * 1_024 * 1_024)
+    ).output
   }
 }
 
@@ -120,7 +111,10 @@ enum ProjectProcessParser {
 
     for candidate in candidates where actionableIDs.contains(candidate.processID) {
       var parentProcessID = candidate.parentProcessID
-      while let parent = candidateByID[parentProcessID], parent.processID != currentProcessID {
+      var visited: Set<Int32> = []
+      while visited.insert(parentProcessID).inserted, let parent = candidateByID[parentProcessID],
+        parent.processID != currentProcessID
+      {
         actionableIDs.insert(parent.processID)
         parentProcessID = parent.parentProcessID
       }

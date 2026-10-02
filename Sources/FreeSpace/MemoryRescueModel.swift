@@ -6,6 +6,8 @@ enum MemoryQuitSafety {
     let expected: MemoryApp
     let current: MemoryAppDescriptor?
     let policy: MemoryAppPolicy
+    /// The user chose this app's Quit button; suggestion-only protections do not apply.
+    var explicit = false
   }
 
   static func refusal(_ input: Input) -> String? {
@@ -15,6 +17,10 @@ enum MemoryQuitSafety {
       current.bundleIdentifier == input.expected.bundleIdentifier,
       let launchDate = current.launchDate, launchDate == input.expected.launchDate
     else { return "App changed since the scan; refresh before quitting" }
+    if input.explicit {
+      return input.expected.isRecoveryEligible
+        ? nil : "macOS system apps and \(AppBrand.name) stay open"
+    }
     if let reason = current.protectionReason { return reason }
     if input.policy == .keepRunning { return "You pinned this app to keep running" }
     if current.isActive { return "This app is currently in use" }
@@ -26,14 +32,17 @@ enum MemoryQuitSafety {
 final class MemoryRescueModel: NSObject, ObservableObject {
   @Published private(set) var pressure: MemoryPressureLevel
   @Published private(set) var risk = MemoryRisk.normal
+  @Published private(set) var capacity = PressureAssessment.checking
   @Published private(set) var apps: [MemoryApp] = []
   @Published private(set) var candidates: [MemoryCandidate] = []
   @Published private(set) var sample: MemoryGuardSample?
   @Published private(set) var isRefreshing = false
   @Published private(set) var actionProcessID: Int32?
+  @Published private(set) var quitMessages: [Int32: String] = [:]
   @Published private(set) var statusMessage: String?
   @Published private(set) var scannedAt: Date?
   @Published private(set) var incidents: [MemoryIncident] = []
+  @Published private(set) var notificationsAllowed = false
   @Published private(set) var notificationStatus = "Checking notification permission"
   @Published private(set) var alertsEnabled: Bool
   @Published private(set) var diskAlertsEnabled: Bool
@@ -165,6 +174,7 @@ final class MemoryRescueModel: NSObject, ObservableObject {
     }
     let previousRisk = risk
     risk = evaluator.evaluate(next)
+    capacity = ResourceSnapshotCache.pressure
     if risk != previousRisk {
       record(.init(kind: "pressure", detail: risk.title))
     } else if next.date.timeIntervalSince(lastRecordedAt) >= 60 {
@@ -178,7 +188,9 @@ final class MemoryRescueModel: NSObject, ObservableObject {
   }
 
   private func sendAlertIfNeeded() {
-    guard alertsEnabled, notifications.authorized, !isSendingAlert else { return }
+    guard ResourceSnapshotCache.pressure.risk == .normal,
+      alertsEnabled, notifications.authorized, !isSendingAlert
+    else { return }
     var nextGate = alertGate
     guard nextGate.shouldSend(.init(risk: risk, date: .now)) else { return }
     let alertRisk = risk
@@ -205,6 +217,7 @@ final class MemoryRescueModel: NSObject, ObservableObject {
 
   func configureNotifications(requestPermission: Bool) async {
     await notifications.prepare(requestPermission: requestPermission)
+    notificationsAllowed = notifications.authorized
     notificationStatus = notifications.status
     sendAlertIfNeeded()
     sendDiskAlertIfNeeded()
@@ -276,13 +289,20 @@ final class MemoryRescueModel: NSObject, ObservableObject {
       ))
   }
 
-  func quitAndKeepClosed(_ app: MemoryApp) async {
+  func quit(_ app: MemoryApp) async {
+    guard actionProcessID == nil else { return }
+    quitMessages[app.id] = nil
+    await quitAndKeepClosed(app, explicit: true)
+    quitMessages[app.id] = statusMessage
+  }
+
+  func quitAndKeepClosed(_ app: MemoryApp, explicit: Bool = false) async {
     guard actionProcessID == nil else { return }
     let current = appProvider.descriptors().first { $0.processID == app.processID }
     if let refusal = MemoryQuitSafety.refusal(
       .init(
-        expected: app, current: current, policy: policies[app.policyKey, default: .review]
-      ))
+        expected: app, current: current, policy: policies[app.policyKey, default: .review],
+        explicit: explicit))
     {
       statusMessage = refusal
       return
@@ -312,7 +332,7 @@ final class MemoryRescueModel: NSObject, ObservableObject {
     }
     guard runningApp.isTerminated else {
       statusMessage =
-        "\(app.name) is still open; quit was cancelled, delayed, or needs a save response"
+        "\(app.name) is still open. Answer its save dialog, or use Force Quit."
       record(.init(kind: "quit-pending", detail: statusMessage ?? "Quit pending"))
       return
     }
@@ -323,10 +343,9 @@ final class MemoryRescueModel: NSObject, ObservableObject {
     }
     let measured =
       change.map {
-        " · system available memory \($0 >= 0 ? "+" : "−")\(ByteText.full(UInt64(abs($0))))"
+        " · available memory \($0 >= 0 ? "+" : "−")\(ByteText.full(UInt64(abs($0))))"
       } ?? ""
-    statusMessage =
-      "\(app.name) quit; kept closed\(measured) · pressure \(pressure.title.lowercased()). Other activity affects this reading."
+    statusMessage = "\(app.name) quit\(measured)"
     record(.init(kind: "quit-completed", detail: statusMessage ?? "Quit completed"))
   }
 
@@ -336,8 +355,7 @@ final class MemoryRescueModel: NSObject, ObservableObject {
     record(
       .init(
         kind: "app-recovery",
-        detail:
-          "\(report.app.name): \(report.outcome.title). \(report.resumeSent ? "One resume request sent." : "No resume request sent.") \(report.detail)"
+        detail: "\(report.app.name): \(report.outcome.title). \(report.detail)"
       ))
     refresh()
   }

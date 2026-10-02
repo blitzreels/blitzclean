@@ -30,10 +30,10 @@ enum MemoryRisk: Int, Codable, Comparable, Sendable {
 
   var title: String {
     switch self {
-    case .normal: "Memory stable"
-    case .growing: "Memory demand rising"
-    case .warning: "Memory needs attention"
-    case .critical: "Memory pressure critical"
+    case .normal: "Memory back to normal"
+    case .growing: "Memory use rising"
+    case .warning: "Memory running low"
+    case .critical: "Memory almost full"
     }
   }
 }

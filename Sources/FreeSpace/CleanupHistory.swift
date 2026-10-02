@@ -29,6 +29,8 @@ struct CleanupWin: Codable, Equatable, Identifiable, Sendable {
   let paths: [String]
   let before: CleanupVolume?
   let after: CleanupVolume?
+  /// Folder size measured before removal, when known.
+  var bytes: UInt64? = nil
 
   var measuredGain: UInt64? {
     guard let before, let after, before.path == after.path else { return nil }
@@ -43,7 +45,7 @@ struct CleanupLedger: Codable, Equatable, Sendable {
     guard !win.paths.isEmpty, !wins.contains(where: { $0.id == win.id }) else { return }
     wins.append(win)
     wins.sort { $0.date > $1.date }
-    wins = Array(wins.prefix(200))
+    wins = Array(wins.prefix(1_000))
   }
 
   var internalGains: UInt64 {

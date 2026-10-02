@@ -31,7 +31,7 @@ final class DeveloperBrowserModel: ObservableObject {
   func scan() {
     guard !isScanning, deleting.isEmpty else { return }
     isScanning = true
-    progress = "Finding projects and linked worktrees…"
+    progress = "Finding linked worktrees…"
     limited = false
     let roots = selectedFolder.map { [$0] } ?? DeveloperArtifactScanner.roots
     let kept = WorkspacePreferences.load().filter(\.keepRunning).map(\.directory)
@@ -40,7 +40,6 @@ final class DeveloperBrowserModel: ObservableObject {
         .init(roots: roots, maximumEntries: 30_000, maximumDepth: 7))
       let active = CleanupActivity.workingDirectories()
       var repositories: Set<String> = []
-      var dependencies = Set(discovery.dependencies)
       var allArtifacts: [DeveloperArtifact] = []
       for repository in discovery.repositories {
         if Task.isCancelled { break }
@@ -66,32 +65,16 @@ final class DeveloperBrowserModel: ObservableObject {
               bytes: assessment.identity == nil ? nil : DeveloperCommand.bytes(record.path),
               modifiedAt: nil,
               blocker: assessment.blocker
-                ?? (internalVolume ? nil : "External drive — review in Finder"),
+                ?? (internalVolume ? nil : "On an external drive. Review it in Finder."),
               identity: assessment.identity, worktree: assessment, reinstallCommand: nil,
               internalVolume: internalVolume))
-          let linked = DeveloperArtifactScanner.discover(
-            .init(roots: [record.path], maximumEntries: 2_000, maximumDepth: 4))
-          dependencies.formUnion(linked.dependencies)
           await self?.publish(allArtifacts)
         }
-      }
-      for path in dependencies.sorted().prefix(300) {
-        if Task.isCancelled { break }
-        await self?.setProgress(
-          "Measuring \(URL(fileURLWithPath: path).deletingLastPathComponent().lastPathComponent) dependencies…"
-        )
-        allArtifacts.append(
-          DeveloperArtifactScanner.dependency(
-            .init(
-              path: path,
-              activeDirectories: active, keptDirectories: kept)))
-        await self?.publish(allArtifacts)
       }
       await self?.finish(
         .init(
           artifacts: allArtifacts,
-          limited: discovery.limited || allArtifacts.filter { $0.kind == .worktree }.count >= 150
-            || dependencies.count > 300 || Task.isCancelled))
+          limited: discovery.limited || allArtifacts.count >= 150 || Task.isCancelled))
     }
   }
 

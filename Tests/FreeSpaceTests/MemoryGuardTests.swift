@@ -86,6 +86,26 @@ struct MemoryGuardTests {
   }
 
   @Test
+  func explicitQuitSkipsSuggestionGuardsButStillChecksIdentity() {
+    let expected = app(
+      .init(id: 7, name: "Cursor", bytes: gib, protected: "AI and coding app", active: true))
+    let current = descriptor(
+      .init(
+        app: expected, active: true, launchDate: expected.launchDate,
+        protected: "AI and coding app"))
+    #expect(
+      MemoryQuitSafety.refusal(.init(expected: expected, current: current, policy: .review)) != nil)
+    #expect(
+      MemoryQuitSafety.refusal(
+        .init(expected: expected, current: current, policy: .keepRunning, explicit: true)) == nil)
+    let relaunched = descriptor(
+      .init(app: expected, active: true, launchDate: .now, protected: nil))
+    #expect(
+      MemoryQuitSafety.refusal(
+        .init(expected: expected, current: relaunched, policy: .review, explicit: true)) != nil)
+  }
+
+  @Test
   func quitRevalidatesIdentityProtectionAndCurrentActivity() {
     let expected = app(.init(id: 3, name: "Browser", bytes: gib, protected: nil, active: false))
     let current = descriptor(

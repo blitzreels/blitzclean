@@ -1,16 +1,21 @@
 # Roadmap
 
-## Available in 1.0
+## Available in 1.1.0
 
-- Live CPU/RAM graphs and readable menu-bar metrics.
-- Selected normal app quits with measured RAM changes.
-- Reviewed cleanup of known older caches on the internal drive.
-- Recoverable personal-file removal through Trash.
-- Existing developer tools and local pressure history.
+- Persistent menu-bar monitoring and seven-day CPU/RAM charts.
+- Direct app recovery with refreshed health checks, Force Quit, and crash reopening.
+- Recursive directory browsing and largest-file ranking across connected local drives.
+- Reviewed cache/developer cleanup, Trash for personal files, and Remove again history.
+- Media filters, exact duplicates, and optional local FFmpeg exports.
+- Project/AI-worker visibility, pressure warnings, and opt-in project pausing.
+- Universal release packaging with Developer ID signing and optional notarization.
 
 ## Next
 
-- Developer ID signing, notarized downloads, and automatic updates.
-- More cache recipes backed by dedicated safety tests.
-- Optional longer on-disk metric histories with explicit retention controls.
+- Configure notarization for every public download and add automatic updates.
 - Broader hardware coverage and accessibility audits.
+- More cache recipes backed by dedicated safety tests.
+- User controls for history retention and exporting pressure diagnostics.
+
+A listed feature is not a guarantee of recovering an arbitrary frozen app or preventing a system-wide crash.
+Release notes describe what was validated for each build.

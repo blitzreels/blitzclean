@@ -68,8 +68,9 @@ struct SimulatorDeviceInfo: Identifiable, Equatable, Codable, Sendable {
 
 @MainActor
 final class StorageBreakdownModel: ObservableObject {
-  private static let automaticScanInterval: TimeInterval = 60 * 60
+  private static let automaticScanInterval: TimeInterval = 5 * 60
   let overview = CleanupOverviewModel(.application)
+  lazy var repeats = RepeatCleanupModel(history: overview)
 
   @Published private(set) var categories: [StorageCategory] = []
   @Published private(set) var scannedAt: Date?
@@ -102,7 +103,6 @@ final class StorageBreakdownModel: ObservableObject {
   }
 
   func scanIfNeeded() {
-    overview.refreshIfNeeded()
     if let scannedAt,
       Date().timeIntervalSince(scannedAt) < Self.automaticScanInterval
     {
@@ -113,7 +113,6 @@ final class StorageBreakdownModel: ObservableObject {
   }
 
   func scan() {
-    overview.refreshIfNeeded()
     guard !isScanning else {
       return
     }
@@ -366,7 +365,7 @@ enum StorageScanUpdate: Sendable {
 }
 
 enum StorageScanCache {
-  private static let key = "storage-scan-result-v4"
+  private static let key = "storage-scan-result-v5"
 
   static func load() -> StorageScanResult? {
     guard let data = UserDefaults.standard.data(forKey: key) else {
@@ -396,7 +395,24 @@ struct StorageBreakdownScanner: Sendable {
     onUpdate(.simulators(simulatorState.devices))
     var categories: [StorageCategory] = []
 
-    for definition in fixedCategories(home) {
+    let definitions = fixedCategories(home)
+    if let applications = definitions.first {
+      let scannedCategory = category(
+        CategoryRequest(definition: applications, simulatorState: simulatorState))
+      categories.append(scannedCategory)
+      onUpdate(.category(scannedCategory))
+    }
+
+    let largeFileRoots = existingPaths(
+      [
+        "\(home)/Desktop", "\(home)/Documents", "\(home)/Downloads", "\(home)/Movies",
+        "\(home)/Music", "\(home)/Pictures", "\(home)/Library", "\(home)/dev",
+      ] + DeveloperLocations.additionalProjectRoots)
+    let largeFiles = largeFilesCategory(largeFileRoots)
+    categories.append(largeFiles)
+    onUpdate(.category(largeFiles))
+
+    for definition in definitions.dropFirst() {
       let scannedCategory = category(
         CategoryRequest(definition: definition, simulatorState: simulatorState)
       )
@@ -423,18 +439,6 @@ struct StorageBreakdownScanner: Sendable {
     categories.append(nodeModules)
     onUpdate(.category(nodeModules))
 
-    let largeFileRoots = existingPaths(
-      [
-        "\(home)/Desktop",
-        "\(home)/Documents",
-        "\(home)/Downloads",
-        "\(home)/Movies",
-        "\(home)/dev",
-      ] + DeveloperLocations.additionalProjectRoots)
-    let largeFiles = largeFilesCategory(largeFileRoots)
-    categories.append(largeFiles)
-    onUpdate(.category(largeFiles))
-
     return StorageScanResult(
       categories: categories.sorted { left, right in
         left.bytes > right.bytes
@@ -451,12 +455,39 @@ struct StorageBreakdownScanner: Sendable {
       CategoryDefinition(
         id: "computer-applications",
         name: "Applications",
-        detail: "Installed apps",
+        detail: "Installed apps, including apps inside vendor folders",
         systemImage: "app.dashed",
         safety: .review,
         paths: [
           "/Applications",
           "\(home)/Applications",
+          "/System/Applications",
+        ]
+      ),
+      CategoryDefinition(
+        id: "computer-xcode",
+        name: "Xcode & simulators",
+        detail: "Build output, simulator devices, archives, and XcodeBuildMCP",
+        systemImage: "hammer.fill",
+        safety: .caution,
+        paths: [
+          "\(home)/Library/Developer/Xcode/DerivedData",
+          "\(home)/Library/Developer/Xcode/Archives",
+          "\(home)/Library/Developer/CoreSimulator/Devices",
+          "\(home)/Library/Developer/XcodeBuildMCP/workspaces",
+        ]
+      ),
+      CategoryDefinition(
+        id: "computer-user-caches",
+        name: "Caches",
+        detail: "App, tool, and package caches; inspect each before deleting",
+        systemImage: "shippingbox.fill",
+        safety: .caution,
+        paths: [
+          "\(home)/Library/Caches",
+          "\(home)/.cache",
+          "\(home)/Library/pnpm/store",
+          "\(home)/.npm/_cacache",
         ]
       ),
       CategoryDefinition(
@@ -608,13 +639,39 @@ struct StorageBreakdownScanner: Sendable {
 
   private func category(_ request: CategoryRequest) -> StorageCategory {
     let definition = request.definition
-    let sizes = directorySizes(existingPaths(definition.paths))
+    let paths: [String]
+    switch definition.id {
+    case "computer-applications":
+      paths = InstalledApplications.paths(in: definition.paths, fileManager: fileManager)
+    case "computer-xcode":
+      paths = definition.paths.flatMap { directChildren($0) }
+    case "computer-user-caches":
+      paths = definition.paths.flatMap { path in
+        path.hasSuffix("/Caches") || path.hasSuffix("/.cache")
+          ? directChildren(path) : existingPaths([path])
+      }
+    default:
+      paths = existingPaths(definition.paths)
+    }
+    let sizes = directorySizes(Array(Set(paths)))
     let items = sizes.map { pathSize in
       let isSimulatorCache =
         definition.id == "simulators"
         && URL(fileURLWithPath: pathSize.path).lastPathComponent == "Caches"
+      let name: String
+      if definition.id == "computer-applications" {
+        name = URL(fileURLWithPath: pathSize.path).deletingPathExtension().lastPathComponent
+      } else if definition.id == "computer-xcode",
+        let device = request.simulatorState.devices.first(where: {
+          $0.id == URL(fileURLWithPath: pathSize.path).lastPathComponent
+        })
+      {
+        name = "\(device.name) · \(device.state)"
+      } else {
+        name = abbreviatedPath(pathSize.path)
+      }
       return StorageItem(
-        name: abbreviatedPath(pathSize.path),
+        name: name,
         path: pathSize.path,
         bytes: pathSize.bytes,
         cleanupKind: isSimulatorCache ? .simulatorCache : nil,
@@ -643,6 +700,18 @@ struct StorageBreakdownScanner: Sendable {
       },
       items: items
     )
+  }
+
+  private func directChildren(_ path: String) -> [String] {
+    guard
+      let children = try? fileManager.contentsOfDirectory(
+        at: URL(fileURLWithPath: path),
+        includingPropertiesForKeys: [.isSymbolicLinkKey], options: [])
+    else { return [] }
+    return children.filter { url in
+      (try? url.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) != true
+        && CleanupVolume.read(url.path)?.isInternal == true
+    }.map(\.path)
   }
 
   private func nodeModulesCategory(_ request: NodeModulesScanRequest) -> StorageCategory {
@@ -757,14 +826,13 @@ struct StorageBreakdownScanner: Sendable {
         spotlightPaths(
           SpotlightRequest(
             root: root,
-            query: "kMDItemFSSize >= 1073741824"
+            query: "kMDItemFSSize >= 268435456"
           )
         )
       })
     let sortedItems = paths.compactMap { path -> StorageItem? in
-      guard
-        let attributes = try? fileManager.attributesOfItem(atPath: path),
-        let size = (attributes[.size] as? NSNumber)?.uint64Value
+      guard let file = ReviewFile.read(path),
+        CleanupVolume.read(file.path)?.isInternal == true
       else {
         return nil
       }
@@ -772,7 +840,7 @@ struct StorageBreakdownScanner: Sendable {
       return StorageItem(
         name: URL(fileURLWithPath: path).lastPathComponent,
         path: path,
-        bytes: size,
+        bytes: file.bytes,
         cleanupKind: nil,
         cleanupAvailability: nil,
         lastActivityAt: nil,
@@ -786,16 +854,17 @@ struct StorageBreakdownScanner: Sendable {
       left.bytes > right.bytes
     }
 
+    let displayedItems = Array(sortedItems.prefix(100))
     return StorageCategory(
       id: "large-files",
       name: "Large Files",
-      detail: "Individual files over 1 GB",
+      detail: "Largest indexed files over 256 MB",
       systemImage: "doc.fill",
       safety: .review,
-      bytes: sortedItems.reduce(0) { result, item in
+      bytes: displayedItems.reduce(0) { result, item in
         result + item.bytes
       },
-      items: Array(sortedItems.prefix(12))
+      items: displayedItems
     )
   }
 
@@ -1008,6 +1077,38 @@ struct StorageBreakdownScanner: Sendable {
     }
 
     return .ready
+  }
+}
+
+enum InstalledApplications {
+  static func paths(in roots: [String], fileManager: FileManager) -> [String] {
+    var result: [String] = []
+    for root in roots {
+      var queue: [(URL, Int)] = [(URL(fileURLWithPath: root), 0)]
+      var cursor = 0
+      while cursor < queue.count {
+        let (directory, depth) = queue[cursor]
+        cursor += 1
+        guard
+          let children = try? fileManager.contentsOfDirectory(
+            at: directory, includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
+            options: [.skipsHiddenFiles])
+        else { continue }
+        for child in children {
+          guard
+            let values = try? child.resourceValues(
+              forKeys: [.isDirectoryKey, .isSymbolicLinkKey]),
+            values.isDirectory == true, values.isSymbolicLink != true
+          else { continue }
+          if child.pathExtension.lowercased() == "app" {
+            result.append(child.path)
+          } else if depth < 2 {
+            queue.append((child, depth + 1))
+          }
+        }
+      }
+    }
+    return Array(Set(result)).sorted()
   }
 }
 

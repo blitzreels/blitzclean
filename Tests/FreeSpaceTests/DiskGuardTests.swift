@@ -34,15 +34,16 @@ struct DiskGuardTests {
   }
 
   @Test
-  func rapidLossDoesNotAlertAboveThirtyGB() {
+  func rapidLossAlertsBeforeReachingThirtyGB() {
     var evaluator = DiskRiskEvaluator()
     _ = evaluator.evaluate(sample(.init(seconds: 0, availableGiB: 70, swapGiB: 10)))
     let result = evaluator.evaluate(sample(.init(seconds: 60, availableGiB: 60, swapGiB: 18)))
-    #expect(result.risk == .normal)
+    #expect(result.risk == .critical)
     var gate = DiskAlertGate()
     let shouldSend = gate.shouldSend(result)
-    #expect(!shouldSend)
-    #expect(result.minutesToReserve == 5)
+    #expect(shouldSend)
+    #expect(
+      result.minutesToReserve == Double(60 * gib - DiskSpacePolicy.reserveBytes) / Double(10 * gib))
     #expect(result.lostBytes == 10 * gib)
     #expect(result.swapGrowth == 8 * gib)
   }

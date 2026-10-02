@@ -11,11 +11,6 @@ struct WorkspacePreference: Codable, Equatable, Identifiable, Sendable {
 
 enum WorkspacePreferences {
   static let key = "workspace.preferences.v1"
-  static let toolKey = "workspace.keptTools.v1"
-
-  static var keptTools: Set<String> {
-    Set(UserDefaults.standard.stringArray(forKey: toolKey) ?? [])
-  }
 
   static func load() -> [WorkspacePreference] {
     guard let data = UserDefaults.standard.data(forKey: key),
@@ -47,12 +42,13 @@ enum WorkspacePreferences {
   }
 }
 
-struct WorkspaceProject: Identifiable {
+struct WorkspaceProject: Identifiable, Sendable {
   let directory: String
   let preference: WorkspacePreference
   let resources: [ResourceProcess]
   let servers: [DevProcess]
   var id: String { directory }
+  var isRunning: Bool { !resources.isEmpty || !servers.isEmpty }
   var memoryBytes: UInt64 { resources.compactMap(\.memoryBytes).reduce(0, +) }
   var cpuPercent: Double { resources.reduce(0) { $0 + $1.cpuPercent } }
 }
@@ -65,12 +61,58 @@ enum WorkspaceCatalog {
   }
 
   static func projects(_ input: Input) -> [WorkspaceProject] {
+    resolvedProjects(.init(input: input, roots: resolveRoots(input)))
+  }
+
+  struct ResolvedInput {
+    let input: Input
+    let roots: [Int32: String]
+  }
+
+  static func resolveRoots(_ input: Input) -> [Int32: String] {
     let directories = Set(
       input.resources.compactMap(\.directory) + input.processes.compactMap(\.workingDirectory))
-    let roots = Dictionary(
+    let directoryRoots = Dictionary(
       uniqueKeysWithValues: directories.compactMap { directory in
         root(directory).map { (directory, $0) }
       })
+    var parents = Dictionary(
+      input.resources.map { ($0.id, $0.parentProcessID) }, uniquingKeysWith: { first, _ in first })
+    var direct = Dictionary(
+      uniqueKeysWithValues: input.resources.compactMap { resource in
+        resource.directory.flatMap { directoryRoots[$0] }.map { (resource.id, $0) }
+      })
+    for process in input.processes {
+      parents[process.id] = process.parentProcessID
+      if let directory = process.workingDirectory, let root = directoryRoots[directory] {
+        direct[process.id] = root
+      }
+    }
+    var result: [Int32: String] = [:]
+    for id in parents.keys {
+      var current = id
+      var visited: Set<Int32> = []
+      while visited.insert(current).inserted {
+        if let root = direct[current] ?? result[current] {
+          for child in visited { result[child] = root }
+          break
+        }
+        guard let parent = parents[current], parent > 1 else { break }
+        current = parent
+      }
+    }
+    return result
+  }
+
+  static func resolvedProjects(_ resolved: ResolvedInput) -> [WorkspaceProject] {
+    let input = resolved.input
+    let roots = resolved.roots
+    let resourceGroups = Dictionary(grouping: input.resources) {
+      roots[$0.id] ?? ""
+    }
+    let serverGroups = Dictionary(grouping: input.processes.filter(\.canStopWithProject)) {
+      roots[$0.id] ?? ""
+    }
     let allRoots = Set(roots.values).union(input.preferences.map(\.directory))
     return allRoots.map { directory in
       let preference =
@@ -80,11 +122,10 @@ enum WorkspaceCatalog {
           keepRunning: false, startCommand: nil)
       return WorkspaceProject(
         directory: directory, preference: preference,
-        resources: input.resources.filter { $0.directory.flatMap { roots[$0] } == directory },
-        servers: input.processes.filter {
-          $0.canStopWithProject && $0.workingDirectory.flatMap { roots[$0] } == directory
-        })
+        resources: resourceGroups[directory, default: []],
+        servers: serverGroups[directory, default: []])
     }.sorted {
+      if $0.isRunning != $1.isRunning { return $0.isRunning }
       if $0.preference.keepRunning != $1.preference.keepRunning { return $0.preference.keepRunning }
       if $0.memoryBytes != $1.memoryBytes { return $0.memoryBytes > $1.memoryBytes }
       return $0.preference.name < $1.preference.name
@@ -93,10 +134,11 @@ enum WorkspaceCatalog {
 
   static func root(_ directory: String) -> String? {
     guard
-      !["/node_modules/", "/.npm/", "/.cache/", "/.local/", "/.codex/vendor/"].contains(
+      !["/.npm/", "/.cache/", "/.local/", "/.codex/vendor/"].contains(
         where: directory.contains)
     else { return nil }
-    var url = URL(fileURLWithPath: WorkspacePreferences.canonical(directory))
+    let projectPath = directory.components(separatedBy: "/node_modules/").first ?? directory
+    var url = URL(fileURLWithPath: WorkspacePreferences.canonical(projectPath))
     let home = FileManager.default.homeDirectoryForCurrentUser.path
     var manifest: String?
     for _ in 0..<12 {

@@ -10,4 +10,14 @@ jobs:
       - name: Typecheck, test and lint
         run: ./scripts/check.sh
       - name: Package app and verify signature
-        run: ./scripts/build-app.sh
+        env:
+          BLITZCLEAN_SIGNING_IDENTITY: "-"
+        run: |
+          ./scripts/build-app.sh
+          ditto -c -k --sequesterRsrc --keepParent dist/BlitzClean.app dist/BlitzClean-ci.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BlitzClean-development
+          path: dist/BlitzClean-ci.zip
+          if-no-files-found: error
+          retention-days: 14

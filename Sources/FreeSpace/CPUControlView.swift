@@ -3,7 +3,7 @@ import SwiftUI
 
 struct CPUControlView: View {
   @ObservedObject var monitor: SystemMonitor
-  @State private var seconds = 300.0
+  @AppStorage("history.cpuSeconds") private var seconds = 86_400.0
 
   var body: some View {
     ScrollView {
@@ -11,7 +11,7 @@ struct CPUControlView: View {
         VStack(alignment: .leading, spacing: 18) {
           HStack(alignment: .firstTextBaseline, spacing: 10) {
             Text(monitor.snapshot.cpuUsage.map(PercentText.make) ?? "—")
-              .font(.system(size: 30, weight: .semibold)).monospacedDigit()
+              .font(BlitzUI.valueFont).monospacedDigit()
             Text("\(ProcessInfo.processInfo.activeProcessorCount) cores")
               .font(.system(size: 12)).foregroundStyle(.secondary)
             Spacer()
@@ -41,19 +41,20 @@ struct CPUControlView: View {
         }
         LazyVStack(spacing: 0) {
           ForEach(monitor.topCPUProcesses) { process in
-            HStack {
+            HStack(spacing: 12) {
+              ApplicationIcon(source: .process(process.id), size: 28, fallback: "terminal")
               Text(process.name).font(.system(size: 13)).lineLimit(1)
               Spacer()
               Text(String(format: "%.1f%%", process.percent))
                 .font(.system(size: 13, weight: .medium)).monospacedDigit()
-            }.padding(.vertical, 12)
+            }.blitzRow()
               .help("PID \(process.id)")
-            Divider()
+            if process.id != monitor.topCPUProcesses.last?.id { BlitzRowDivider(leading: 56) }
           }
-        }
+        }.blitzTable()
         Text("100% per process equals one core. macOS restricts access to some processes.")
           .font(.system(size: 11)).foregroundStyle(.secondary)
-      }.padding(24)
+      }.padding(BlitzUI.pagePadding)
     }
   }
 }

@@ -103,15 +103,11 @@ struct DevStopRequest: Sendable {
   let process: DevProcess
   let expected: DevProcessIdentity?
   let force: Bool
-  var toolGroupID: String? = nil
 }
 
 enum DevProcessStopper {
   static func stop(_ request: DevStopRequest) -> String {
     let target = request.process
-    if let key = request.toolGroupID, WorkspacePreferences.keptTools.contains(key) {
-      return "This tool group is set to Keep running. Unpin it before stopping a process."
-    }
     guard !WorkspacePreferences.isKeptRunning(target.workingDirectory) else {
       return "This project is set to Keep running. Unpin it in Projects before stopping a process."
     }
@@ -131,5 +127,22 @@ struct DevProcessSnapshot: Sendable {
   let processes: [DevProcess]
   let cpuProcesses: [CPUProcess]
   let identities: [Int32: DevProcessIdentity]
+  let threads: [AIThread]
   let resources: [ResourceProcess]
+  var workspaceRoots: [Int32: String] = [:]
+  var incomplete = false
+}
+
+enum ProcessWorkingDirectory {
+  static func read(_ processID: Int32) -> String? {
+    var info = proc_vnodepathinfo()
+    let size = MemoryLayout<proc_vnodepathinfo>.size
+    guard proc_pidinfo(processID, PROC_PIDVNODEPATHINFO, 0, &info, Int32(size)) == size else {
+      return nil
+    }
+    return withUnsafeBytes(of: info.pvi_cdir.vip_path) { bytes in
+      let path = String(decoding: bytes.prefix { $0 != 0 }, as: UTF8.self)
+      return path.isEmpty ? nil : path
+    }
+  }
 }

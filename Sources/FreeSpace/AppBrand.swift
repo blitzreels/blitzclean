@@ -9,15 +9,17 @@ enum AppBrand {
   }
   static let accent = BlitzUI.mint
   static let bundleIdentifier = "com.blitzreels.BlitzClean"
+  static let icon: NSImage? = Bundle.main.url(forResource: "AppIcon", withExtension: "icns")
+    .flatMap(NSImage.init(contentsOf:))
+  static let mark: NSImage? = Bundle.main.url(forResource: "Mark", withExtension: "svg")
+    .flatMap(NSImage.init(contentsOf:))
   static let repositoryURL = URL(string: "https://github.com/blitzreels/blitzclean")!
 }
 
 struct BrandMark: View {
   var body: some View {
     Group {
-      if let url = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
-        let icon = NSImage(contentsOf: url)
-      {
+      if let icon = AppBrand.icon {
         Image(nsImage: icon).resizable().scaledToFit()
       } else {
         fallback

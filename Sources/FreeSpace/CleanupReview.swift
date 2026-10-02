@@ -1,7 +1,7 @@
 import Darwin
 import Foundation
 
-struct ReviewFile: Equatable, Identifiable, Sendable {
+struct ReviewFile: Codable, Equatable, Identifiable, Sendable {
   let path: String
   let bytes: UInt64
   let modifiedAt: Date
@@ -53,10 +53,25 @@ struct ReviewFile: Equatable, Identifiable, Sendable {
   }
 }
 
-struct ReviewScanRequest: Sendable {
+struct ReviewScanRequest: Codable, Sendable {
   let roots: [String]
   let minimumBytes: UInt64
   let maxEntries: Int
+  var entireHierarchy = false
+}
+
+extension ReviewScanRequest {
+  private enum CodingKeys: String, CodingKey {
+    case roots, minimumBytes, maxEntries, entireHierarchy
+  }
+
+  init(from decoder: Decoder) throws {
+    let values = try decoder.container(keyedBy: CodingKeys.self)
+    roots = try values.decode([String].self, forKey: .roots)
+    minimumBytes = try values.decode(UInt64.self, forKey: .minimumBytes)
+    maxEntries = try values.decode(Int.self, forKey: .maxEntries)
+    entireHierarchy = try values.decodeIfPresent(Bool.self, forKey: .entireHierarchy) ?? false
+  }
 }
 
 struct ReviewScanResult: Sendable {
@@ -90,6 +105,10 @@ enum CleanupReviewScanner {
         limited = true
         continue
       }
+      guard CleanupVolume.read(physicalRoot)?.isInternal == true else {
+        limited = true
+        continue
+      }
       let rootURL = URL(fileURLWithPath: physicalRoot)
       var queue: [(url: URL, depth: Int)] = [(rootURL, 0)]
       var cursor = 0
@@ -100,7 +119,7 @@ enum CleanupReviewScanner {
         do {
           children = try FileManager.default.contentsOfDirectory(
             at: directory.url,
-            includingPropertiesForKeys: nil,
+            includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey, .isPackageKey],
             options: [.skipsHiddenFiles])
         } catch {
           limited = true
@@ -123,9 +142,11 @@ enum CleanupReviewScanner {
           if values.isSymbolicLink == true { continue }
           if values.isDirectory == true {
             if !excluded.contains(url.lastPathComponent), values.isPackage != true,
-              directory.depth < 3
+              directory.depth < 32
             {
               queue.append((url, directory.depth + 1))
+            } else if directory.depth >= 32 {
+              limited = true
             }
             continue
           }
@@ -133,13 +154,17 @@ enum CleanupReviewScanner {
             file.path.hasPrefix(physicalRoot + "/"),
             CleanupVolume.read(file.path)?.isInternal == true
           else { continue }
-          files[file.path] = file
+          if files.count < 5_000 || files[file.path] != nil {
+            files[file.path] = file
+          } else {
+            limited = true
+          }
         }
       }
       if cursor < queue.count { limited = true }
     }
     return ReviewScanResult(
-      files: Array(files.values.sorted { $0.bytes > $1.bytes }.prefix(60)), limited: limited)
+      files: files.values.sorted { $0.bytes > $1.bytes }, limited: limited)
   }
 }
 
@@ -251,6 +276,7 @@ private struct BootedSimulatorList: Decodable {
 
 enum ReviewDeleteError: LocalizedError {
   case changed, missing, unverified, outsideRoots
+  case protected
   case busy([String])
 
   var errorDescription: String? {
@@ -261,6 +287,8 @@ enum ReviewDeleteError: LocalizedError {
       "This file is open\(apps.isEmpty ? " in another app" : " in " + apps.joined(separator: ", ")). Close the file there, then try again."
     case .unverified: "The open-file check could not finish safely. Try again, or use Finder."
     case .outsideRoots: "This path is outside the file review locations."
+    case .protected:
+      "System and app files are view-only here. Use their dedicated cleanup or uninstall action."
     }
   }
 }
@@ -271,6 +299,15 @@ struct ReviewDeleteRequest: Sendable {
 }
 
 enum ReviewFileDeletion {
+  static func canTrashPath(_ path: String) -> Bool {
+    let dataPrefix = "/System/Volumes/Data"
+    let visible = path.hasPrefix(dataPrefix + "/") ? String(path.dropFirst(dataPrefix.count)) : path
+    guard !visible.split(separator: "/").contains(where: { $0.hasSuffix(".app") }) else {
+      return false
+    }
+    return visible.hasPrefix("/Users/") || visible.hasPrefix("/Volumes/")
+  }
+
   static func validateIdentity(_ request: ReviewDeleteRequest) throws {
     let file = request.file
     var info = stat()
@@ -295,8 +332,11 @@ enum ReviewFileDeletion {
 
   static func trash(_ request: ReviewDeleteRequest) throws {
     try validateIdentity(request)
-    guard CleanupVolume.read(request.file.path)?.isInternal == true else {
-      throw ReviewDeleteError.outsideRoots
+    guard canTrashPath(request.file.path) else { throw ReviewDeleteError.protected }
+    let volume = try URL(fileURLWithPath: request.file.path)
+      .resourceValues(forKeys: [.volumeIsLocalKey, .volumeIsReadOnlyKey])
+    guard volume.volumeIsLocal == true, volume.volumeIsReadOnly == false else {
+      throw ReviewDeleteError.unverified
     }
     let result = CleanupActivity.command(["-nP", "-Fpc", "--", request.file.path])
     if result.status == 0 { throw ReviewDeleteError.busy([]) }
@@ -339,21 +379,67 @@ final class CleanupOverviewModel: ObservableObject {
   @Published private(set) var message: String?
   @Published private(set) var deletionFailure: ReviewDeletionFailure?
   @Published private(set) var historyError: String?
+  @Published var mediaFilter = MediaReviewFilter() {
+    didSet {
+      guard !isRestoringReview else { return }
+      do { try reviewStore.saveFilter(mediaFilter) } catch {
+        reviewPersistenceError = "Media filters could not be saved."
+      }
+    }
+  }
+  @Published private(set) var reviewPersistenceError: String?
+  private var isRestoringReview = true
+  private let reviewStore: MediaReviewStore
   private let store: CleanupHistoryStore
   private var scanRequest: ReviewScanRequest
-  private var scanTask: Task<(ReviewScanResult, Set<String>?), Never>?
+  private struct ScanCompletion: Sendable {
+    let result: ReviewScanResult
+    let workingDirectories: Set<String>?
+    let progress: DriveScanProgress?
+  }
+
+  private var scanTask: Task<ScanCompletion, Never>?
   private var scanTimeout: Task<Void, Never>?
   private var scanGeneration = UUID()
   @Published private(set) var scanStatus: String?
+  @Published private(set) var driveProgress: DriveScanProgress?
   private var synchronizationTask: Task<Void, Never>?
   private var hasUnsavedHistory = false
+  private var importedReports: [String: Date?] = [:]
+  private var fileValidationTask: Task<[ReviewFile], Never>?
+  private var lastFileValidation = Date.distantPast
 
   init(_ configuration: CleanupOverviewConfiguration) {
     store = configuration.store
     scanRequest = configuration.scanRequest
+    reviewStore = MediaReviewStore(
+      url: configuration.store.url.deletingLastPathComponent()
+        .appendingPathComponent(".\(configuration.store.url.lastPathComponent).review.json"))
+    do {
+      if let saved = try reviewStore.load() {
+        scanRequest = saved.request
+        mediaFilter = saved.filter
+        var identities = Set<String>()
+        files = saved.files.filter { identities.insert("\($0.device):\($0.inode)").inserted }
+        scannedAt = saved.scannedAt
+        scanLimited = saved.limited
+      }
+      if let filter = try reviewStore.loadFilter() { mediaFilter = filter }
+      if configuration.scanRequest.entireHierarchy && !scanRequest.entireHierarchy {
+        scanRequest = configuration.scanRequest
+        files = []
+        scannedAt = nil
+        scanLimited = false
+        mediaFilter = MediaReviewFilter()
+      }
+    } catch {
+      reviewPersistenceError = "Saved file review could not be read. Scan again to rebuild it."
+    }
+    isRestoringReview = false
     do { ledger = try store.load() } catch {
       historyError = "Cleanup history could not be read. Existing history is preserved."
     }
+    importReports()
     if configuration.synchronizesInBackground {
       synchronizationTask = Task { [weak self] in
         while !Task.isCancelled {
@@ -364,11 +450,34 @@ final class CleanupOverviewModel: ObservableObject {
     }
   }
 
-  deinit { synchronizationTask?.cancel() }
+  deinit {
+    synchronizationTask?.cancel()
+    fileValidationTask?.cancel()
+  }
 
   func synchronize() {
-    let current = files.compactMap(\.currentVersion)
-    if current != files { files = current }
+    if !isScanning, !scanRequest.entireHierarchy, files.count <= 100 {
+      let current = files.compactMap(\.currentVersion)
+      if current != files {
+        files = current
+        saveReview()
+      }
+    } else if !isScanning, fileValidationTask == nil,
+      Date.now.timeIntervalSince(lastFileValidation) >= 30
+    {
+      let snapshot = files
+      lastFileValidation = .now
+      let worker = Task.detached(priority: .utility) { snapshot.compactMap(\.currentVersion) }
+      fileValidationTask = worker
+      Task {
+        let current = await worker.value
+        if files == snapshot, current != files {
+          files = current
+          saveReview()
+        }
+        fileValidationTask = nil
+      }
+    }
     do {
       var latest = try store.load()
       for win in ledger.wins { latest.record(win) }
@@ -381,6 +490,38 @@ final class CleanupOverviewModel: ObservableObject {
     } catch {
       historyError = "Cleanup history could not be read. Existing history is preserved."
     }
+    importReports()
+  }
+
+  /// JSON cleanup reports dropped here, for example by an agent, join the history once.
+  var reportsDirectory: URL {
+    store.url.deletingLastPathComponent().appendingPathComponent("reports", isDirectory: true)
+  }
+
+  func importReports() {
+    guard
+      let files = try? FileManager.default.contentsOfDirectory(
+        at: reportsDirectory, includingPropertiesForKeys: [.contentModificationDateKey])
+    else { return }
+    let known = Set(ledger.wins.map(\.id))
+    for file in files where file.pathExtension == "json" {
+      let modified = try? file.resourceValues(forKeys: [.contentModificationDateKey])
+        .contentModificationDate
+      guard importedReports[file.lastPathComponent] != modified else { continue }
+      importedReports[file.lastPathComponent] = modified
+      for win in CleanupReportImporter.wins(file) where !known.contains(win.id) {
+        ledger.record(win)
+        hasUnsavedHistory = true
+      }
+    }
+    if hasUnsavedHistory {
+      do {
+        ledger = try store.merge(ledger)
+        hasUnsavedHistory = false
+      } catch {
+        historyError = "Imported cleanup reports could not be saved yet. Retrying automatically."
+      }
+    }
   }
 
   var reviewRoots: [String] { scanRequest.roots }
@@ -390,12 +531,18 @@ final class CleanupOverviewModel: ObservableObject {
     guard !isScanning, deletingPath == nil, queuedFiles.isEmpty else { return }
     scanRequest = request
     files = []
+    scannedAt = nil
+    saveReview()
     refresh()
   }
 
   func refreshIfNeeded() {
     synchronize()
-    if scannedAt.map({ Date().timeIntervalSince($0) < 60 }) == true { return }
+    if let scannedAt, Date.now.timeIntervalSince(scannedAt) < 3_600,
+      !files.isEmpty || !scanLimited
+    {
+      return
+    }
     refresh()
   }
 
@@ -403,32 +550,64 @@ final class CleanupOverviewModel: ObservableObject {
     guard !isScanning else { return }
     isScanning = true
     scanStatus = nil
+    driveProgress = nil
     let request = scanRequest
     let generation = UUID()
     scanGeneration = generation
     let worker = Task.detached(priority: .utility) {
+      [weak self] () -> ScanCompletion in
+      if request.entireHierarchy {
+        let result = DriveFileScanner.scan(
+          .init(
+            roots: request.roots, minimumBytes: request.minimumBytes, resultLimit: 5_000,
+            progress: { [weak self] progress in
+              Task { @MainActor [weak self] in
+                guard let self, self.scanGeneration == generation, self.isScanning else { return }
+                self.driveProgress = progress
+                self.files = progress.files
+              }
+            }))
+        return ScanCompletion(
+          result: ReviewScanResult(
+            files: result.files, limited: !result.complete || result.unreadable > 0),
+          workingDirectories: nil, progress: result
+        )
+      }
       let scan = CleanupReviewScanner.scan(request)
-      return (scan, Task.isCancelled ? nil : CleanupActivity.workingDirectories())
+      return ScanCompletion(
+        result: scan,
+        workingDirectories: Task.isCancelled ? nil : CleanupActivity.workingDirectories(),
+        progress: nil)
     }
     scanTask = worker
-    scanTimeout = Task {
-      do { try await Task.sleep(for: .seconds(20)) } catch { return }
-      guard scanGeneration == generation else { return }
-      stopScan("Scan stopped after 20 seconds. Choose a folder to narrow the search.")
+    if !request.entireHierarchy {
+      scanTimeout = Task {
+        do { try await Task.sleep(for: .seconds(32)) } catch { return }
+        guard scanGeneration == generation else { return }
+        stopScan("Scan could not finish. Choose a folder to narrow the search.")
+      }
     }
     Task {
       let result = await worker.value
       guard scanGeneration == generation else { return }
       scanTimeout?.cancel()
       scanTask = nil
-      applyScan(result.0)
-      activeWorkingDirectories = result.1
+      if request.entireHierarchy {
+        driveProgress = result.progress
+        files = result.result.files
+        scanLimited = result.result.limited
+        scannedAt = .now
+        saveReview()
+      } else {
+        applyScan(result.result)
+      }
+      activeWorkingDirectories = result.workingDirectories
       isScanning = false
     }
   }
 
   func cancelScan() {
-    stopScan("Scan cancelled. Choose a folder or scan again when ready.")
+    stopScan("Scan stopped. Files already found remain available.")
   }
 
   private func stopScan(_ status: String) {
@@ -440,12 +619,26 @@ final class CleanupOverviewModel: ObservableObject {
     scanLimited = true
     scannedAt = .now
     scanStatus = status
+    saveReview()
   }
 
   func applyScan(_ result: ReviewScanResult) {
     files = result.files.compactMap(\.currentVersion)
     scanLimited = result.limited
     scannedAt = .now
+    saveReview()
+  }
+
+  private func saveReview() {
+    do {
+      try reviewStore.save(
+        .init(
+          version: 1, request: scanRequest, filter: mediaFilter,
+          files: files, scannedAt: scannedAt, limited: scanLimited))
+      reviewPersistenceError = nil
+    } catch {
+      reviewPersistenceError = "File review could not be saved. Free disk space and scan again."
+    }
   }
 
   func record(_ win: CleanupWin) {
@@ -535,7 +728,8 @@ struct CleanupOverviewConfiguration: Sendable {
     Self(
       store: .application,
       scanRequest: ReviewScanRequest(
-        roots: CleanupReviewScanner.roots, minimumBytes: 256 * 1_024 * 1_024, maxEntries: 80_000),
+        roots: StorageDrives.roots, minimumBytes: 100 * 1_024 * 1_024, maxEntries: 80_000,
+        entireHierarchy: true),
       synchronizesInBackground: true)
   }
 }

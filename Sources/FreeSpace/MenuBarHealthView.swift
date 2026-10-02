@@ -45,6 +45,7 @@ enum MenuBarStatusText {
 
 struct MenuBarHealthLabel: View {
   @Environment(\.openWindow) private var openWindow
+  @EnvironmentObject private var navigation: CleanNavigation
   let snapshot: SystemSnapshot
   let risk: MemoryRisk
 
@@ -53,17 +54,6 @@ struct MenuBarHealthLabel: View {
   @AppStorage(MenuBarPreferenceKey.showMemory) private var showMemory = true
   @AppStorage(MenuBarPreferenceKey.showDisk) private var showDisk = true
 
-  private var statusText: String {
-    MenuBarStatusText.make(
-      MenuBarStatusTextInput(
-        snapshot: snapshot,
-        showDisk: showDisk,
-        showCPU: showCPU,
-        showMemory: showMemory
-      )
-    )
-  }
-
   var body: some View {
     Image(nsImage: MenuBarLabelRenderer.image(content: metrics, colored: showHealth))
       .accessibilityElement(children: .ignore)
@@ -71,28 +61,43 @@ struct MenuBarHealthLabel: View {
       .help(accessibilityLabel)
       .task {
         if let window = AppLaunch.initialWindow.consume() {
-          openWindow(id: window)
+          if let page = CleanPage.destination(for: window) { navigation.page = page }
+          openWindow(id: "dashboard")
           NSApp.activate(ignoringOtherApps: true)
         }
       }
       .onReceive(NotificationCenter.default.publisher(for: .openMemoryRescue)) { _ in
-        openWindow(id: "memory-rescue")
+        navigation.page = .memory
+        openWindow(id: "dashboard")
         NSApp.activate(ignoringOtherApps: true)
       }
       .onReceive(NotificationCenter.default.publisher(for: .openWorkspace)) { _ in
         openWindow(id: "dashboard")
         NSApp.activate(ignoringOtherApps: true)
       }
+      .onReceive(NotificationCenter.default.publisher(for: .openAppRecovery)) { _ in
+        navigation.page = .recovery
+        openWindow(id: "dashboard")
+        NSApp.activate(ignoringOtherApps: true)
+      }
       .onReceive(NotificationCenter.default.publisher(for: .openStorageReview)) { _ in
-        openWindow(id: "storage-breakdown")
+        navigation.page = .storage
+        openWindow(id: "dashboard")
         NSApp.activate(ignoringOtherApps: true)
       }
   }
 
   var metrics: some View {
     HStack(spacing: 8) {
-      Image(systemName: risk > .normal ? "exclamationmark.triangle.fill" : "bolt.fill")
-        .font(.system(size: 12, weight: .semibold))
+      Group {
+        if risk > .normal {
+          Image(systemName: "exclamationmark.triangle.fill")
+        } else if let mark = AppBrand.mark {
+          Image(nsImage: mark).resizable().renderingMode(.template).frame(width: 18, height: 18)
+        } else {
+          Image(systemName: "bolt.fill")
+        }
+      }.font(.system(size: 12, weight: .semibold))
         .foregroundStyle(showHealth && risk > .normal ? risk.tone.color : .primary)
       if showCPU {
         MenuBarMetric(
@@ -122,7 +127,7 @@ struct MenuBarHealthLabel: View {
     let memory = MenuBarStatusText.percentage(snapshot.ramUsedRatio)
     let disk = ByteText.full(snapshot.diskAvailable)
     return
-      "Mac \(snapshot.healthStatus.title), CPU \(cpu), memory \(memory), \(disk) disk free. \(statusText)"
+      "Mac \(snapshot.healthStatus.title), CPU \(cpu), memory \(memory), \(disk) disk free."
   }
 }
 
@@ -152,9 +157,10 @@ private struct MenuBarMetric: View {
   let colored: Bool
 
   var body: some View {
-    VStack(spacing: 0) {
-      Text(title).font(.system(size: 8, weight: .medium)).opacity(0.8)
-      Text(value).font(.system(size: 10, weight: .semibold)).monospacedDigit()
+    HStack(spacing: 4) {
+      Image(systemName: title == "CPU" ? "cpu" : title == "RAM" ? "memorychip" : "internaldrive")
+        .font(.system(size: 12, weight: .medium))
+      Text(value).font(.system(size: 12, weight: .semibold)).monospacedDigit()
         .foregroundStyle(colored && (tone == .warning || tone == .critical) ? tone.color : .primary)
     }.fixedSize()
   }
@@ -182,12 +188,6 @@ enum MenuBarLabelRenderer {
       size: NSSize(width: CGFloat(cgImage.width) / 2, height: CGFloat(cgImage.height) / 2))
     image.isTemplate = !colored
     return image
-  }
-}
-
-struct MenuBarDisplayMenuItems: View {
-  var body: some View {
-    Section("Show in menu bar") { MenuBarDisplayControls() }
   }
 }
 

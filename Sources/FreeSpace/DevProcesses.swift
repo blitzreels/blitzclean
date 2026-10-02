@@ -336,34 +336,22 @@ struct DevProcessScanner: Sendable {
   func snapshot() -> DevProcessSnapshot {
     let startedAt = Date().timeIntervalSince1970
     let currentUserID = Int(getuid())
-    let records = RawProcessParser.records(
-      commandOutput(
-        ProcessCommandRequest(
-          executable: "/bin/ps",
-          arguments: ["-axo", "pid=,ppid=,uid=,pcpu=,rss=,etime=,tty=,args="]
-        )
-      )
-    ).filter { record in
-      record.userID == currentUserID
-        && record.processID != ProcessInfo.processInfo.processIdentifier
+    let recordResult = DeveloperCommand.run(
+      .init(
+        executable: "/bin/ps", arguments: ["-axo", "pid=,ppid=,uid=,pcpu=,rss=,etime=,tty=,args="],
+        timeout: 3, maximumBytes: 4 * 1_024 * 1_024))
+    let records = RawProcessParser.records(recordResult.output).filter {
+      $0.userID == currentUserID && $0.processID != getpid()
     }
-
-    let portsByProcess = ProjectProcessParser.listeningPorts(
-      commandOutput(
-        ProcessCommandRequest(
-          executable: "/usr/sbin/lsof",
-          arguments: ["-nP", "-iTCP", "-sTCP:LISTEN", "-Fpcn"]
-        )
-      )
-    )
-    let workingDirectories = ProjectProcessParser.workingDirectories(
-      commandOutput(
-        ProcessCommandRequest(
-          executable: "/usr/sbin/lsof",
-          arguments: ["-a", "-d", "cwd", "-u", String(currentUserID), "-Fpn"]
-        )
-      )
-    )
+    let portResult = DeveloperCommand.run(
+      .init(
+        executable: "/usr/sbin/lsof", arguments: ["-nP", "-iTCP", "-sTCP:LISTEN", "-Fpcn"],
+        timeout: 3, maximumBytes: 4 * 1_024 * 1_024))
+    let portsByProcess = ProjectProcessParser.listeningPorts(portResult.output)
+    let workingDirectories = Dictionary(
+      uniqueKeysWithValues: records.compactMap { record in
+        ProcessWorkingDirectory.read(record.processID).map { (record.processID, $0) }
+      })
 
     let footprints = Dictionary(
       uniqueKeysWithValues: records.compactMap { record in
@@ -399,11 +387,13 @@ struct DevProcessScanner: Sendable {
 
       return left.memoryBytes > right.memoryBytes
     }
-    let cpuRecords = RawProcessParser.records(
-      commandOutput(
-        ProcessCommandRequest(
-          executable: "/bin/ps",
-          arguments: ["-axo", "pid=,ppid=,uid=,pcpu=,rss=,etime=,tty=,comm="])))
+    let cpuRecords = records.map { record in
+      RawProcessRecord(
+        processID: record.processID, parentProcessID: record.parentProcessID, userID: record.userID,
+        cpuPercent: record.cpuPercent, residentKilobytes: record.residentKilobytes,
+        elapsed: record.elapsed, terminal: record.terminal,
+        arguments: executables[record.processID] ?? "Process")
+    }
     let identities = Dictionary(
       uniqueKeysWithValues: records.compactMap { process -> (Int32, DevProcessIdentity)? in
         guard let identity = DevProcessIdentity.read(process.processID),
@@ -412,29 +402,40 @@ struct DevProcessScanner: Sendable {
         else { return nil }
         return (process.processID, identity)
       })
+    let threads = AIThreadGrouping.threads(
+      AIThreadInput(
+        records: records, directories: workingDirectories, footprints: footprints,
+        startTimes: identities.mapValues {
+          Double($0.process.startSeconds) + Double($0.process.startMicroseconds) / 1_000_000
+        },
+        home: FileManager.default.homeDirectoryForCurrentUser.path,
+        stoppedIDs: Set(identities.compactMap { $0.value.process.stopped ? $0.key : nil })))
+    let resources = ResourceOwnership.processes(
+      .init(
+        records: records, directories: workingDirectories, footprints: footprints,
+        executables: executables))
+    let roots = WorkspaceCatalog.resolveRoots(
+      .init(resources: resources, processes: sorted, preferences: []))
     return DevProcessSnapshot(
       processes: sorted,
       cpuProcesses: CPUProcessRanking.ranked(
         .init(records: cpuRecords, workingDirectories: workingDirectories)),
       identities: identities,
-      resources: ResourceOwnership.processes(
-        .init(
-          records: records, directories: workingDirectories,
-          footprints: footprints, executables: executables)))
+      threads: threads,
+      resources: resources, workspaceRoots: roots,
+      incomplete: recordResult.status != 0 || portResult.status < 0)
   }
 
   private func dedupeListeners(_ processes: [DevProcess]) -> [DevProcess] {
-    let ids = Set(processes.map(\.processID))
+    let byID = Dictionary(
+      processes.map { ($0.processID, $0) }, uniquingKeysWith: { first, _ in first })
     return processes.filter { process in
       guard process.kind == .listener || process.kind == .devServer else {
         return true
       }
 
-      if let parent = processes.first(where: { candidate in
-        candidate.processID == process.parentProcessID
-      }),
-        parent.listeningPorts == process.listeningPorts, !parent.listeningPorts.isEmpty,
-        ids.contains(parent.processID)
+      if let parent = byID[process.parentProcessID],
+        parent.listeningPorts == process.listeningPorts, !parent.listeningPorts.isEmpty
       {
         return false
       }
@@ -444,20 +445,11 @@ struct DevProcessScanner: Sendable {
   }
 
   private func commandOutput(_ request: ProcessCommandRequest) -> String {
-    let process = Process()
-    let pipe = Pipe()
-    process.executableURL = URL(fileURLWithPath: request.executable)
-    process.arguments = request.arguments
-    process.standardOutput = pipe
-    process.standardError = FileHandle.nullDevice
-
-    guard (try? process.run()) != nil else {
-      return ""
-    }
-
-    let data = pipe.fileHandleForReading.readDataToEndOfFile()
-    process.waitUntilExit()
-    return String(decoding: data, as: UTF8.self)
+    DeveloperCommand.run(
+      .init(
+        executable: request.executable, arguments: request.arguments,
+        timeout: 3, maximumBytes: 4 * 1_024 * 1_024)
+    ).output
   }
 }
 
@@ -512,8 +504,10 @@ final class DevProcessModel: ObservableObject {
   @Published private(set) var processes: [DevProcess] = []
   @Published private(set) var cpuProcesses: [CPUProcess] = []
   @Published private(set) var resources: [ResourceProcess] = []
-  @Published private(set) var keptTools = WorkspacePreferences.keptTools
-  private var toolResources: [String: [ResourceProcess]] = [:]
+  @Published private(set) var workspaceRoots: [Int32: String] = [:]
+  @Published private(set) var threads: [AIThread] = []
+  @Published private(set) var stoppingThreads: Set<String> = []
+  @Published private(set) var threadMessage: String?
   @Published private(set) var stoppingIDs: Set<Int32> = []
   private var identities: [Int32: DevProcessIdentity] = [:]
   @Published private(set) var isRefreshing = false
@@ -521,6 +515,15 @@ final class DevProcessModel: ObservableObject {
   @Published private(set) var statusMessage: String?
   @Published private(set) var probes: [Int: PortProbe] = [:]
 
+  @Published private(set) var pressure = PressureAssessment.checking
+  @Published private(set) var autoPauseDirectories = Set(
+    UserDefaults.standard.stringArray(forKey: ProjectPausePolicy.key) ?? [])
+  @Published private(set) var projectTargets: [String: ProjectPauseTarget] = [:]
+  @Published private(set) var projectAction: String?
+  @Published private(set) var actingProjects: Set<String> = []
+  @Published private(set) var projectMessages: [String: String] = [:]
+  @Published private(set) var scanDuration: TimeInterval = 0
+  private let sentinel = PressureSentinel()
   private let scanner = DevProcessScanner()
   private let prober = PortProber()
   private var timer: Timer?
@@ -528,6 +531,16 @@ final class DevProcessModel: ObservableObject {
   private var portOwners: [Int: Set<Int32>] = [:]
 
   init() {
+    sentinel.start { [weak self] update in
+      Task { @MainActor [weak self] in
+        self?.pressure = update.assessment
+        ResourceSnapshotCache.pressure = update.assessment
+        if let action = update.action {
+          self?.projectAction = action
+          self?.refresh()
+        }
+      }
+    }
     startAutoRefresh()
     refresh()
   }
@@ -565,6 +578,7 @@ final class DevProcessModel: ObservableObject {
 
     isRefreshing = true
     let scanner = scanner
+    let started = Date.now
 
     Task { [weak self] in
       let scanned = await Task.detached(priority: .utility) {
@@ -578,14 +592,99 @@ final class DevProcessModel: ObservableObject {
       processes = scanned.processes
       cpuProcesses = scanned.cpuProcesses
       resources = scanned.resources
-      toolResources = Dictionary(
-        grouping: scanned.resources.filter(\.isTool), by: ResourceOwnership.groupID)
+      workspaceRoots = scanned.workspaceRoots
+      threads = scanned.threads
       ResourceSnapshotCache.groups = ResourceOwnership.groups(scanned.resources)
       ResourceSnapshotCache.scannedAt = .now
       identities = scanned.identities
       scannedAt = .now
       isRefreshing = false
-      probeStalePorts()
+      scanDuration = Date.now.timeIntervalSince(started)
+      statusMessage =
+        scanned.incomplete
+        ? "Process scan incomplete; some processes or ports could not be read." : nil
+      updateProjectTargets()
+      if pressure.risk < .warning { probeStalePorts() }
+    }
+  }
+
+  func updateProjectTargets() {
+    let projects = WorkspaceCatalog.resolvedProjects(
+      .init(
+        input: .init(
+          resources: resources, processes: processes, preferences: WorkspacePreferences.load()),
+        roots: workspaceRoots))
+    let excluded = Set(threads.flatMap(\.processIDs))
+    projectTargets = Dictionary(
+      uniqueKeysWithValues: projects.compactMap { project in
+        ProjectPausePolicy.target(
+          .init(
+            project: project, identities: identities, excludedIDs: excluded,
+            date: scannedAt ?? .distantPast)
+        )
+        .map { (project.directory, $0) }
+      })
+    sentinel.update(projectTargets.values.filter { !actingProjects.contains($0.directory) })
+  }
+
+  struct AutoPauseRequest {
+    let directory: String
+    let enabled: Bool
+  }
+
+  func setAutoPause(_ request: AutoPauseRequest) {
+    if request.enabled {
+      autoPauseDirectories.insert(request.directory)
+    } else {
+      autoPauseDirectories.remove(request.directory)
+    }
+    UserDefaults.standard.set(Array(autoPauseDirectories), forKey: ProjectPausePolicy.key)
+    updateProjectTargets()
+  }
+
+  func pauseProject(_ target: ProjectPauseTarget) {
+    guard actingProjects.insert(target.directory).inserted else { return }
+    projectMessages[target.directory] = nil
+    sentinel.update(projectTargets.values.filter { !actingProjects.contains($0.directory) })
+    let request = ProjectPausePolicy.SignalRequest(target: target, resume: target.isPaused)
+    Task { [weak self] in
+      let count = await Task.detached(priority: .userInitiated) {
+        ProjectPausePolicy.signal(request)
+      }.value
+      self?.projectMessages[target.directory] =
+        count > 0
+        ? "\(target.name): \(count) processes \(request.resume ? "resumed" : "paused; RAM is still held")."
+        : "The processes changed or are protected. Refresh before trying again."
+      self?.actingProjects.remove(target.directory)
+      self?.refresh()
+    }
+  }
+
+  func stopProjectWorkers(_ target: ProjectPauseTarget) {
+    guard actingProjects.insert(target.directory).inserted else { return }
+    projectAction = nil
+    projectMessages[target.directory] = nil
+    sentinel.update(projectTargets.values.filter { !actingProjects.contains($0.directory) })
+    Task { [weak self] in
+      let message = await Task.detached(priority: .userInitiated) {
+        let count = ProjectPausePolicy.stop(target)
+        guard count > 0 else { return "Processes changed or are protected. Refresh to try again." }
+        for _ in 0..<12 {
+          if ProjectPausePolicy.remaining(target) == 0 {
+            return "Stopped \(count) development processes."
+          }
+          try? await Task.sleep(for: .milliseconds(150))
+        }
+        return
+          "Stop requested; \(ProjectPausePolicy.remaining(target)) processes are still finishing."
+      }.value
+      if message.hasPrefix("Stopped ") {
+        self?.projectAction = "\(target.name): \(message)"
+      } else {
+        self?.projectMessages[target.directory] = message
+      }
+      self?.actingProjects.remove(target.directory)
+      self?.refresh()
     }
   }
 
@@ -670,52 +769,73 @@ final class DevProcessModel: ObservableObject {
     }
   }
 
+  func pauseThread(_ thread: AIThread) {
+    signalThread(thread, .pause)
+  }
+
+  func resumeThread(_ thread: AIThread) {
+    signalThread(thread, .resume)
+  }
+
+  func stopThread(_ thread: AIThread, force: Bool) {
+    signalThread(thread, force ? .forceQuit : .quit)
+  }
+
+  private func signalThread(_ thread: AIThread, _ signal: AIThreadSignal) {
+    guard stoppingThreads.insert(thread.id).inserted else { return }
+    let request = AIThreadStopRequest(
+      thread: thread, expected: identities.filter { thread.processIDs.contains($0.key) },
+      force: signal == .forceQuit)
+    let label = [thread.name, thread.project].compactMap { $0 }.joined(separator: " · ")
+    Task { [weak self] in
+      let outcome = await Task.detached(priority: .userInitiated) { () async -> String? in
+        guard AIThreadStopper.signal(request, signal) > 0 else { return nil }
+        switch signal {
+        case .pause:
+          for _ in 0..<8 {
+            if AIThreadStopper.paused(request) { return "paused" }
+            try? await Task.sleep(for: .milliseconds(50))
+          }
+          return "pause-pending"
+        case .resume:
+          for _ in 0..<8 {
+            if !AIThreadStopper.paused(request), AIThreadStopper.running(request) {
+              return "resumed"
+            }
+            try? await Task.sleep(for: .milliseconds(50))
+          }
+          return "resume-pending"
+        case .quit, .forceQuit:
+          for _ in 0..<12 {
+            guard AIThreadStopper.running(request) else { return "quit" }
+            try? await Task.sleep(for: .milliseconds(250))
+          }
+          return "still-running"
+        }
+      }.value
+      guard let self else { return }
+      threadMessage =
+        switch (signal, outcome) {
+        case (_, nil): "\(label) already exited or changed. The list is refreshed."
+        case (.pause, "paused"), (.pause, "pause-pending"):
+          "\(label) paused · CPU stopped, \(ByteText.full(thread.memoryBytes)) RAM still held. Resume when you want it back."
+        case (.resume, _): "\(label) resumed"
+        case (.forceQuit, "quit"):
+          "\(label) force quit · it was using \(ByteText.full(thread.memoryBytes))"
+        case (.quit, "quit"):
+          "\(label) quit · it was using \(ByteText.full(thread.memoryBytes))"
+        case (.quit, "still-running"), (.forceQuit, "still-running"):
+          "\(label) is still running. Use Force Quit to end it now."
+        default: nil
+        }
+      stoppingThreads.remove(thread.id)
+      refresh()
+    }
+  }
+
   func stopRequest(_ process: DevProcess) -> DevStopRequest {
     DevStopRequest(
-      process: process, expected: identities[process.processID], force: false,
-      toolGroupID: resources.first { $0.id == process.id && $0.isTool }.map(
-        ResourceOwnership.groupID))
-  }
-
-  struct ToolPolicyChange {
-    let groupID: String
-    let keep: Bool
-  }
-
-  func keepTools(_ change: ToolPolicyChange) {
-    if change.keep { keptTools.insert(change.groupID) } else { keptTools.remove(change.groupID) }
-    UserDefaults.standard.set(Array(keptTools), forKey: WorkspacePreferences.toolKey)
-  }
-
-  func toolStopRequests(_ groupID: String) -> [DevStopRequest] {
-    toolResources[groupID, default: []].map { resource in
-      let process = DevProcess(
-        processID: resource.id, parentProcessID: resource.parentProcessID,
-        kind: .listener, name: resource.name, detail: "Tool service",
-        workingDirectory: resource.directory,
-        listeningPorts: [], cpuPercent: resource.cpuPercent, memoryBytes: resource.memoryBytes ?? 0,
-        elapsed: "", terminal: nil)
-      return DevStopRequest(
-        process: process, expected: identities[resource.id], force: false, toolGroupID: groupID)
-    }
-  }
-
-  func stopTools(_ requests: [DevStopRequest]) {
-    let candidates = requests.filter { request in
-      !request.force && request.toolGroupID != nil
-        && resources.contains {
-          $0.id == request.process.id && $0.isTool
-            && ResourceOwnership.groupID($0) == request.toolGroupID
-        }
-    }
-    guard !candidates.isEmpty else { return }
-    stoppingIDs.formUnion(candidates.map { $0.process.id })
-    statusMessage = candidates.map { DevProcessStopper.stop($0) }.joined(separator: " · ")
-    Task { [weak self] in
-      try? await Task.sleep(for: .seconds(1))
-      self?.stoppingIDs.subtract(candidates.map { $0.process.id })
-      self?.refresh()
-    }
+      process: process, expected: identities[process.processID], force: false)
   }
 
   func stopProject(_ requests: [DevStopRequest]) {

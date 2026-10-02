@@ -5,147 +5,363 @@ struct AppRecoveryView: View {
   @ObservedObject var memory: MemoryRescueModel
   @ObservedObject var model: AppRecoveryModel
   @State private var search = ""
+  @State private var liveApps: [MemoryApp] = []
+  @State private var scanTask: Task<Void, Never>?
+  @State private var forceQuitCandidate: MemoryApp?
+  @StateObject private var forceQuit = ForceQuitModel()
 
-  private var apps: [MemoryApp] {
-    memory.apps.filter {
-      $0.processID != ProcessInfo.processInfo.processIdentifier
-        && (search.isEmpty || $0.name.localizedCaseInsensitiveContains(search))
-        && $0.bundleIdentifier != AppBrand.bundleIdentifier
-        && $0.bundleIdentifier != "com.apple.finder"
-        && !$0.bundleURL.resolvingSymlinksInPath().path.hasPrefix("/System/")
-    }.sorted {
-      let left = $0.protectionReason == "AI app and its workers stay running"
-      let right = $1.protectionReason == "AI app and its workers stay running"
-      return left == right ? $0.memoryBytes > $1.memoryBytes : left
-    }
+  private var eligibleApps: [MemoryApp] {
+    liveApps
+  }
+
+  private var rows: [ReviveRow] {
+    eligibleApps.map { ReviveRow(app: $0, model: model) }
+  }
+
+  private var visibleRows: [ReviveRow] {
+    rows.filter { search.isEmpty || $0.app.name.localizedCaseInsensitiveContains(search) }
+  }
+
+  private var visibleCrashes: [RecentCrash] {
+    model.crashes.filter { search.isEmpty || $0.name.localizedCaseInsensitiveContains(search) }
+  }
+
+  private var stoppedApps: [MemoryApp] {
+    rows.filter(\.isStopped).map(\.app)
   }
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 16) {
-      HStack {
-        VStack(alignment: .leading, spacing: 4) {
-          Text("Recover a frozen app").font(.title2.bold())
-          Text("Try to resume it while keeping it open.").foregroundStyle(.secondary)
-        }
-        Spacer()
-        Button("Refresh") {
-          memory.refresh()
-          model.refreshPermission()
-        }.disabled(memory.isRefreshing || model.activeApp != nil)
-      }
-      VStack(alignment: .leading, spacing: 8) {
-        Text("One resume request per attempt. No app is closed or restarted.").font(.callout)
-        Text("An app that has already crashed or been killed by OOM cannot be resumed.")
-          .font(.caption).foregroundStyle(.secondary)
-        if !model.accessibilityEnabled {
-          HStack {
-            Text("Enable Accessibility to verify whether the window responds.")
-              .font(.caption).foregroundStyle(.secondary)
-            Spacer()
-            Button("Enable response checks") { model.openAccessibilitySettings() }
-          }
-        }
-      }.panelCard()
-      if let app = model.activeApp {
-        HStack {
-          ProgressView().controlSize(.small)
-          Text("Checking \(app.name)… response checks take up to about 10 seconds.")
-            .font(.callout)
+    VStack(spacing: 0) {
+      BlitzPageHeader(title: "Revive apps", detail: summary) {
+        Button {
+          scan(force: true)
+        } label: {
+          Label("Check again", systemImage: "arrow.clockwise")
+        }.blitzButton(.quiet).disabled(model.isScanning)
+        if !stoppedApps.isEmpty {
+          Button(
+            stoppedApps.count == 1 ? "Revive stopped app" : "Revive \(stoppedApps.count) stopped"
+          ) {
+            reviveAll()
+          }.blitzButton(.accent)
         }
       }
-      if let status = model.status {
-        Text(status).font(.callout).foregroundStyle(.secondary)
-      }
-      TextField("Find an app", text: $search).textFieldStyle(.roundedBorder)
+      Rectangle().fill(BlitzUI.separator).frame(height: 1)
       ScrollView {
-        LazyVStack(alignment: .leading, spacing: 12) {
-          if let report = model.reports.first {
-            RecoveryReportView(report: report, model: model)
+        VStack(alignment: .leading, spacing: 24) {
+          if !model.accessibilityEnabled { accessibilityNotice }
+          if let status = model.status {
+            Text(status).font(BlitzType.body).foregroundStyle(BlitzUI.supportingText)
+              .textSelection(.enabled)
           }
-          Text("Running apps").font(.headline)
-          if apps.isEmpty {
-            Text(memory.isRefreshing ? "Reading apps…" : "No eligible running apps found.")
-              .foregroundStyle(.secondary)
+          let attention = visibleRows.filter(\.needsAttention)
+          if !attention.isEmpty {
+            section("Stopped or frozen", count: attention.count) { appRows(attention) }
           }
-          ForEach(apps) { app in
-            HStack(spacing: 12) {
-              Image(nsImage: NSWorkspace.shared.icon(forFile: app.bundleURL.path))
-                .resizable().frame(width: 28, height: 28)
-              VStack(alignment: .leading, spacing: 3) {
-                Text(app.name).font(.headline)
-                Text("\(ByteText.full(app.memoryBytes)) · \(app.childProcessCount) helpers")
-                  .font(.caption).foregroundStyle(.secondary)
+          let others = visibleRows.filter { !$0.needsAttention }
+          if !others.isEmpty {
+            section(
+              attention.isEmpty && visibleCrashes.isEmpty ? nil : "Running",
+              count: others.count
+            ) { appRows(others) }
+          } else if attention.isEmpty && visibleCrashes.isEmpty {
+            emptyState
+          }
+          if !visibleCrashes.isEmpty {
+            section("Quit or crashed", count: visibleCrashes.count) {
+              ForEach(visibleCrashes) { crash in
+                crashRow(crash)
+                if crash.id != visibleCrashes.last?.id { BlitzRowDivider() }
               }
-              Spacer()
-              Button("Check response") { run(.init(app: app, attemptResume: false)) }
-              Button("Try recovery") { run(.init(app: app, attemptResume: true)) }
-                .buttonStyle(.borderedProminent)
             }
-            .disabled(model.activeApp != nil || memory.actionProcessID != nil)
-            .padding(12)
-            .background(.fill.tertiary, in: RoundedRectangle(cornerRadius: 10))
           }
-        }.padding(.vertical, 4)
+        }
+        .padding(BlitzUI.pagePadding)
       }
-      Text(
-        "Resume can help a stopped process. Other freezes may persist; it does not repair memory leaks or restore lost work."
-      )
-      .font(.caption).foregroundStyle(.secondary)
+      .safeAreaInset(edge: .top, spacing: 0) {
+        BlitzSearchField(title: "Search apps", text: $search)
+          .padding(.horizontal, BlitzUI.pagePadding).padding(.vertical, 12)
+          .background(BlitzUI.canvasBackground)
+      }
     }
-    .padding(20)
-    .frame(minWidth: 760, minHeight: 600)
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
+    .safeAreaInset(edge: .bottom, spacing: 0) {
+      if let app = forceQuitCandidate {
+        BlitzConfirmation(
+          title: "Force quit \(app.name)?",
+          message: "Unsaved changes in \(app.name) will be lost.",
+          confirmTitle: "Force Quit",
+          onConfirm: { runForceQuit(app) },
+          onCancel: { forceQuitCandidate = nil })
+      }
+    }
     .task {
       memory.refresh()
-      model.refreshPermission()
+      while !Task.isCancelled {
+        refreshLiveApps()
+        await model.noteProcessStates(eligibleApps)
+        scheduleScan(force: false)
+        do { try await Task.sleep(for: .seconds(2)) } catch { break }
+      }
+    }
+    .onDisappear {
+      scanTask?.cancel()
+      scanTask = nil
+    }
+    .onChange(of: memory.scannedAt) { refreshLiveApps() }
+    .onReceive(
+      NSWorkspace.shared.notificationCenter.publisher(
+        for: NSWorkspace.didLaunchApplicationNotification)
+    ) { _ in
+      refreshLiveApps()
+      scheduleScan(force: false)
+    }
+    .onReceive(
+      NSWorkspace.shared.notificationCenter.publisher(
+        for: NSWorkspace.didTerminateApplicationNotification)
+    ) { _ in
+      refreshLiveApps()
+      scheduleScan(force: false)
+    }
+    .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification))
+    { _ in
+      refreshLiveApps()
+      scheduleScan(force: true)
     }
   }
 
-  private func run(_ request: AppRecoveryRequest) {
-    Task {
-      if let report = await model.run(request) {
-        memory.recordRecovery(report)
+  private var summary: String? {
+    if model.isScanning {
+      return "Checking \(model.scannedCount) of \(model.scanTotal) apps…"
+    }
+    return "App list updates every 2 seconds"
+  }
+
+  private var accessibilityNotice: some View {
+    HStack(spacing: 12) {
+      Image(systemName: "hand.raised.fill").font(.system(size: 15, weight: .medium))
+        .foregroundStyle(BlitzUI.warning).frame(width: 28)
+      VStack(alignment: .leading, spacing: 2) {
+        Text("Detect frozen windows").font(BlitzType.rowTitle)
+        Text("Allow Accessibility so \(AppBrand.name) can tell when an app stops responding.")
+          .font(BlitzType.body).foregroundStyle(BlitzUI.secondaryText)
       }
+      Spacer(minLength: 12)
+      Button("Allow…") { model.openAccessibilitySettings() }.blitzButton(.secondary)
+    }.panelCard()
+  }
+
+  private var emptyState: some View {
+    VStack(spacing: 6) {
+      Text(search.isEmpty ? "No apps to check" : "No matching apps").font(BlitzType.section)
+      Text(search.isEmpty ? "Running apps appear here." : "Try another name.")
+        .font(BlitzType.body).foregroundStyle(BlitzUI.secondaryText)
+    }.frame(maxWidth: .infinity, minHeight: 160)
+  }
+
+  private func section<Content: View>(
+    _ title: String?, count: Int, @ViewBuilder content: () -> Content
+  ) -> some View {
+    VStack(alignment: .leading, spacing: 10) {
+      if let title {
+        HStack(spacing: 6) {
+          Text(title).font(BlitzType.section)
+          Text("\(count)").font(BlitzType.caption).monospacedDigit()
+            .foregroundStyle(BlitzUI.tertiaryText)
+        }
+      }
+      LazyVStack(spacing: 0) { content() }.blitzTable()
+    }
+  }
+
+  private func appRows(_ rows: [ReviveRow]) -> some View {
+    ForEach(rows) { row in
+      appRow(row)
+      if row.id != rows.last?.id { BlitzRowDivider() }
+    }
+  }
+
+  private func appRow(_ row: ReviveRow) -> some View {
+    let app = row.app
+    return HStack(spacing: 12) {
+      AppMemoryIcon(app: app)
+      VStack(alignment: .leading, spacing: 2) {
+        Text(app.name).font(BlitzType.rowTitle).lineLimit(1)
+        if let detail = row.detail {
+          Text(detail).font(BlitzType.caption).foregroundStyle(BlitzUI.secondaryText)
+            .lineLimit(1).help(detail)
+        }
+        if let message = memory.quitMessages[app.id] {
+          Text(message).font(BlitzType.caption).foregroundStyle(BlitzUI.warning)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+      }.frame(maxWidth: .infinity, alignment: .leading)
+      Text(app.memoryBytes == 0 ? "—" : ByteText.full(app.memoryBytes)).font(BlitzType.numeric)
+        .foregroundStyle(BlitzUI.secondaryText).frame(width: 80, alignment: .trailing)
+      ReviveStatusView(row: row).frame(width: 136, alignment: .trailing)
+        .help(row.help(accessibilityEnabled: model.accessibilityEnabled))
+      BlitzProcessButton(title: "Revive", label: "Revive \(app.name)", isBusy: row.isReviving) {
+        revive(app)
+      }.disabled(forceQuit.activeApp?.id == app.id || memory.isActing(on: app))
+      Button("Force Quit…", role: .destructive) { forceQuitCandidate = app }
+        .blitzButton(.quiet)
+        .disabled(row.isReviving || forceQuit.activeApp != nil || memory.isActing(on: app))
+        .accessibilityLabel("Force Quit \(app.name)")
+    }.blitzRow()
+  }
+
+  private func crashRow(_ crash: RecentCrash) -> some View {
+    HStack(spacing: 12) {
+      Image(nsImage: NSWorkspace.shared.icon(forFile: crash.bundleURL.path))
+        .resizable().frame(width: 28, height: 28).accessibilityHidden(true)
+      VStack(alignment: .leading, spacing: 2) {
+        Text(crash.name).font(BlitzType.rowTitle).lineLimit(1)
+        Text(
+          "\(crash.report == nil ? "Quit" : "Crashed") \(crash.date.formatted(.relative(presentation: .named)))"
+        ).font(BlitzType.caption).foregroundStyle(BlitzUI.secondaryText).lineLimit(1)
+      }.frame(maxWidth: .infinity, alignment: .leading)
+      BlitzStatusBadge(
+        title: crash.report == nil ? "Quit" : "Crashed",
+        tone: crash.report == nil ? .muted : .critical
+      ).frame(width: 136, alignment: .trailing)
+      Button("Reopen") { model.reopen(crash) }.blitzButton(.accent).controlSize(.small)
+        .frame(width: 104, alignment: .trailing)
+      Button("Dismiss") { model.dismiss(crash) }.blitzButton(.quiet)
+
+    }.blitzRow()
+  }
+
+  private func refreshLiveApps() {
+    liveApps = RecoveryAppRoster.merge(
+      .init(descriptors: MemoryAppProvider().descriptors(), measured: memory.apps))
+    model.refreshPermission()
+  }
+
+  private func scheduleScan(force: Bool) {
+    let apps = eligibleApps
+    if scanTask == nil || !model.isScanning {
+      scanTask = Task { await model.scan(apps, force: force) }
+    } else if force {
+      Task { await model.scan(apps, force: true) }
+    }
+  }
+
+  private func scan(force: Bool) {
+    refreshLiveApps()
+    scheduleScan(force: force)
+  }
+
+  private func revive(_ app: MemoryApp) {
+    Task {
+      if let report = await model.revive(app) { memory.recordRecovery(report) }
+    }
+  }
+
+  private func reviveAll() {
+    let apps = stoppedApps
+    Task {
+      for report in await model.reviveAll(apps) { memory.recordRecovery(report) }
+    }
+  }
+
+  private func runForceQuit(_ app: MemoryApp) {
+    forceQuitCandidate = nil
+    Task {
+      if let report = await forceQuit.run(app) {
+        model.status =
+          report.outcome == .terminated
+          ? "\(app.name) was force quit." : "\(app.name): \(report.detail)"
+      }
+      memory.refresh()
+      refreshLiveApps()
+      scheduleScan(force: true)
     }
   }
 }
 
-private struct RecoveryReportView: View {
-  let report: RecoveryReport
-  @ObservedObject var model: AppRecoveryModel
+private struct ReviveRow: Identifiable {
+  let app: MemoryApp
+  let title: String
+  let tone: BlitzStatusTone
+  let detail: String?
+  let needsAttention: Bool
+  let isStopped: Bool
+  let isReviving: Bool
+  let isChecking: Bool
+  let health: RecoveryHealth?
+
+  var id: Int32 { app.processID }
+  var isBusy: Bool { isReviving || isChecking }
+  var showsStatus: Bool { !["Running", "Not checked", "Unknown"].contains(title) }
+
+  @MainActor
+  init(app: MemoryApp, model: AppRecoveryModel) {
+    self.app = app
+    let activity = model.activity(for: app)
+    let check = model.check(for: app)
+    let result = model.result(for: app)
+    isReviving = activity == .reviving
+    isChecking = activity == .checking && check == nil
+    health = check?.health
+    detail = result?.detail
+    switch (result?.outcome, check?.health) {
+    case (.revived?, _):
+      (title, tone, needsAttention, isStopped) = ("Revived", .good, false, false)
+    case (.alreadyRunning?, _):
+      (title, tone, needsAttention, isStopped) =
+        health == .responsive
+        ? ("Responding", .good, false, false) : ("Window unchecked", .muted, false, false)
+    case (.notResponding?, _):
+      (title, tone, needsAttention, isStopped) = (
+        "Not responding", .critical, true, false
+      )
+    case (.stillStopped?, _):
+      (title, tone, needsAttention, isStopped) = (
+        "Still stopped", .warning, true, true
+      )
+    case (.failed?, _):
+      (title, tone, needsAttention, isStopped) = (
+        "Couldn't revive", .critical, true, false
+      )
+    case (_, .stopped?):
+      (title, tone, needsAttention, isStopped) = ("Stopped", .warning, true, true)
+    case (_, .unresponsive?):
+      (title, tone, needsAttention, isStopped) = (
+        "Not responding", .critical, true, false
+      )
+    case (_, .responsive?), (_, .running?):
+      (title, tone, needsAttention, isStopped) = ("Running", .good, false, false)
+    case (_, .unknown?), (_, .exited?):
+      (title, tone, needsAttention, isStopped) = ("Unknown", .muted, false, false)
+    default:
+      (title, tone, needsAttention, isStopped) = (
+        "Not checked", .muted, false, false
+      )
+    }
+  }
+
+  func help(accessibilityEnabled: Bool) -> String {
+    if isReviving { return "Reviving and watching the app" }
+    if isChecking { return "Checking whether the window responds" }
+    if health == .running && !accessibilityEnabled {
+      return "The process is running. Allow Accessibility to detect frozen windows."
+    }
+    return detail ?? title
+  }
+}
+
+private struct ReviveStatusView: View {
+  let row: ReviveRow
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 9) {
-      HStack {
-        VStack(alignment: .leading, spacing: 3) {
-          Text("\(report.app.name) · \(report.outcome.title)").font(.headline)
-          Text(report.date, style: .time).font(.caption).foregroundStyle(.secondary)
-        }
-        Spacer()
-        Button("Show app") { model.showApp(report.app) }.disabled(model.activeApp != nil)
-      }
-      Text(report.detail).font(.callout).textSelection(.enabled)
-      DisclosureGroup("Check details") {
-        VStack(alignment: .leading, spacing: 6) {
-          Text(
-            "PID \(report.app.processID) · \(report.resumeSent ? "SIGCONT sent once" : "No signal sent")"
-          )
-          ForEach(Array(report.before.enumerated()), id: \.offset) { item in
-            Text(
-              "Before \(item.offset + 1): \(item.element.process.stateLabel) · \(item.element.response.rawValue)"
-            )
-          }
-          ForEach(Array(report.after.enumerated()), id: \.offset) { item in
-            Text(
-              "After \(item.offset + 1): \(item.element.process.stateLabel) · \(item.element.response.rawValue)"
-            )
-          }
-        }
-        .font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .fixedSize(horizontal: false, vertical: true)
-      }
+    if row.isBusy {
+      HStack(spacing: 6) {
+        ProgressView().controlSize(.mini)
+        Text(row.isReviving ? "Reviving…" : "Checking…").font(BlitzType.captionEmphasis)
+          .foregroundStyle(BlitzUI.secondaryText)
+      }.frame(height: 24)
+    } else if row.showsStatus {
+      BlitzStatusBadge(title: row.title, tone: row.tone)
     }
-    .fixedSize(horizontal: false, vertical: true)
-    .panelCard()
   }
 }

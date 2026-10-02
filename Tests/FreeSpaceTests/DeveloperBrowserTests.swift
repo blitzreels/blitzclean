@@ -21,12 +21,14 @@ struct DeveloperBrowserTests {
         scanRequest: .init(roots: [], minimumBytes: 1, maxEntries: 1),
         synchronizesInBackground: false))
     let model = DeveloperBrowserModel()
-    model.chooseFolder(URL(fileURLWithPath: fixture.root))
     let deadline = Date.now.addingTimeInterval(25)
-    while model.isScanning, Date.now < deadline { try await Task.sleep(for: .milliseconds(50)) }
-    #expect(!model.isScanning)
-    let artifacts = model.artifacts.filter { $0.kind == .dependencies }
-    #expect(artifacts.count == 2)
+    let artifacts = ["one", "two"].map {
+      DeveloperArtifactScanner.dependency(
+        .init(
+          path: fixture.root + "/\($0)/node_modules", activeDirectories: [],
+          keptDirectories: []))
+    }
+    #expect(artifacts.allSatisfy { $0.blocker == nil })
     for artifact in artifacts { model.remove(.init(artifact: artifact, history: history)) }
     #expect(model.deleting.count == 2)
     while !model.deleting.isEmpty, Date.now < deadline {
@@ -117,7 +119,7 @@ struct DeveloperBrowserTests {
     try fixture.write(.init(path: "linked/.env", value: "fixture-only"))
     assessment = fixture.inspect(assessment.record)
     #expect(assessment.merge == .merged)
-    #expect(assessment.blocker == "Ignored files remain — review them first")
+    #expect(assessment.blocker == "Has ignored files. Review them first.")
     try fixture.write(.init(path: "linked/source.txt", value: "unsaved edits"))
     #expect(fixture.inspect(assessment.record).blocker == "Uncommitted or untracked files")
     #expect(!DeveloperArtifactCleanup.remove(fixture.artifact(assessment)).removed)
@@ -177,7 +179,7 @@ struct DeveloperBrowserTests {
       .init(directory: fixture.root, arguments: ["worktree", "unlock", assessment.record.path]))
     try fixture.git(.init(directory: assessment.record.path, arguments: ["checkout", "--detach"]))
     let detached = try #require(GitWorktrees.list(fixture.root)?.first { !$0.primary })
-    #expect(fixture.inspect(detached).blocker == "Detached HEAD — preserve its commits")
+    #expect(fixture.inspect(detached).blocker == "Detached HEAD. Save its commits first.")
   }
 
   @Test

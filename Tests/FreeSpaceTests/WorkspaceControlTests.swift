@@ -43,27 +43,6 @@ struct WorkspaceControlTests {
     #expect(decoded.events.count < 20)
   }
   @Test
-  func pinnedToolPolicyIsRecheckedAtTheSignalBoundary() throws {
-    let key = UUID().uuidString
-    let saved = UserDefaults.standard.object(forKey: WorkspacePreferences.toolKey)
-    UserDefaults.standard.set([key], forKey: WorkspacePreferences.toolKey)
-    defer { UserDefaults.standard.set(saved, forKey: WorkspacePreferences.toolKey) }
-    let child = Process()
-    child.executableURL = URL(fileURLWithPath: "/bin/sleep")
-    child.arguments = ["20"]
-    try child.run()
-    defer { if child.isRunning { child.terminate() } }
-    let identity = try #require(DevProcessIdentity.read(child.processIdentifier))
-    let process = DevProcess(
-      processID: child.processIdentifier, parentProcessID: getpid(), kind: .listener,
-      name: "Fixture tool", detail: "", workingDirectory: nil, listeningPorts: [], cpuPercent: 0,
-      memoryBytes: 0, elapsed: "00:00", terminal: nil)
-    let result = DevProcessStopper.stop(
-      .init(process: process, expected: identity, force: false, toolGroupID: key))
-    #expect(result.contains("Keep running"))
-    #expect(child.isRunning)
-  }
-  @Test
   func separatesWorkersFromTheirHostWithoutLeakingArguments() throws {
     let records = RawProcessParser.records(
       "10 1 501 0 100 01:00 ?? ChatGPT\n"
@@ -165,5 +144,24 @@ struct WorkspaceControlTests {
     #expect(projects.count == 1)
     #expect(projects.first?.preference == preference)
     #expect(projects.first?.servers.isEmpty == true)
+  }
+
+  @Test
+  func projectCatalogListsRunningProjectsFirst() throws {
+    let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: folder) }
+    try Data("{}".utf8).write(to: folder.appendingPathComponent("package.json"))
+    let running = WorkspacePreferences.canonical(folder.path)
+    let kept = WorkspacePreference(
+      directory: "/dev/kept-project", name: "Kept", keepRunning: true, startCommand: "pnpm dev")
+    let server = DevProcess(
+      processID: 100, parentProcessID: 1, kind: .devServer, name: "vite", detail: "dev",
+      workingDirectory: running, listeningPorts: [5173], cpuPercent: 0, memoryBytes: 100,
+      elapsed: "00:01", terminal: nil)
+    let projects = WorkspaceCatalog.projects(
+      .init(resources: [], processes: [server], preferences: [kept]))
+    #expect(projects.map(\.isRunning) == [true, false])
+    #expect(projects.last?.preference == kept)
   }
 }

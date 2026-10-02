@@ -67,30 +67,4 @@ struct ProcessActivityTests {
     #expect(child.terminationReason == .uncaughtSignal)
     #expect(child.terminationStatus == SIGTERM)
   }
-
-  @Test @MainActor
-  func rendersProcessPagesWhenRequested() async throws {
-    guard let output = ProcessInfo.processInfo.environment["FREE_SPACE_PROCESS_RENDER_DIR"] else {
-      return
-    }
-    let model = DevProcessModel()
-    let deadline = Date.now.addingTimeInterval(20)
-    while model.scannedAt == nil && Date.now < deadline {
-      try await Task.sleep(for: .milliseconds(250))
-    }
-    try #require(model.scannedAt != nil)
-    for section in ProcessPageSection.allCases {
-      let view = DevProcessView(model: model, section: section)
-        .frame(width: 900, height: 700)
-        .environment(\.colorScheme, .dark)
-      let host = NSHostingView(rootView: view)
-      host.frame = NSRect(x: 0, y: 0, width: 900, height: 700)
-      host.layoutSubtreeIfNeeded()
-      let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
-      host.cacheDisplay(in: host.bounds, to: bitmap)
-      let data = try #require(bitmap.representation(using: .png, properties: [:]))
-      try data.write(
-        to: URL(fileURLWithPath: output).appendingPathComponent("\(section.rawValue).png"))
-    }
-  }
 }

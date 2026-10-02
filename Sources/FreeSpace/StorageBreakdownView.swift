@@ -1,197 +1,14 @@
 import AppKit
 import SwiftUI
 
-struct StorageBreakdownView: View {
+struct DeveloperCleanupView: View {
   @ObservedObject var model: StorageBreakdownModel
-  @ObservedObject var monitor: SystemMonitor
-  @ObservedObject var dockerStorage: DockerStorageModel
-  @ObservedObject var navigation: StorageNavigationModel
-  @ObservedObject var folderExplorer: FolderExplorerModel
-  @State private var selectedCategoryID: String?
-
-  var body: some View {
-    VStack(spacing: 0) {
-      header
-      Divider()
-
-      if navigation.page == .folders {
-        FolderExplorerView(model: folderExplorer)
-      } else if navigation.page == .breakdown && model.categories.isEmpty && model.isScanning {
-        scanningView
-      } else {
-        switch navigation.page {
-        case .cleanup:
-          DeveloperCleanupView(
-            model: model,
-            snapshot: monitor.snapshot,
-            onOpenDiskUsage: {
-              navigation.page = .breakdown
-            }
-          )
-        case .breakdown:
-          StorageExplorerView(
-            model: model,
-            snapshot: monitor.snapshot,
-            selectedCategoryID: $selectedCategoryID
-          )
-        case .docker:
-          DockerStorageView(model: dockerStorage)
-        case .folders:
-          EmptyView()
-        }
-      }
-    }
-    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-    .frame(minWidth: 820, minHeight: 620)
-    .task {
-      model.scanIfNeeded()
-    }
-    .onChange(of: model.categories) { _, categories in
-      if selectedCategoryID == nil {
-        selectedCategoryID = categories.first?.id
-      }
-    }
-  }
-
-  private var header: some View {
-    HStack(spacing: 16) {
-      VStack(alignment: .leading, spacing: 3) {
-        Text(pageTitle)
-          .font(.title2.weight(.semibold))
-        Text(pageStatus)
-          .font(.caption)
-          .foregroundStyle(.secondary)
-      }
-
-      Spacer()
-
-      Picker("View", selection: $navigation.page) {
-        ForEach(StoragePage.allCases) { page in
-          Text(page.rawValue).tag(page)
-        }
-      }
-      .pickerStyle(.segmented)
-      .labelsHidden()
-      .frame(width: 440)
-
-      if navigation.page != .folders {
-        if navigation.page == .docker ? dockerStorage.isRefreshing : model.isScanning {
-          ProgressView()
-            .controlSize(.small)
-        }
-
-        Button {
-          if navigation.page == .docker {
-            dockerStorage.refresh()
-          } else {
-            model.scan()
-          }
-        } label: {
-          Label("Scan Again", systemImage: "arrow.clockwise")
-        }
-        .disabled(isRefreshDisabled)
-      }
-    }
-    .padding(16)
-  }
-
-  private var scanningView: some View {
-    ContentUnavailableView {
-      Label("Scanning Developer Storage", systemImage: "externaldrive.badge.magnifyingglass")
-    } description: {
-      Text("Checking dependencies, active projects, simulators, caches, and large files.")
-    } actions: {
-      ProgressView()
-        .controlSize(.small)
-    }
-  }
-
-  private var pageTitle: String {
-    switch navigation.page {
-    case .docker:
-      "Docker Storage"
-    case .folders:
-      "What takes space"
-    case .cleanup, .breakdown:
-      "Storage"
-    }
-  }
-
-  private var pageStatus: String {
-    if navigation.page == .folders {
-      return
-        "Double-click a folder to drill down. Sizes are allocated disk blocks, measured with du."
-    }
-
-    if navigation.page == .docker {
-      if dockerStorage.isRefreshing {
-        return dockerStorage.snapshot == nil
-          ? "Reading Docker disk usage…" : "Showing saved results · refreshing…"
-      }
-
-      if let updatedAt = dockerStorage.snapshot?.updatedAt {
-        return "Updated \(updatedAt.formatted(date: .abbreviated, time: .shortened))"
-      }
-
-      return dockerStorage.errorMessage ?? "Docker has not been checked yet"
-    }
-
-    return scanStatus
-  }
-
-  private var isRefreshDisabled: Bool {
-    if navigation.page == .docker {
-      return dockerStorage.isRefreshing || dockerStorage.isCleaning
-    }
-
-    return model.isScanning || model.isCleaning
-  }
-
-  private var scanStatus: String {
-    if model.isScanning {
-      if !model.categories.isEmpty {
-        return "Showing saved results · refreshing sections…"
-      }
-
-      return "Checking project activity and simulator state…"
-    }
-
-    guard let scannedAt = model.scannedAt else {
-      return "Not scanned yet"
-    }
-
-    return "Scanned \(scannedAt.formatted(date: .abbreviated, time: .shortened))"
-  }
-}
-
-enum StoragePage: String, CaseIterable, Identifiable {
-  case cleanup = "Clean Up"
-  case folders = "Folders"
-  case breakdown = "Categories"
-  case docker = "Docker"
-
-  var id: Self {
-    self
-  }
-}
-
-@MainActor
-final class StorageNavigationModel: ObservableObject {
-  @Published var page = StoragePage.cleanup
-}
-
-private struct DeveloperCleanupView: View {
-  @ObservedObject var model: StorageBreakdownModel
-  let snapshot: SystemSnapshot
-  let onOpenDiskUsage: () -> Void
   @State private var ageThreshold = 0
-  @State private var showsConfirmation = false
-  @State private var showsStopConfirmation = false
-  @State private var pendingProcessItem: StorageItem?
+  @State private var dependencyLimit = 20
   @State private var dependencySort = DependencySort.largest
   @State private var dependencyVisibility = DependencyVisibility.canDelete
   @State private var dependencySearch = ""
-  @State private var showsDeveloperDetails = false
+  @State private var showsAllSimulators = false
 
   private var allNodeItems: [StorageItem] {
     model.categories.first { category in
@@ -242,6 +59,8 @@ private struct DeveloperCleanupView: View {
     }
   }
 
+  private var displayedNodeItems: [StorageItem] { Array(nodeItems.prefix(dependencyLimit)) }
+
   private var generatedItems: [StorageItem] {
     model.categories.first { category in
       category.id == "node-modules"
@@ -258,25 +77,9 @@ private struct DeveloperCleanupView: View {
     }
   }
 
-  private var safeBytes: UInt64 {
-    model.recommendedBytes
-  }
-
-  private var allSafeBytes: UInt64 {
-    model.readyItems.reduce(0) { result, item in
-      result + item.bytes
-    }
-  }
-
   private var deletableNodeItems: [StorageItem] {
     allNodeItems.filter { item in
       item.cleanupAvailability?.isReady == true
-    }
-  }
-
-  private var deletableNodeBytes: UInt64 {
-    deletableNodeItems.reduce(0) { result, item in
-      result + item.bytes
     }
   }
 
@@ -287,234 +90,136 @@ private struct DeveloperCleanupView: View {
   }
 
   var body: some View {
-    ScrollView {
-      LazyVStack(alignment: .leading, spacing: 18) {
-        CleanupWinsView(
-          overview: model.overview, available: snapshot.diskAvailable, total: snapshot.diskTotal)
-        CleanupOpportunitiesView(model: model, overview: model.overview)
-        DisclosureGroup(
-          "All developer storage · dependencies, builds & simulators",
-          isExpanded: $showsDeveloperDetails
+    VStack(spacing: 12) {
+      CleanupSection(
+        title: "Dependencies",
+        detail:
+          "\(ByteText.full(allNodeItems.reduce(0) { $0 + $1.bytes })) · \(allNodeItems.count) project folders",
+        systemImage: "shippingbox.fill"
+      ) {
+        nodeControls
+
+        if dependencyVisibility != .canDelete {
+          DependencyLegend()
+        }
+
+        if nodeItems.isEmpty && model.isScanning {
+          SectionLoadingRow(text: "Scanning dependency folders…")
+        } else if nodeItems.isEmpty {
+          EmptySectionRow(text: "No dependency folders found in configured project roots.")
+        } else {
+          ForEach(displayedNodeItems) { item in
+            CleanupItemRow(
+              item: item,
+              isSelected: model.selectedPaths.contains(item.path),
+              onSelectionChange: { selection in
+                model.setSelected(selection)
+              },
+              onStopAndSelect: { model.stopProcessesAndSelect($0) },
+              isStoppingProcesses: model.stoppingProcessPath == item.path
+            )
+          }
+        }
+        if nodeItems.count > dependencyLimit {
+          Button("Show next \(min(20, nodeItems.count - dependencyLimit)) folders") {
+            dependencyLimit += 20
+          }.frame(maxWidth: .infinity, alignment: .leading).padding(14)
+        }
+      }
+      .onChange(of: dependencySearch) { _, _ in dependencyLimit = 20 }
+      .onChange(of: dependencySort) { _, _ in dependencyLimit = 20 }
+      .onChange(of: dependencyVisibility) { _, _ in dependencyLimit = 20 }
+      .onChange(of: ageThreshold) { _, _ in dependencyLimit = 20 }
+
+      if !generatedItems.isEmpty {
+        CleanupSection(
+          title: "Build caches",
+          detail:
+            "\(ByteText.full(generatedItems.reduce(0) { $0 + $1.bytes })) · npm, Vercel, and Trigger outputs",
+          systemImage: "hammer.fill"
         ) {
-          reclaimCard
-
-          CleanupSection(
-            title: "Project Dependencies",
-            detail: "Reinstallable node_modules grouped by their real workspace",
-            systemImage: "shippingbox.fill"
-          ) {
-            nodeControls
-
-            if dependencyVisibility != .canDelete {
-              DependencyLegend()
-            }
-
-            if nodeItems.isEmpty && model.isScanning {
-              SectionLoadingRow(text: "Scanning dependency folders…")
-            } else if nodeItems.isEmpty {
-              EmptySectionRow(text: "No dependency folders found in configured project roots.")
-            } else {
-              ForEach(nodeItems) { item in
-                CleanupItemRow(
-                  item: item,
-                  isSelected: model.selectedPaths.contains(item.path),
-                  onSelectionChange: { selection in
-                    model.setSelected(selection)
-                  },
-                  onStopAndSelect: { processItem in
-                    pendingProcessItem = processItem
-                    showsStopConfirmation = true
-                  },
-                  isStoppingProcesses: model.stoppingProcessPath == item.path
-                )
-              }
-            }
-          }
-
-          if !generatedItems.isEmpty {
-            CleanupSection(
-              title: "Generated Build Caches",
-              detail: "Collapsed npm, Vercel, and Trigger outputs",
-              systemImage: "hammer.fill"
-            ) {
-              ForEach(generatedItems) { item in
-                CleanupItemRow(
-                  item: item,
-                  isSelected: model.selectedPaths.contains(item.path),
-                  onSelectionChange: { selection in
-                    model.setSelected(selection)
-                  },
-                  onStopAndSelect: { _ in },
-                  isStoppingProcesses: false
-                )
-              }
-            }
-          }
-
-          CleanupSection(
-            title: "Apple Simulators",
-            detail: "Running devices are protected; simulator caches are rebuildable",
-            systemImage: "iphone.gen3"
-          ) {
-            simulatorSummary
-
-            if model.simulatorDevices.isEmpty && model.isScanning {
-              SectionLoadingRow(text: "Reading simulator devices…")
-            } else {
-              ForEach(model.simulatorDevices) { device in
-                SimulatorDeviceRow(device: device)
-              }
-            }
-
-            if let simulatorCache {
-              CleanupItemRow(
-                item: simulatorCache,
-                isSelected: model.selectedPaths.contains(simulatorCache.path),
-                onSelectionChange: { selection in
-                  model.setSelected(selection)
-                },
-                onStopAndSelect: { _ in },
-                isStoppingProcesses: false
-              )
-            }
+          ForEach(generatedItems) { item in
+            CleanupItemRow(
+              item: item,
+              isSelected: model.selectedPaths.contains(item.path),
+              onSelectionChange: { selection in
+                model.setSelected(selection)
+              },
+              onStopAndSelect: { _ in },
+              isStoppingProcesses: false
+            )
           }
         }
-        StorageCapacityStrip(
-          snapshot: snapshot,
-          categories: model.categories,
-          onOpenDiskUsage: onOpenDiskUsage
-        )
-      }
-      .padding(18)
-    }
-    .safeAreaInset(edge: .bottom) {
-      if !model.selectedItems.isEmpty || model.isCleaning || model.cleanupMessage != nil {
-        cleanupBar
-      }
-    }
-    .alert("Delete selected items permanently?", isPresented: $showsConfirmation) {
-      Button("Cancel", role: .cancel) {}
-      Button("Delete Permanently", role: .destructive) {
-        model.cleanSelected()
-      }
-    } message: {
-      Text(
-        "\(model.selectedItems.count) item(s), \(ByteText.full(model.selectedBytes)). "
-          + "This cannot be undone. Current rebuild and activity checks run before deletion; changed or busy items are skipped."
-      )
-    }
-    .alert(
-      "Stop running processes?",
-      isPresented: $showsStopConfirmation,
-      presenting: pendingProcessItem
-    ) { item in
-      Button("Cancel", role: .cancel) {}
-      Button("Stop & Select", role: .destructive) {
-        model.stopProcessesAndSelect(item)
-      }
-    } message: { item in
-      Text(stopConfirmationMessage(item))
-    }
-  }
-
-  private var reclaimCard: some View {
-    HStack(spacing: 18) {
-      VStack(alignment: .leading, spacing: 5) {
-        Text("Rebuildable at last scan · estimated size")
-          .font(.headline)
-        Text(ByteText.full(allSafeBytes))
-          .font(.system(size: 32, weight: .semibold, design: .rounded))
-          .monospacedDigit()
-        Text(
-          "\(deletableNodeItems.count) dependency folders · "
-            + "\(ByteText.full(deletableNodeBytes))"
-        )
-        .font(.caption)
-        .foregroundStyle(.secondary)
       }
 
-      Spacer()
-
-      VStack(alignment: .trailing, spacing: 6) {
-        HStack(spacing: 8) {
-          Button("Select Suggested · \(ByteText.compact(safeBytes))") {
-            model.selectRecommended()
+      CleanupSection(
+        title: "Simulators",
+        detail: "\(model.simulatorDeviceCount) devices · \(model.bootedSimulatorCount) running",
+        systemImage: "iphone.gen3"
+      ) {
+        if model.simulatorDevices.isEmpty && model.isScanning {
+          SectionLoadingRow(text: "Reading simulator devices…")
+        } else {
+          ForEach(displayedSimulators) { device in
+            SimulatorDeviceRow(device: device)
           }
-          .disabled(model.isScanning || safeBytes == 0)
-
-          Button("Select All Safe") {
-            for item in model.readyItems {
-              model.setSelected(
-                StorageSelection(path: item.path, isSelected: true)
-              )
-            }
+          if model.simulatorDevices.count > 5 {
+            Button(
+              showsAllSimulators
+                ? "Show fewer" : "Show all \(model.simulatorDevices.count) devices"
+            ) { showsAllSimulators.toggle() }
+            .blitzButton(.quiet).controlSize(.small)
+            .frame(maxWidth: .infinity).padding(.vertical, 8)
           }
-          .buttonStyle(.borderedProminent)
-          .disabled(model.isScanning || model.readyItems.isEmpty)
         }
 
-        Label("Deletes permanently", systemImage: "trash.fill")
-          .font(.callout.weight(.medium))
-          .foregroundStyle(.orange)
-        Text("Rebuildable items only · no simulator device deletion")
-          .font(.caption)
-          .foregroundStyle(.secondary)
+        if let simulatorCache {
+          CleanupItemRow(
+            item: simulatorCache,
+            isSelected: model.selectedPaths.contains(simulatorCache.path),
+            onSelectionChange: { selection in
+              model.setSelected(selection)
+            },
+            onStopAndSelect: { _ in },
+            isStoppingProcesses: false
+          )
+        }
       }
     }
-    .padding(18)
-    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
-  }
-
-  private func stopConfirmationMessage(_ item: StorageItem) -> String {
-    let processNames =
-      item.activeProcesses?.map { process in
-        "\(process.name) (PID \(process.processID))"
-      }.joined(separator: ", ") ?? "the running processes"
-
-    return "Stop \(processNames)? Unsaved process work can be lost. "
-      + "Project source stays untouched; dependencies are selected only after a rescan."
   }
 
   private var nodeControls: some View {
     VStack(spacing: 9) {
       HStack(spacing: 10) {
-        Picker("Projects", selection: $dependencyVisibility) {
-          Text("Can Delete \(deletableNodeItems.count)")
-            .tag(DependencyVisibility.canDelete)
-          Text("In Use \(inUseNodeCount)")
-            .tag(DependencyVisibility.inUse)
-          Text("All \(allNodeItems.count)")
-            .tag(DependencyVisibility.all)
-        }
-        .pickerStyle(.segmented)
-        .labelsHidden()
-        .frame(width: 330)
+        BlitzSegmentedPicker(
+          title: "Status", options: [DependencyVisibility.canDelete, .inUse, .all],
+          selection: $dependencyVisibility,
+          label: { value in
+            switch value {
+            case .canDelete: "Can delete \(deletableNodeItems.count)"
+            case .inUse: "In use \(inUseNodeCount)"
+            case .all: "All \(allNodeItems.count)"
+            }
+          }
+        ).frame(width: 330)
 
-        TextField("Find a project or path", text: $dependencySearch)
-          .textFieldStyle(.roundedBorder)
+        BlitzSearchField(title: "Find a project or path", text: $dependencySearch)
           .frame(minWidth: 180)
 
-        Picker("Age", selection: $ageThreshold) {
-          Text("Any age").tag(0)
-          Text("7+ days").tag(7)
-          Text("30+ days").tag(30)
-          Text("90+ days").tag(90)
-        }
-        .labelsHidden()
-        .frame(width: 120)
-
-        Picker("Sort", selection: $dependencySort) {
-          ForEach(DependencySort.allCases) { sort in
-            Text(sort.rawValue).tag(sort)
-          }
-        }
-        .labelsHidden()
-        .frame(width: 105)
+      }
+      HStack(alignment: .top, spacing: 12) {
+        BlitzSegmentedPicker(
+          title: "Age", options: [0, 7, 30, 90], selection: $ageThreshold,
+          label: { $0 == 0 ? "Any age" : "\($0)+ days" })
+        BlitzSegmentedPicker(
+          title: "Sort", options: DependencySort.allCases, selection: $dependencySort,
+          label: { $0.rawValue }
+        ).frame(width: 200)
       }
 
       HStack {
         Text(
-          "\(nodeItems.count) shown · "
+          "\(displayedNodeItems.count) of \(nodeItems.count) matches · "
             + "\(ByteText.full(nodeItems.reduce(0) { $0 + $1.bytes }))"
         )
         .font(.caption)
@@ -522,8 +227,8 @@ private struct DeveloperCleanupView: View {
 
         Spacer()
 
-        Button("Select Shown") {
-          for item in nodeItems where item.cleanupAvailability?.isReady == true {
+        Button("Select visible") {
+          for item in displayedNodeItems where item.cleanupAvailability?.isReady == true {
             model.setSelected(
               StorageSelection(path: item.path, isSelected: true)
             )
@@ -546,30 +251,37 @@ private struct DeveloperCleanupView: View {
     .background(.quaternary.opacity(0.35))
   }
 
-  private var simulatorSummary: some View {
-    HStack(spacing: 10) {
-      Label(
-        "\(model.bootedSimulatorCount) booted",
-        systemImage: model.bootedSimulatorCount == 0 ? "checkmark.circle" : "play.circle.fill"
-      )
-      .foregroundStyle(model.bootedSimulatorCount == 0 ? Color.secondary : Color.green)
+  private var displayedSimulators: [SimulatorDeviceInfo] {
+    let sorted = model.simulatorDevices.sorted { left, right in
+      let leftBooted = left.state == "Booted"
+      let rightBooted = right.state == "Booted"
+      return leftBooted != rightBooted ? leftBooted : left.bytes > right.bytes
+    }
+    return showsAllSimulators ? sorted : Array(sorted.prefix(5))
+  }
+}
+struct DeveloperCleanupActions: View {
+  @ObservedObject var model: StorageBreakdownModel
+  @State private var showsConfirmation = false
 
-      Text("·")
-        .foregroundStyle(.tertiary)
-
-      Text("\(model.simulatorDeviceCount) devices")
-        .foregroundStyle(.secondary)
-
-      Spacer()
-
-      Button("Open Xcode") {
-        NSWorkspace.shared.open(URL(fileURLWithPath: "/Applications/Xcode.app"))
+  var body: some View {
+    VStack(spacing: 0) {
+      if !model.selectedItems.isEmpty || model.isCleaning || model.cleanupMessage != nil {
+        cleanupBar
+      }
+      if showsConfirmation {
+        BlitzConfirmation(
+          title: "Delete selected items permanently?",
+          message:
+            "\(model.selectedItems.count) items, \(ByteText.full(model.selectedBytes)). This cannot be undone. Rebuild and activity checks run before deletion; changed or busy items are skipped.\n\n"
+            + model.selectedItems.map(\.path).joined(separator: "\n"),
+          confirmTitle: "Delete permanently",
+          onConfirm: {
+            showsConfirmation = false
+            model.cleanSelected()
+          }, onCancel: { showsConfirmation = false })
       }
     }
-    .font(.caption)
-    .padding(.horizontal, 14)
-    .padding(.vertical, 10)
-    .background(.quaternary.opacity(0.35))
   }
 
   private var cleanupBar: some View {
@@ -595,7 +307,7 @@ private struct DeveloperCleanupView: View {
 
         Spacer()
 
-        Button("Delete Permanently") {
+        Button("Review selected…") {
           showsConfirmation = true
         }
         .buttonStyle(.borderedProminent)
@@ -611,128 +323,6 @@ private struct DeveloperCleanupView: View {
   }
 }
 
-private struct StorageCapacityStrip: View {
-  let snapshot: SystemSnapshot
-  let categories: [StorageCategory]
-  let onOpenDiskUsage: () -> Void
-
-  private var largestCategories: [StorageCategory] {
-    Array(
-      categories
-        .filter { category in
-          category.bytes > 0 && !category.id.hasPrefix("computer-")
-        }
-        .sorted { left, right in
-          left.bytes > right.bytes
-        }
-        .prefix(3)
-    )
-  }
-
-  var body: some View {
-    VStack(spacing: 10) {
-      HStack(spacing: 10) {
-        CapacityMiniCard(
-          title: "Mac",
-          available: snapshot.diskAvailable,
-          total: snapshot.diskTotal,
-          systemImage: "internaldrive",
-          tint: MenuBarTones.disk(snapshot).color
-        )
-
-        if let developerVolume = snapshot.developerVolume {
-          CapacityMiniCard(
-            title: "Dev drive",
-            available: developerVolume.available,
-            total: developerVolume.total,
-            systemImage: "externaldrive",
-            tint: MetricTone.forDisk(
-              DiskCapacityInput(
-                available: developerVolume.available, total: developerVolume.total)
-            ).color
-          )
-        }
-
-        CapacityMiniCard(
-          title: "Memory",
-          available: snapshot.ramAvailable,
-          total: snapshot.ramTotal,
-          systemImage: "memorychip",
-          tint: snapshot.ramUsedRatio >= 0.9 ? .red : .accentColor
-        )
-      }
-
-      HStack(spacing: 10) {
-        Text("Largest developer data")
-          .font(.caption.weight(.semibold))
-
-        ForEach(largestCategories) { category in
-          Label(
-            "\(category.name) \(ByteText.compact(category.bytes))",
-            systemImage: category.systemImage
-          )
-          .font(.caption)
-          .foregroundStyle(.secondary)
-        }
-
-        Spacer()
-
-        Button("See All Disk Usage", action: onOpenDiskUsage)
-          .buttonStyle(.link)
-      }
-      .padding(.horizontal, 12)
-      .padding(.vertical, 8)
-      .background(.quaternary.opacity(0.28), in: RoundedRectangle(cornerRadius: 9))
-    }
-  }
-}
-
-private struct CapacityMiniCard: View {
-  let title: String
-  let available: UInt64
-  let total: UInt64
-  let systemImage: String
-  let tint: Color
-
-  private var used: UInt64 {
-    total > available ? total - available : 0
-  }
-
-  private var usedRatio: Double {
-    guard total > 0 else {
-      return 0
-    }
-
-    return Double(used) / Double(total)
-  }
-
-  var body: some View {
-    VStack(alignment: .leading, spacing: 7) {
-      HStack(spacing: 8) {
-        Image(systemName: systemImage)
-          .foregroundStyle(.secondary)
-        Text(title)
-          .font(.caption.weight(.semibold))
-        Spacer()
-        Text("\(ByteText.full(available)) free")
-          .font(.headline)
-          .monospacedDigit()
-      }
-
-      ProgressView(value: usedRatio)
-        .tint(tint)
-
-      Text("\(ByteText.full(used)) used of \(ByteText.full(total))")
-        .font(.caption2)
-        .foregroundStyle(.secondary)
-        .monospacedDigit()
-    }
-    .padding(12)
-    .frame(maxWidth: .infinity)
-    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
-  }
-}
-
 private struct CleanupSection<Content: View>: View {
   let title: String
   let detail: String
@@ -740,27 +330,8 @@ private struct CleanupSection<Content: View>: View {
   @ViewBuilder let content: Content
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 0) {
-      HStack(spacing: 10) {
-        Image(systemName: systemImage)
-          .foregroundStyle(.secondary)
-        VStack(alignment: .leading, spacing: 2) {
-          Text(title)
-            .font(.headline)
-          Text(detail)
-            .font(.caption)
-            .foregroundStyle(.secondary)
-        }
-      }
-      .padding(14)
-
-      Divider()
+    BlitzStorageSection(title: title, symbol: systemImage, detail: detail) {
       content
-    }
-    .background(.background, in: RoundedRectangle(cornerRadius: 12))
-    .overlay {
-      RoundedRectangle(cornerRadius: 12)
-        .stroke(.separator, lineWidth: 1)
     }
   }
 }
@@ -785,7 +356,7 @@ private struct CleanupItemRow: View {
             }
           )
         )
-        .labelsHidden()
+        .toggleStyle(BlitzCheckboxStyle(showsLabel: false))
         .disabled(!isReady)
 
         VStack(alignment: .leading, spacing: 3) {
@@ -818,10 +389,8 @@ private struct CleanupItemRow: View {
         .frame(width: 105, alignment: .trailing)
 
         if let processes = item.activeProcesses, !processes.isEmpty {
-          RunningProcessDisclosure(
-            processes: processes,
-            isExpanded: $showsProcesses
-          )
+          Text("\(processes.count) running")
+            .font(.system(size: 11)).foregroundStyle(.orange)
         } else {
           if case .blocked = item.cleanupAvailability {
             StorageAvailabilityLabel(availability: item.cleanupAvailability)
@@ -842,13 +411,16 @@ private struct CleanupItemRow: View {
         .frame(width: 118, alignment: .trailing)
         .help(diskUsageHelp)
 
-        Button {
-          NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: item.path)])
-        } label: {
-          Image(systemName: "folder")
+        BlitzActionMenu(label: "Actions for \(item.name)") {
+          Button("Show in Finder") {
+            NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: item.path)])
+          }
+          if let processes = item.activeProcesses, !processes.isEmpty {
+            Button(showsProcesses ? "Hide running processes" : "Show running processes") {
+              showsProcesses.toggle()
+            }
+          }
         }
-        .buttonStyle(.borderless)
-        .help("Reveal in Finder")
       }
       .padding(.horizontal, 14)
       .padding(.vertical, 10)
@@ -886,44 +458,12 @@ private struct CleanupItemRow: View {
   }
 }
 
-private struct RunningProcessDisclosure: View {
-  let processes: [ProjectProcessInfo]
-  @Binding var isExpanded: Bool
-
-  var body: some View {
-    Button {
-      isExpanded.toggle()
-    } label: {
-      HStack(spacing: 4) {
-        Text(label)
-        Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-      }
-      .font(.caption2.weight(.medium))
-      .foregroundStyle(.orange)
-    }
-    .buttonStyle(.plain)
-    .help("Show process names, PIDs, listening ports, and stop controls")
-  }
-
-  private var label: String {
-    let ports = Array(Set(processes.flatMap(\.listeningPorts))).sorted()
-    guard let firstPort = ports.first else {
-      return "\(processes.count) running"
-    }
-
-    if ports.count == 1 {
-      return "\(processes.count) running · :\(firstPort)"
-    }
-
-    return "\(processes.count) running · :\(firstPort) +\(ports.count - 1)"
-  }
-}
-
 private struct RunningProcessesDetail: View {
   let item: StorageItem
   let processes: [ProjectProcessInfo]
   let isStopping: Bool
   let onStopAndSelect: (StorageItem) -> Void
+  @State private var reviewingStop = false
 
   var body: some View {
     VStack(alignment: .leading, spacing: 9) {
@@ -939,8 +479,8 @@ private struct RunningProcessesDetail: View {
             .font(.caption)
             .foregroundStyle(.secondary)
         } else {
-          Button("Stop & Select") {
-            onStopAndSelect(item)
+          Button("Stop and select…") {
+            reviewingStop = true
           }
           .buttonStyle(.bordered)
         }
@@ -967,18 +507,24 @@ private struct RunningProcessesDetail: View {
         .font(.caption)
       }
 
-      Text(
-        "Stopping can discard unsaved process work. Project source files are never deleted here."
-      )
-      .font(.caption2)
-      .foregroundStyle(.secondary)
+      if reviewingStop {
+        BlitzConfirmation(
+          title: "Stop running processes?",
+          message:
+            "Stopping these listed processes can discard unsaved work. Dependencies are selected only after a rescan.",
+          confirmTitle: "Stop and select",
+          onConfirm: {
+            reviewingStop = false
+            onStopAndSelect(item)
+          }, onCancel: { reviewingStop = false })
+      }
     }
     .padding(.leading, 50)
     .padding(.trailing, 14)
     .padding(.vertical, 10)
     .background(.orange.opacity(0.055))
     .overlay(alignment: .top) {
-      Divider().padding(.leading, 42)
+      BlitzRowDivider(leading: 42)
     }
   }
 
@@ -1134,9 +680,11 @@ private struct SimulatorDeviceRow: View {
           .foregroundStyle(.secondary)
       }
 
-      Text(device.state)
-        .font(.caption2.weight(.medium))
-        .foregroundStyle(device.state == "Booted" ? .green : .secondary)
+      if device.state == "Booted" {
+        Text("Running")
+          .font(.caption2.weight(.medium))
+          .foregroundStyle(.green)
+      }
 
       Text(ByteText.full(device.bytes))
         .fontWeight(.semibold)
@@ -1180,100 +728,52 @@ private struct SectionLoadingRow: View {
   }
 }
 
-private struct DockerStorageView: View {
+struct DockerStorageView: View {
   @ObservedObject var model: DockerStorageModel
   @State private var showsConfirmation = false
 
   var body: some View {
-    ScrollView {
-      VStack(alignment: .leading, spacing: 18) {
-        dockerSummary
-
-        if let errorMessage = model.errorMessage {
-          Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
-            .foregroundStyle(.orange)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(14)
-            .background(.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 12))
-        }
-
-        if let snapshot = model.snapshot {
-          DockerCategorySection(snapshot: snapshot)
-          protectionCard
-        } else if model.isRefreshing {
-          SectionLoadingRow(text: "Reading images, containers, volumes, and build cache…")
-        } else if !model.isInstalled {
-          ContentUnavailableView(
-            "Docker Not Installed",
-            systemImage: "shippingbox",
-            description: Text("Install Docker Desktop to see its native storage breakdown.")
-          )
-        }
+    VStack(alignment: .leading, spacing: 16) {
+      HStack {
+        Text("Containers and volumes are protected")
+          .font(.system(size: 12)).foregroundStyle(.secondary)
+        Spacer()
+        Button("Refresh Docker") { model.refresh() }
+          .disabled(model.isRefreshing || model.isCleaning)
       }
-      .padding(18)
-    }
-    .safeAreaInset(edge: .bottom) {
-      dockerCleanupBar
-    }
-    .alert("Clean rebuildable Docker data?", isPresented: $showsConfirmation) {
-      Button("Cancel", role: .cancel) {}
-      Button("Clean Docker", role: .destructive) {
-        model.cleanRebuildable()
-      }
-    } message: {
-      Text(
-        "Unused images and build cache will be deleted permanently. "
-          + "Containers and volumes will not be deleted."
-      )
-    }
-  }
-
-  private var dockerSummary: some View {
-    HStack(spacing: 18) {
-      VStack(alignment: .leading, spacing: 5) {
-        Text("Rebuildable Docker data")
-          .font(.headline)
-        Text(ByteText.full(model.snapshot?.rebuildableBytes ?? 0))
-          .font(.system(size: 32, weight: .semibold, design: .rounded))
-          .monospacedDigit()
-        Text("Unused images and build cache only")
-          .font(.caption)
-          .foregroundStyle(.secondary)
+      if let errorMessage = model.errorMessage {
+        Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
+          .foregroundStyle(.orange)
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .padding(14)
+          .background(.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 12))
       }
 
-      Spacer()
-
-      VStack(alignment: .trailing, spacing: 6) {
-        Label("Volumes protected", systemImage: "lock.fill")
-          .font(.callout.weight(.medium))
-          .foregroundStyle(.green)
-        Text("No Terminal window · no container deletion")
-          .font(.caption)
-          .foregroundStyle(.secondary)
-      }
-    }
-    .padding(18)
-    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
-  }
-
-  private var protectionCard: some View {
-    HStack(alignment: .top, spacing: 12) {
-      Image(systemName: "lock.shield.fill")
-        .foregroundStyle(.green)
-        .font(.title2)
-      VStack(alignment: .leading, spacing: 4) {
-        Text("Data-bearing Docker resources stay untouched")
-          .font(.headline)
-        Text(
-          "\(AppBrand.name) never prunes volumes or containers. Images used by a container are also retained."
+      if let snapshot = model.snapshot {
+        DockerCategorySection(snapshot: snapshot)
+      } else if model.isRefreshing {
+        SectionLoadingRow(text: "Reading images, containers, volumes, and build cache…")
+      } else if !model.isInstalled {
+        ContentUnavailableView(
+          "Docker Not Installed",
+          systemImage: "shippingbox",
+          description: Text("Install Docker Desktop to see its native storage breakdown.")
         )
-        .font(.callout)
-        .foregroundStyle(.secondary)
       }
-    }
-    .frame(maxWidth: .infinity, alignment: .leading)
-    .padding(16)
-    .background(.green.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+      dockerCleanupBar
+      if showsConfirmation {
+        BlitzConfirmation(
+          title: "Clean rebuildable Docker data?",
+          message:
+            "Unused images and build cache will be deleted permanently. Containers and volumes will not be deleted.",
+          confirmTitle: "Clean Docker",
+          onConfirm: {
+            showsConfirmation = false
+            model.cleanRebuildable()
+          }, onCancel: { showsConfirmation = false })
+      }
+    }.padding(16)
+      .task { model.refreshIfNeeded() }
   }
 
   private var dockerCleanupBar: some View {
@@ -1299,12 +799,12 @@ private struct DockerStorageView: View {
 
         Spacer()
 
-        Button("Clean Rebuildable") {
+        Button("Review Docker cleanup…") {
           showsConfirmation = true
         }
         .buttonStyle(.borderedProminent)
         .disabled(
-          model.snapshot?.rebuildableBytes == 0
+          (model.snapshot?.rebuildableBytes ?? 0) == 0
             || model.isCleaning
             || model.isRefreshing
         )
@@ -1326,7 +826,7 @@ private struct DockerCategorySection: View {
     VStack(alignment: .leading, spacing: 0) {
       HStack {
         VStack(alignment: .leading, spacing: 2) {
-          Text("Docker Breakdown")
+          Text("Allocated storage")
             .font(.headline)
           Text("\(ByteText.full(snapshot.totalBytes)) allocated across Docker resources")
             .font(.caption)
@@ -1406,303 +906,6 @@ private struct DockerCategoryRow: View {
       return "hammer.fill"
     default:
       return "circle.grid.2x2.fill"
-    }
-  }
-}
-
-private struct StorageExplorerView: View {
-  @ObservedObject var model: StorageBreakdownModel
-  let snapshot: SystemSnapshot
-  @Binding var selectedCategoryID: String?
-  @State private var selectedVolumeID = "mac"
-
-  private var selectedCategory: StorageCategory? {
-    breakdown.categories.first { category in
-      category.id == selectedCategoryID
-    }
-  }
-
-  private var volumes: [StorageVolumeContext] {
-    var result = [
-      StorageVolumeContext(
-        id: "mac",
-        name: "Mac",
-        rootPath: "/",
-        availableBytes: snapshot.diskAvailable,
-        totalBytes: snapshot.diskTotal
-      )
-    ]
-
-    if let developerVolume = snapshot.developerVolume {
-      result.append(
-        StorageVolumeContext(
-          id: "developer",
-          name: "Dev drive",
-          rootPath: developerVolume.path,
-          availableBytes: developerVolume.available,
-          totalBytes: developerVolume.total
-        )
-      )
-    }
-
-    return result
-  }
-
-  private var selectedVolume: StorageVolumeContext {
-    volumes.first { volume in
-      volume.id == selectedVolumeID
-    } ?? volumes[0]
-  }
-
-  private var breakdown: StorageVolumeBreakdownResult {
-    StorageVolumeBreakdown.result(
-      StorageVolumeBreakdownRequest(
-        categories: model.categories,
-        volume: selectedVolume
-      )
-    )
-  }
-
-  private var computerCategories: [StorageCategory] {
-    breakdown.categories.filter { category in
-      category.id.hasPrefix("computer-") || category.id == "other-storage"
-    }
-  }
-
-  private var developerCategories: [StorageCategory] {
-    breakdown.categories.filter { category in
-      !category.id.hasPrefix("computer-") && category.id != "other-storage"
-    }
-  }
-
-  var body: some View {
-    HStack(spacing: 0) {
-      VStack(spacing: 0) {
-        StorageVolumeCoverageView(
-          volumes: volumes,
-          selectedVolumeID: $selectedVolumeID,
-          selectedVolume: selectedVolume,
-          coverage: breakdown.coverage
-        )
-
-        Divider()
-
-        List(selection: $selectedCategoryID) {
-          Section("Computer") {
-            ForEach(computerCategories) { category in
-              StorageCategoryLabel(category: category)
-                .tag(category.id)
-            }
-          }
-
-          Section("Developer") {
-            ForEach(developerCategories) { category in
-              StorageCategoryLabel(category: category)
-                .tag(category.id)
-            }
-          }
-        }
-        .listStyle(.sidebar)
-      }
-      .frame(minWidth: 280, idealWidth: 310, maxWidth: 340)
-      .background(.regularMaterial)
-
-      Divider()
-
-      if let selectedCategory {
-        StorageCategoryDetail(
-          category: selectedCategory,
-          volumeName: selectedVolume.name
-        )
-      } else {
-        ContentUnavailableView("Select a category", systemImage: "internaldrive")
-      }
-    }
-    .onChange(of: selectedVolumeID) { _, _ in
-      selectedCategoryID = breakdown.categories.first?.id
-    }
-    .onChange(of: model.categories) { _, _ in
-      if selectedCategory == nil {
-        selectedCategoryID = breakdown.categories.first?.id
-      }
-    }
-  }
-}
-
-private struct StorageVolumeCoverageView: View {
-  let volumes: [StorageVolumeContext]
-  @Binding var selectedVolumeID: String
-  let selectedVolume: StorageVolumeContext
-  let coverage: StorageVolumeCoverage
-
-  private var usedRatio: Double {
-    guard selectedVolume.totalBytes > 0 else {
-      return 0
-    }
-
-    return Double(selectedVolume.usedBytes) / Double(selectedVolume.totalBytes)
-  }
-
-  var body: some View {
-    VStack(alignment: .leading, spacing: 10) {
-      Picker("Disk", selection: $selectedVolumeID) {
-        ForEach(volumes) { volume in
-          Text(volume.name).tag(volume.id)
-        }
-      }
-      .pickerStyle(.segmented)
-      .labelsHidden()
-
-      HStack(alignment: .firstTextBaseline) {
-        Text(ByteText.full(selectedVolume.totalBytes))
-          .font(.title3.weight(.semibold))
-          .monospacedDigit()
-        Text("capacity")
-          .font(.caption)
-          .foregroundStyle(.secondary)
-        Spacer()
-      }
-
-      ProgressView(value: usedRatio)
-        .tint(usedRatio >= 0.9 ? .red : .accentColor)
-
-      HStack {
-        Text("\(ByteText.full(selectedVolume.usedBytes)) used")
-        Spacer()
-        Text("\(ByteText.full(selectedVolume.availableBytes)) free")
-      }
-      .font(.caption)
-      .foregroundStyle(.secondary)
-
-      Divider()
-
-      CoverageValueRow(
-        color: .blue,
-        title: "Storage classified",
-        value: coverage.identifiedBytes
-      )
-      CoverageValueRow(
-        color: .secondary,
-        title: "Other files & macOS",
-        value: coverage.otherBytes
-      )
-
-      Text("Known developer categories plus the exact remaining used space")
-        .font(.caption2)
-        .foregroundStyle(.tertiary)
-        .fixedSize(horizontal: false, vertical: true)
-    }
-    .padding(14)
-  }
-}
-
-private struct CoverageValueRow: View {
-  let color: Color
-  let title: String
-  let value: UInt64
-
-  var body: some View {
-    HStack(spacing: 7) {
-      Circle()
-        .fill(color)
-        .frame(width: 7, height: 7)
-      Text(title)
-        .font(.caption)
-      Spacer()
-      Text(ByteText.full(value))
-        .font(.caption.weight(.semibold))
-        .monospacedDigit()
-    }
-  }
-}
-
-private struct StorageCategoryLabel: View {
-  let category: StorageCategory
-
-  var body: some View {
-    HStack(spacing: 10) {
-      Image(systemName: category.systemImage)
-        .foregroundStyle(.secondary)
-        .frame(width: 22)
-      VStack(alignment: .leading, spacing: 2) {
-        Text(category.name)
-          .fontWeight(.medium)
-        Text(category.detail)
-          .font(.caption2)
-          .foregroundStyle(.secondary)
-          .lineLimit(1)
-      }
-      Spacer()
-      Text(ByteText.compact(category.bytes))
-        .monospacedDigit()
-    }
-    .padding(.vertical, 4)
-  }
-}
-
-private struct StorageCategoryDetail: View {
-  let category: StorageCategory
-  let volumeName: String
-
-  var body: some View {
-    VStack(alignment: .leading, spacing: 0) {
-      HStack {
-        VStack(alignment: .leading, spacing: 4) {
-          Text(category.name)
-            .font(.title2.weight(.semibold))
-          Text(category.detail)
-            .foregroundStyle(.secondary)
-          Text("On \(volumeName)")
-            .font(.caption)
-            .foregroundStyle(.tertiary)
-        }
-        Spacer()
-        Text(ByteText.full(category.bytes))
-          .font(.title2.weight(.semibold))
-          .monospacedDigit()
-      }
-      .padding(18)
-
-      Divider()
-
-      if category.id == "other-storage" {
-        ContentUnavailableView {
-          Label("Everything outside the developer scan", systemImage: "internaldrive")
-        } description: {
-          Text(
-            "This is the exact remainder after subtracting the developer categories "
-              + "listed here. It includes macOS, applications, documents, media, "
-              + "and data \(AppBrand.name) does not classify yet."
-          )
-        }
-      } else {
-        List(category.items) { item in
-          HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-              Text(item.name)
-                .lineLimit(1)
-              Text(item.path)
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
-                .lineLimit(1)
-                .truncationMode(.middle)
-            }
-            Spacer()
-            Text(ByteText.full(item.bytes))
-              .monospacedDigit()
-            Button {
-              NSWorkspace.shared.activateFileViewerSelecting([
-                URL(fileURLWithPath: item.path)
-              ])
-            } label: {
-              Image(systemName: "folder")
-            }
-            .buttonStyle(.borderless)
-          }
-          .padding(.vertical, 5)
-        }
-        .listStyle(.inset)
-      }
     }
   }
 }

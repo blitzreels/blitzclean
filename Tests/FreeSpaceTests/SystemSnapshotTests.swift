@@ -187,8 +187,7 @@ struct SystemSnapshotTests {
         memoryPressure: .normal,
         cpuUsage: input.cpuUsage,
         thermalStatus: input.thermalStatus,
-        updatedAt: input.updatedAt,
-        developerVolume: nil
+        updatedAt: input.updatedAt
       )
     )
   }
