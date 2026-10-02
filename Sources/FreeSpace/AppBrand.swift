@@ -9,9 +9,11 @@ enum AppBrand {
   }
   static let accent = BlitzUI.mint
   static let bundleIdentifier = "com.blitzreels.BlitzClean"
-  static let icon: NSImage? = Bundle.main.url(forResource: "AppIcon", withExtension: "icns")
-    .flatMap(NSImage.init(contentsOf:))
-  static let mark: NSImage? = Bundle.main.url(forResource: "Mark", withExtension: "svg")
+  @MainActor static let icon: NSImage? = Bundle.main.url(
+    forResource: "AppIcon", withExtension: "icns"
+  )
+  .flatMap(NSImage.init(contentsOf:))
+  @MainActor static let mark: NSImage? = Bundle.main.url(forResource: "Mark", withExtension: "svg")
     .flatMap(NSImage.init(contentsOf:))
   static let repositoryURL = URL(string: "https://github.com/blitzreels/blitzclean")!
 }

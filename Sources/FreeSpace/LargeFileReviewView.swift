@@ -220,84 +220,100 @@ struct LargeFileReviewView: View {
             showingFilters ? "Hide filters" : "Filters", systemImage: "line.3.horizontal.decrease")
         }
       }
-      Text(
-        "\(model.mediaFilter.kind.rawValue) · \(minimumMiB == 0 ? "Any size" : "\(minimumMiB) MB+") · \(model.mediaFilter.sort.rawValue)"
-      )
-      .font(BlitzType.caption).foregroundStyle(BlitzUI.secondaryText)
-      if showingFilters {
-        VStack(alignment: .leading, spacing: 12) {
-          HStack {
-            Text("File filters").font(.system(size: 13, weight: .semibold))
-            Spacer()
-            Button("Reset filters") {
-              model.mediaFilter = MediaReviewFilter()
-              duplicateOnly = false
-              model.configureReview(
-                .init(
-                  roots: model.reviewRoots, minimumBytes: 100 * 1_024 * 1_024, maxEntries: 80_000,
-                  entireHierarchy: true))
-            }.disabled(busy)
-          }
-          HStack(alignment: .top, spacing: 16) {
-            filterField(
-              .init(
-                title: "Type",
-                content: AnyView(
-                  BlitzSegmentedPicker(
-                    title: "File type", options: ReviewMediaKind.allCases,
-                    selection: $model.mediaFilter.kind, label: { $0.rawValue }))))
-            filterField(
-              .init(
-                title: "Minimum size",
-                content: AnyView(
-                  BlitzSegmentedPicker(
-                    title: "Minimum size", options: [0, 100, 256, 1024],
-                    selection: Binding(
-                      get: { minimumMiB },
-                      set: {
-                        model.configureReview(
-                          .init(
-                            roots: model.reviewRoots, minimumBytes: UInt64($0) * 1_024 * 1_024,
-                            maxEntries: 80_000, entireHierarchy: true))
-                      }), label: { $0 == 0 ? "Any size" : $0 == 1024 ? "1 GB" : "\($0) MB" }
-                  ).disabled(busy))))
-          }
-          HStack(alignment: .top, spacing: 16) {
-            filterField(
-              .init(
-                title: "Modified",
-                content: AnyView(
-                  BlitzSegmentedPicker(
-                    title: "Modified", options: ReviewMediaAge.allCases,
-                    selection: $model.mediaFilter.age,
-                    label: {
-                      $0 == .any ? "Any age" : $0 == .year ? "1+ year" : "\($0.rawValue)+ days"
-                    }
-                  ))))
-            filterField(
-              .init(
-                title: "Sort",
-                content: AnyView(
-                  BlitzSegmentedPicker(
-                    title: "Sort", options: ReviewMediaSort.allCases,
-                    selection: $model.mediaFilter.sort,
-                    label: { $0 == .name ? "Name" : String($0.rawValue.dropLast(6)) }))))
-          }
-          filterField(
-            .init(
-              title: "Format",
-              content: AnyView(
-                BlitzSegmentedPicker(
-                  title: "Format",
-                  options: [
-                    "all", "mp4", "mov", "m4v", "mkv", "webm", "png", "jpg", "jpeg", "heic", "gif",
-                    "tiff", "webp",
-                  ],
-                  selection: $model.mediaFilter.format,
-                  label: { $0 == "all" ? "All" : "." + $0 }))))
-        }.panelCard()
-      }
+      Text(filterSummary).font(BlitzType.caption).foregroundStyle(BlitzUI.secondaryText)
+      if showingFilters { fileFilterPanel }
     }
+  }
+
+  private var filterSummary: String {
+    let size = minimumMiB == 0 ? "Any size" : "\(minimumMiB) MB+"
+    return "\(model.mediaFilter.kind.rawValue) · \(size) · \(model.mediaFilter.sort.rawValue)"
+  }
+
+  private var fileFilterPanel: some View {
+    VStack(alignment: .leading, spacing: 12) {
+      HStack {
+        Text("File filters").font(.system(size: 13, weight: .semibold))
+        Spacer()
+        Button("Reset filters") {
+          model.mediaFilter = MediaReviewFilter()
+          duplicateOnly = false
+          model.configureReview(
+            .init(
+              roots: model.reviewRoots, minimumBytes: 100 * 1_024 * 1_024, maxEntries: 80_000,
+              entireHierarchy: true))
+        }.disabled(busy)
+      }
+      kindAndSizeFilters
+      dateAndSortFilters
+      formatFilter
+    }.panelCard()
+  }
+
+  private var kindAndSizeFilters: some View {
+    HStack(alignment: .top, spacing: 16) {
+      filterField(
+        .init(
+          title: "Type",
+          content: AnyView(
+            BlitzSegmentedPicker(
+              title: "File type", options: ReviewMediaKind.allCases,
+              selection: $model.mediaFilter.kind, label: { $0.rawValue }))))
+      filterField(.init(title: "Minimum size", content: AnyView(minimumSizeFilter)))
+    }
+  }
+
+  private var minimumSizeFilter: some View {
+    BlitzSegmentedPicker(
+      title: "Minimum size", options: [0, 100, 256, 1024],
+      selection: Binding<Int>(
+        get: { minimumMiB },
+        set: {
+          model.configureReview(
+            .init(
+              roots: model.reviewRoots, minimumBytes: UInt64($0) * 1_024 * 1_024,
+              maxEntries: 80_000, entireHierarchy: true))
+        }), label: { $0 == 0 ? "Any size" : $0 == 1024 ? "1 GB" : "\($0) MB" }
+    ).disabled(busy)
+  }
+
+  private var dateAndSortFilters: some View {
+    HStack(alignment: .top, spacing: 16) {
+      filterField(
+        .init(
+          title: "Modified",
+          content: AnyView(
+            BlitzSegmentedPicker(
+              title: "Modified", options: ReviewMediaAge.allCases,
+              selection: $model.mediaFilter.age,
+              label: {
+                $0 == .any ? "Any age" : $0 == .year ? "1+ year" : "\($0.rawValue)+ days"
+              }
+            ))))
+      filterField(
+        .init(
+          title: "Sort",
+          content: AnyView(
+            BlitzSegmentedPicker(
+              title: "Sort", options: ReviewMediaSort.allCases,
+              selection: $model.mediaFilter.sort,
+              label: { $0 == .name ? "Name" : String($0.rawValue.dropLast(6)) }))))
+    }
+  }
+
+  private var formatFilter: some View {
+    filterField(
+      .init(
+        title: "Format",
+        content: AnyView(
+          BlitzSegmentedPicker(
+            title: "Format",
+            options: [
+              "all", "mp4", "mov", "m4v", "mkv", "webm", "png", "jpg", "jpeg", "heic", "gif",
+              "tiff", "webp",
+            ],
+            selection: $model.mediaFilter.format,
+            label: { $0 == "all" ? "All" : "." + $0 }))))
   }
 
   private struct FilterField {

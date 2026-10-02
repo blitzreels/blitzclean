@@ -53,6 +53,8 @@ struct LargestFileHeap {
   private(set) var files: [ReviewFile] = []
   private var identities: Set<String> = []
 
+  init(capacity: Int) { self.capacity = capacity }
+
   private func identity(_ file: ReviewFile) -> String { "\(file.device):\(file.inode)" }
 
   mutating func insert(_ file: ReviewFile) {

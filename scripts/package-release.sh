@@ -20,11 +20,13 @@ ditto -c -k --sequesterRsrc --keepParent "$APP_DIR" "$ARCHIVE"
 if [[ -n "${NOTARY_PROFILE:-}" || -n "${BLITZCLEAN_ASC_PROFILE:-}" ]]; then
     RECEIPT="$ROOT_DIR/dist/notarization-$VERSION.json"
     if [[ -n "${NOTARY_PROFILE:-}" ]]; then
+        STATUS_PATH="status"
         xcrun notarytool submit "$ARCHIVE" --keychain-profile "$NOTARY_PROFILE" --wait --output-format json > "$RECEIPT"
     else
+        STATUS_PATH="data.attributes.status"
         asc --profile "$BLITZCLEAN_ASC_PROFILE" notarization submit --file "$ARCHIVE" --wait --output json > "$RECEIPT"
     fi
-    STATUS="$(plutil -extract status raw -o - "$RECEIPT")"
+    STATUS="$(plutil -extract "$STATUS_PATH" raw -o - "$RECEIPT")"
     if [[ "$STATUS" != "Accepted" ]]; then
         print -u2 "Notarization failed: $STATUS. See $RECEIPT."
         exit 1

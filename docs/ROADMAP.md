@@ -12,7 +12,7 @@
 
 ## Next
 
-- Configure notarization for every public download and add automatic updates.
+- Automate notarization for every public download and add automatic updates.
 - Broader hardware coverage and accessibility audits.
 - More cache recipes backed by dedicated safety tests.
 - User controls for history retention and exporting pressure diagnostics.
