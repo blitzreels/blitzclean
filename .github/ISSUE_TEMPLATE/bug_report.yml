@@ -1,0 +1,80 @@
+name: Bug report
+description: Report something that is broken or behaving unexpectedly.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting this. Please don't include secrets, private paths, project names you can't share,
+        process command lines, or conversation contents. Replace them with placeholders.
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: Describe the bug in a few sentences.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: List the smallest set of steps that triggers the issue.
+      placeholder: |
+        1. Open BlitzClean
+        2. Go to Storage → Cleanup
+        3. Press ...
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected area
+      options:
+        - Menu bar panel
+        - Overview or pressure warnings
+        - Memory or AI sessions
+        - CPU
+        - Storage (Browse, Largest files, Inventory)
+        - Storage Cleanup or removal
+        - Revive apps
+        - Projects
+        - Settings or permissions
+        - Build or release
+        - Not sure
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: BlitzClean version
+      description: Shown at the bottom of Settings.
+      placeholder: "1.1.0"
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: macOS version and Mac
+      placeholder: "macOS 15.5, Apple silicon"
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How did you install it?
+      options:
+        - GitHub release
+        - Built from source
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+  - type: textarea
+    id: extra
+    attributes:
+      label: Extra context
+      description: Screenshots or logs help, as long as they contain no private information.

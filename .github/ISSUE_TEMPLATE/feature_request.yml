@@ -1,0 +1,46 @@
+name: Feature request
+description: Suggest an improvement.
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Ideas are welcome. BlitzClean keeps a focused direction and strict safety rules, so not every request
+        will be accepted. Anything that deletes or stops things automatically is out of scope.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to do, and what gets in the way?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What would make this better?
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected area
+      options:
+        - Menu bar panel
+        - Memory or AI sessions
+        - CPU
+        - Storage or cleanup
+        - Revive apps
+        - Projects
+        - Settings
+        - Documentation
+        - Not sure
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives
+      description: What workaround are you using now?

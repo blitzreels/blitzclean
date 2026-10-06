@@ -1,100 +1,99 @@
 <p align="center"><img src="assets/brand/app-icon.png" width="112" alt="BlitzClean icon"></p>
 <h1 align="center">BlitzClean</h1>
-<p align="center">A little breathing room for your Mac.</p>
-<p align="center">By <a href="https://blitzreels.com">BlitzReels</a> · Native SwiftUI · macOS 14+ · MIT</p>
-<p align="center"><a href="https://github.com/blitzreels/blitzclean/releases">Downloads</a> · <a href="CHANGELOG.md">What's new</a> · <a href="#build-from-source">Build from source</a></p>
 
-BlitzClean shows CPU, RAM, and free disk space in your menu bar, with one window for taking action.
-Find large files, inspect running projects, recover stopped apps, and review what can be removed.
+<p align="center">
+  See what is slowing your Mac down, and fix it from the menu bar.<br>
+  An open-source resource monitor and careful storage cleaner, built by <a href="https://blitzreels.com">BlitzReels</a>.<br>
+  Free on macOS 14 or later. No account, no subscription, no telemetry.
+</p>
 
-Everything runs locally: no account, subscription, telemetry SDK, or cloud inference.
-Closing the window keeps the menu bar and monitoring running; **Quit BlitzClean** exits the app.
+<p align="center">
+  <a href="https://github.com/blitzreels/blitzclean/releases/latest">Download for macOS</a>
+  · <a href="docs/FEATURES.md">Features</a>
+  · <a href="docs/ARCHITECTURE.md">Architecture</a>
+  · <a href="CONTRIBUTING.md">Contribute</a>
+  · <a href="CHANGELOG.md">Release notes</a>
+</p>
 
-## New in 1.1.0
+<p align="center">
+  <img src="https://img.shields.io/badge/macOS-14%2B-000000?logo=apple&logoColor=white" alt="macOS 14+">
+  <img src="https://img.shields.io/badge/Swift-native-F05138?logo=swift&logoColor=white" alt="Native Swift app">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-30D49B" alt="License: MIT"></a>
+  <a href="https://github.com/blitzreels/blitzclean/actions/workflows/ci.yml"><img src="https://github.com/blitzreels/blitzclean/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+</p>
 
-- **Faster Revive:** direct Revive and Force Quit buttons, including on already-running apps.
-  The list follows app launches/exits and refreshes every two seconds while open; old results no longer hide new freezes.
-- **Browse first:** Storage opens into a directory browser with drive buttons, breadcrumbs, named Back/Forward controls,
-  clickable rows, recursive folder sizes, and reviewed Move to Trash.
-- **Largest files across drives:** cancellable scans cover connected local drives and progressively rank the largest files.
-  The old Files tab and nested storage tabs are gone.
-- **Pressure warnings:** see the limiting resource and when to avoid new builds or threads.
-  Projects can opt into automatic pausing during sustained pressure, with explicit Resume.
-- **Persistent charts:** CPU and RAM history survives relaunch, with up to seven days of bounded local history.
-- **Consistent controls:** one dashboard, inline reviews, app icons, a revised logo, and direct Quit/Stop actions.
+![BlitzClean Overview: storage, memory, and CPU with a pressure warning](.github/assets/readme/overview.png)
 
-See the [changelog](CHANGELOG.md) for the full release notes.
+BlitzClean is for developers and creators whose Macs fill up with builds, caches, simulators, AI agents,
+and dev servers. It shows CPU, memory, and free disk space in the menu bar, tells you which one is the
+bottleneck, and gives you one window to act: quit or pause what is using memory, revive frozen apps,
+and remove data that tools rebuild on their own.
 
-## Download
-
-Get builds from [GitHub Releases](https://github.com/blitzreels/blitzclean/releases).
-Release notes identify the supported architectures, signing, and notarization status for each download.
-
-The 1.1.0 archive supports Apple silicon and Intel Macs running macOS 14 or later.
-Extract `BlitzClean.app`, move it to Applications, and open it; use Settings to enable launch at login.
-
-The 1.1.0 download is Developer ID signed, notarized by Apple, and includes a stapled ticket.
-A SHA-256 checksum accompanies the archive.
+Nothing leaves your Mac. Every removal is reviewed first, and personal files go to the Trash.
 
 ## What you can do
 
-| Page | Controls |
-| --- | --- |
-| Overview | CPU, RAM, storage, pressure guidance, and the largest AI threads. |
-| Memory | Apps and AI sessions ranked by memory; Quit, Force Quit, Pause/Resume, and pressure history. |
-| CPU | Current process usage; values can exceed 100% when a process uses multiple cores. |
-| Storage | **Browse**, **Inventory**, and **Cleanup**, with no nested tab bar. |
-| Revive apps | Live app checks, direct Revive/Force Quit, bulk recovery for stopped apps, and recent crashes. |
-| Projects | Servers and background workers grouped by project, memory/CPU, Stop, Pause/Resume, and Keep running. |
-| Settings | Menu-bar metrics, notifications, login launch, and project locations. |
+- **Spot the bottleneck.** A live menu-bar readout and a warning that names the limiting resource:
+  memory, swap, disk reserve, or CPU, with one clear instruction.
+- **Free memory.** Rank apps and AI sessions (Claude Code, Codex, Cursor) by RAM.
+  Pause, resume, quit, or force quit them, and stop whole projects with their dev servers.
+- **Revive frozen apps.** Find stopped or unresponsive apps, resume them, and see a definite result.
+- **Find what fills your disk.** Browse every drive with folder sizes, or rank the largest files across drives.
+- **Clean up safely.** Review caches, `node_modules`, build output, simulators, Docker, and merged worktrees.
+  See when removed folders grow back, and remove them again in one step.
+- **Review media.** Filter large videos and images, find exact duplicates, and make smaller copies with FFmpeg.
 
-The menu bar shows CPU, RAM, free storage, compact charts, and shortcuts into the same dashboard.
-Resource samples update every two seconds; project, disk, and window checks have their own bounded refresh cycles.
+<table>
+  <tr>
+    <td width="300" valign="top">
+      <img src=".github/assets/readme/tray.png" width="300" alt="BlitzClean menu bar panel">
+    </td>
+    <td valign="top">
+      <h3>Always in the menu bar</h3>
+      <p>
+        Memory, CPU, and storage at a glance, the apps using the most memory, and a warning only when
+        something needs you. Closing the dashboard keeps monitoring on; quit from the panel's gear menu.
+      </p>
+      <p>
+        Choose what the menu bar shows in Settings: available memory, used memory, or a percentage.
+      </p>
+    </td>
+  </tr>
+</table>
 
-### Recover apps
+## Try it on your Mac
 
-Open **Revive apps** from the sidebar, menu bar, or **Tools** menu (`Shift-Command-R`).
-Stopped and unresponsive apps appear first, and each Revive action runs independently of the full scan.
+1. [Download the latest release][releases], unzip it, and move `BlitzClean.app` to Applications.
+2. Open BlitzClean. It appears in the menu bar; click it and choose **Open dashboard**.
+3. In **Settings → Finish setup**, allow the permissions you want:
+   Notifications for warnings, Accessibility for frozen-window checks, Full Disk Access for protected folders.
+   Every permission is optional, and the section disappears once all are granted.
 
-Revive resumes stopped processes and checks whether their windows respond; it does not restart a running app.
-A deadlock can remain unresponsive, in which case Force Quit stays available with an inline unsaved-work confirmation.
+Releases support Apple silicon and Intel Macs on macOS 14 or later.
+Each download is Developer ID signed, notarized by Apple, and published with a SHA-256 checksum.
 
-Accessibility permission enables frozen-window checks; without it, BlitzClean can still inspect process state.
-Recent crashes can be reopened or dismissed, and a successful recovery never masks a later stopped state.
+## Safe by design
 
-### Find and remove storage
+- Scans never select anything automatically, and nothing is removed without an inline review.
+- Personal files and folders go to the Trash. BlitzClean never empties the Trash for you.
+- Only rebuildable data (caches, dependencies, build output) can be permanently deleted, after review.
+- Running tools, open files, recent changes, and protected paths block removal.
+- Process identity is checked again right before Quit, Pause, or Force Quit.
+  Force Quit and bulk actions always ask first; nothing is force-quit automatically.
+- No memory purge commands, no synthetic memory pressure, no background deletion.
 
-- **Browse:** navigate drives and folders without opening another window; select files/folders for Move to Trash.
-- **Largest files:** scan all connected local drives, including hidden files, app packages, and dependency trees.
-  Results retain the largest 5,000 files with progress, cancellation, and unreadable-location reporting.
-- **Inventory:** inspect installed apps, vendor app folders, Xcode, simulator data, caches, and developer storage.
-- **Cleanup:** review caches, dependencies, build outputs, simulators, Docker, worktrees, and previously removed folders.
-- **Remove again:** see when rebuildable folders grow back, with fresh activity and file checks before another removal.
+The full rules are in [Features → Removal and process rules](docs/FEATURES.md#removal-and-process-rules).
 
-Normal directory browsing runs separately from recursive size calculation.
-Largest-file traversal has no fixed 32-level depth or 20-second cutoff; denied locations remain visible as incomplete.
+## Privacy
 
-### Review media
-
-- Filter videos, images, MP4/MOV and other extensions by age, size, and path; sort by size or date.
-- Find exact duplicates with streaming SHA-256 comparison, excluding hard links and retaining one copy per group.
-- Use an installed FFmpeg to create smaller SDR MP4/JPEG copies, lossless PNG, or joins of compatible clips.
-  Exports preserve originals, check free space, and verify the output with a full decode.
-
-FFmpeg is optional and is not downloaded automatically.
-HDR video, animated images, transparent JPEG conversion, and joins with incompatible streams are rejected.
-
-### History and pressure
-
-CPU/RAM charts retain two-second detail for 15 minutes and five-minute points for seven days.
-The chart file is capped at 512 KiB; scan results, filters, export history, and cleanup receipts also persist locally.
-
-Pressure warnings consider memory pressure, compression, swap, disk reserve, and CPU.
-Opt-in project pausing stops CPU work but keeps its memory allocated; it never automatically kills apps or deletes files.
+BlitzClean runs entirely on your Mac: no account, cloud service, analytics, or telemetry SDK.
+Charts, scan results, and the removal log stay in `~/Library/Application Support`, each with a size limit.
+Saved history never includes conversation contents, window text, environment variables, or process arguments.
+See [Privacy and permissions](docs/PRIVACY.md) for exactly what is read and stored.
 
 ## Build from source
 
-Requires macOS 14+ and a Swift 6 toolchain, such as Xcode 16 or later.
+Requires macOS 14+ and a Swift 6 toolchain (Xcode 16 or later).
 
 ```sh
 git clone https://github.com/blitzreels/blitzclean.git
@@ -102,51 +101,60 @@ cd blitzclean
 ./script/build_and_run.sh
 ```
 
-This builds, installs, and opens `~/Applications/BlitzClean.app`.
-Local builds use an installed Apple Development signing identity so permissions can remain tied to a stable identity.
-
-Without a signing identity, explicitly opt into an ad-hoc local build:
+This builds, installs, and opens `~/Applications/BlitzClean.app`, signed with your Apple Development identity
+so macOS permissions stay attached between builds. Without a signing identity, use an ad-hoc build:
 
 ```sh
 BLITZCLEAN_SIGNING_IDENTITY=- ./script/build_and_run.sh
 ```
 
-Ad-hoc rebuilds can require granting Accessibility and Files and Folders permissions again.
-They are for local development, not notarized distribution.
+Ad-hoc rebuilds can ask for permissions again. They are for local development, not distribution.
+
+### Checks
 
 ```sh
-./scripts/check.sh
-./scripts/build-app.sh
+./scripts/check.sh        # build, tests, swift-format lint, plist and shell checks
+./scripts/build-app.sh    # package the app bundle
+FREE_SPACE_DESIGN_DIR=/tmp/shots swift test --filter DesignRenderTests   # render every screen
 ```
 
-The media integration tests require FFmpeg/FFprobe (`brew install ffmpeg`).
-Checks cover compilation, Swift tests, formatting, property lists, and shell syntax.
+Media tests need FFmpeg (`brew install ffmpeg`).
 See [Releasing](docs/RELEASING.md) for universal packaging, signing, notarization, and checksums.
 
-## Removal and process rules
+## Repository map
 
-Personal files and folders use **Move to Trash**, with an inline review and fresh identity checks.
-They remain recoverable; disk space is reclaimed when you empty Trash in Finder.
+| Path | What lives there |
+| --- | --- |
+| [Sources/FreeSpace](Sources/FreeSpace) | The app: monitoring, memory and process control, storage scans, cleanup, and UI |
+| [Tests/FreeSpaceTests](Tests/FreeSpaceTests) | Unit, integration, and screenshot render tests |
+| [docs](docs) | [Features](docs/FEATURES.md), [architecture](docs/ARCHITECTURE.md), [design rules](docs/DESIGN.md), [privacy](docs/PRIVACY.md), [releasing](docs/RELEASING.md), [roadmap](docs/ROADMAP.md) |
+| [script](script), [scripts](scripts) | Build-and-run, checks, packaging, and release scripts |
+| [support](support) | `Info.plist` and entitlements |
+| [assets](assets) | App icon and brand files |
 
-Cache and developer cleanup can **permanently delete** explicitly reviewed rebuildable data.
-Running tools, open files, recent changes, protected paths, and incomplete checks can block removal.
+BlitzClean grew from an earlier project called FreeSpace, so the Swift target and some storage folders keep that name.
 
-Scans never select candidates automatically, and BlitzClean never empties Trash for you.
-Folder size is not a guaranteed space gain: APFS shared blocks and concurrent writes affect available storage.
+## Contribute
 
-Individual Quit/Stop actions run immediately and preserve native save dialogs where supported.
-Force Quit and bulk termination require inline confirmation; normal Stop never escalates automatically to Force Quit.
+Bug reports, focused fixes, and documentation improvements are welcome.
+Read [CONTRIBUTING.md](CONTRIBUTING.md), and open an issue before starting a larger change.
 
-Pressure protection honors Keep running projects and protects AI/tool sessions from automatic pausing.
-No forced memory purge or synthetic memory-pressure allocation is used.
+Use [GitHub Issues][issues] for reproducible bugs and feature requests.
+Report security problems privately as described in [SECURITY.md](SECURITY.md).
 
-## Privacy and development
+## License
 
-[Privacy and permissions](docs/PRIVACY.md) · [Architecture](docs/ARCHITECTURE.md) ·
-[Product design](docs/DESIGN.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [MIT license](LICENSE)
+BlitzClean is available under the [MIT License](LICENSE).
+Projects that shaped it are credited in [open-source bases](OPEN_SOURCE_BASES.md).
 
-BlitzClean grew from FreeSpace / Buildkeep; the `FreeSpace` Swift target and compatibility history folder remain.
-Selected legacy preferences migrate once to `com.blitzreels.BlitzClean`, preserving the originals.
+<p align="center">
+  <a href="https://blitzreels.com?utm_source=github&utm_medium=readme&utm_campaign=blitzclean-oss">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset=".github/assets/readme/blitzreels-logo-white.png">
+      <img src=".github/assets/readme/blitzreels-logo-dark.png" width="170" alt="BlitzReels">
+    </picture>
+  </a>
+</p>
 
-No third-party cleaner source is embedded.
-See [source and license notes](OPEN_SOURCE_BASES.md).
+[releases]: https://github.com/blitzreels/blitzclean/releases/latest
+[issues]: https://github.com/blitzreels/blitzclean/issues
