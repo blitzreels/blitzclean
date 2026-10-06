@@ -8,10 +8,10 @@ let package = Package(
     .macOS(.v14)
   ],
   products: [
-    .executable(name: "BlitzClean", targets: ["FreeSpace"])
+    .executable(name: "BlitzClean", targets: ["BlitzClean"])
   ],
   targets: [
-    .executableTarget(name: "FreeSpace"),
-    .testTarget(name: "FreeSpaceTests", dependencies: ["FreeSpace"]),
+    .executableTarget(name: "BlitzClean"),
+    .testTarget(name: "BlitzCleanTests", dependencies: ["BlitzClean"]),
   ]
 )

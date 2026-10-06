@@ -4,7 +4,7 @@ ROOT_DIR="${0:A:h:h}"
 APP_DIR="$ROOT_DIR/dist/BlitzClean.app"
 CONTENTS_DIR="$APP_DIR/Contents"
 LOCAL_SIGNING_IDENTITY="$(security find-identity -v -p codesigning | awk -F '"' '/Apple Development:/ { print $2; exit }')"
-SIGNING_IDENTITY="${BLITZCLEAN_SIGNING_IDENTITY:-${FREE_SPACE_SIGNING_IDENTITY:-$LOCAL_SIGNING_IDENTITY}}"
+SIGNING_IDENTITY="${BLITZCLEAN_SIGNING_IDENTITY:-$LOCAL_SIGNING_IDENTITY}"
 if [[ -z "$SIGNING_IDENTITY" ]]; then
     echo "No Apple Development signing identity found. An ad-hoc build loses the Accessibility grant." >&2
     echo "Set BLITZCLEAN_SIGNING_IDENTITY=- to build ad-hoc anyway." >&2
@@ -36,6 +36,6 @@ if [[ "$SIGNING_IDENTITY" != "-" ]]; then
         SIGNING_FLAGS+=(--timestamp)
     fi
 fi
-codesign --force "${SIGNING_FLAGS[@]}" --entitlements "$ROOT_DIR/support/FreeSpace.entitlements" --sign "$SIGNING_IDENTITY" "$APP_DIR"
+codesign --force "${SIGNING_FLAGS[@]}" --entitlements "$ROOT_DIR/support/BlitzClean.entitlements" --sign "$SIGNING_IDENTITY" "$APP_DIR"
 codesign --verify --strict "$APP_DIR"
 echo "$APP_DIR"

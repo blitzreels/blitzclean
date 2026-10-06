@@ -5,16 +5,14 @@ SOURCE_APP="$ROOT_DIR/dist/BlitzClean.app"
 TARGET_APP="$HOME/Applications/BlitzClean.app"
 "$ROOT_DIR/scripts/build-app.sh"
 mkdir -p "$HOME/Applications"
-for APP in FreeSpace Buildkeep BlitzClean; do
-    pkill -x "$APP" 2>/dev/null || true
-done
+pkill -x BlitzClean 2>/dev/null || true
 for attempt in {1..50}; do
-    if ! pgrep -x BlitzClean >/dev/null && ! pgrep -x Buildkeep >/dev/null && ! pgrep -x FreeSpace >/dev/null; then
+    if ! pgrep -x BlitzClean >/dev/null; then
         break
     fi
     sleep 0.1
 done
-if pgrep -x BlitzClean >/dev/null || pgrep -x Buildkeep >/dev/null || pgrep -x FreeSpace >/dev/null; then
+if pgrep -x BlitzClean >/dev/null; then
     print -u2 "The previous app is still exiting; installation stopped."
     exit 1
 fi
