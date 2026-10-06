@@ -20,9 +20,9 @@ resolve the user's task, use shared components, preserve consequential states, a
 - Buttons use `BlitzButtonStyle` (`.accent`, `.emphasized`, `.secondary`, `.quiet`) with BlitzRecorder's
   control metrics: 8-point radius; 24/28/34/40-point heights for mini/small/regular/large.
   Toggles use `BlitzSwitchStyle` (38 × 22 track) or `BlitzCheckboxStyle` (18-point square), never native styles.
-  Status uses `BlitzStatusBadge` or `BlitzStatusDot` with a `BlitzStatusTone`, not a custom pill.
+  Status uses `BlitzStatusBadge` or `BlitzStatusDot` with a `BlitzStatusTone`; do not draw custom pills.
 - The window has a hidden titlebar. `BlitzSidebar` sits on the panel surface with a 52-point drag area for the
-  window controls; destinations use quiet/secondary buttons, a filled symbol when selected, and ⌘1–⌘6.
+  window controls; destinations use quiet/secondary buttons, a filled symbol when selected, and ⌘1 to ⌘6.
   Use `BlitzSegmentedPicker` for value choices and filters; the user dislikes dropdowns in settings and storage.
   History ranges use direct segmented choices. Secondary action menus have 36-point rows and
   `blitzDropdownHost` draws them inside the current window without opening an NSMenu or popover window.
@@ -51,7 +51,7 @@ resolve the user's task, use shared components, preserve consequential states, a
   re-render its list or controls.
 - Badges report exceptions only: Not responding, Detached, Paused, Not back, Revived. Normal states (Running, Normal,
   Shutdown, Not checked) get no badge. No "needs attention" labels, no live/status pills in headers, and no header
-  subtitle that repeats a section count. Empty states are one line of text, not an icon with a title and blurb.
+  subtitle that repeats a section count. Empty states are one line of text, with no icon, title, or blurb.
 
 ## Implementation decisions
 
@@ -81,7 +81,7 @@ as its primary action and Force Quit in its menu. An explicit Quit skips suggest
 AI app) and still re-checks the process identity; macOS system apps and BlitzClean keep a lock instead of Quit.
 Storage Cleanup includes Removed before: every folder removed earlier that tools rebuild (build output,
 dependencies, shared caches), its current size, and Remove again. Cleanup reports written by agents to
-`~/Library/Application Support/FreeSpace/reports/` are imported into the same history. The Removal log closes
+`~/Library/Application Support/BlitzClean/reports/` are imported into the same history. The Removal log closes
 the page with every recorded removal.
 History ranges are direct segmented choices. Folder navigation uses visible drive and Home buttons,
 breadcrumbs and back/forward buttons. Secondary actions alone use menus.
@@ -93,17 +93,17 @@ Record the reason beside a changed pattern instead of adding another competing c
 
 Inspect the changed surface at compact and standard window sizes.
 Check loading, empty search, populated rows, long names, large values, menu actions, and disabled states.
-`FREE_SPACE_DESIGN_DIR=/tmp/shots swift test --filter DesignRenderTests` hosts the dashboard in an offscreen
+`BLITZCLEAN_DESIGN_DIR=/tmp/shots swift test --filter DesignRenderTests` hosts the dashboard in an offscreen
 window and writes Overview, Revive apps, Memory, and Settings screenshots with scripted recovery states.
-Verify the installed app too; offscreen rendering can omit native controls and composited layers.
-Successful compilation alone is not visual acceptance.
+Verify the installed app too, because offscreen rendering can omit native controls and composited layers.
+A successful build does not count as visual acceptance.
 
 ## October 2 pressure prevention
 
 Overview now leads with the limiting resource and a clear instruction to avoid new threads/builds under pressure.
 A missing desktop-notification permission appears inline with Enable alerts. A compact Running projects row links
 into Projects, which owns searchable project groups, aggregate memory/CPU, child-process counts and Pause/Resume.
-Projects distinguish active background workers from saved inactive projects rather than requiring a listening port.
+Projects distinguish active background workers from saved inactive projects without requiring a listening port.
 The row menu owns per-project automatic-pause consent, Keep running and Stop servers; no extra window is opened.
 
 ## October 2 immediate actions and drive browsing
@@ -118,12 +118,12 @@ Browse opens on all mounted local drives, with drive cards, same-page directory 
 across the selected roots. Hidden files, app packages, and dependency trees are visible. Directory listing is
 separate from recursive file ranking, so navigation does not wait for folder-size subprocesses. A streaming
 scan shows file count, elapsed time, and unreadable paths. Results are capped at the largest 5,000, not the first
-5,000 encountered; rows are paged. Cancellation keeps current results. No new nested tabs or windows.
+5,000 encountered; rows are paged. Cancellation keeps current results. Browse adds no nested tabs or windows.
 
 Browse defaults to the directory browser. A folder's full row and its arrow are a single Button, opened in one
 click. Files and folders have selection checkboxes and an inline Move to Trash review; files can be revealed in
 Finder. Visible drive buttons switch locations, and breadcrumbs navigate parents. Largest files across all drives
-is a secondary action within Browse, not a separate tab. Inventory links route into this same browser.
+is a secondary action within Browse and has no tab of its own. Inventory links route into this same browser.
 Folder listings run off the main actor, then one native scan fills in child-directory sizes. Partial folder totals
 use a lower-bound indicator. Navigating away cancels the previous traversal. Closed dropdown hosts do not hit-test.
 
@@ -141,7 +141,7 @@ Forward appears only when there is forward history. Parent navigation uses named
 Navigation never opens Finder; Show in Finder is an explicit secondary action.
 
 The browser groups folders before files, preserving size ordering within each group. Clicking a file
-selects it or shows its path inline; it never launches Finder implicitly. Show in Finder is explicit.
+selects it or shows its path inline without opening Finder.
 Home-folder files and user-created folders can be selected; core home folders and credential roots stay protected.
 
 Directory rows show proportional size bars against the largest item in the folder. Returning to a folder
@@ -168,7 +168,7 @@ Pause/Resume is the primary action in both Overview and Memory, with Quit and Fo
 Memory puts AI sessions immediately after its summary so the controls are easy to find.
 Rows show a verified local session title when available, then provider, project, delegated providers, terminal
 host and process ID. Search includes those identities. Claude launching Codex remains a Claude session
-with includes Codex CLI; cmux is the terminal host, never the AI provider.
+labeled "includes Codex CLI"; cmux is the terminal host, never the AI provider.
 
 Claude PID metadata must match the process start time. Codex CLI titles require an explicit session ID or
 a single open rollout file. Cursor titles require an explicit session ID matching local metadata.

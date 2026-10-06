@@ -33,15 +33,15 @@ Nothing leaves your Mac. Every removal is reviewed first, and personal files go 
 
 ## What you can do
 
-- **Spot the bottleneck.** A live menu-bar readout and a warning that names the limiting resource:
-  memory, swap, disk reserve, or CPU, with one clear instruction.
-- **Free memory.** Rank apps and AI sessions (Claude Code, Codex, Cursor) by RAM.
-  Pause, resume, quit, or force quit them, and stop whole projects with their dev servers.
-- **Revive frozen apps.** Find stopped or unresponsive apps, resume them, and see a definite result.
-- **Find what fills your disk.** Browse every drive with folder sizes, or rank the largest files across drives.
-- **Clean up safely.** Review caches, `node_modules`, build output, simulators, Docker, and merged worktrees.
-  See when removed folders grow back, and remove them again in one step.
-- **Review media.** Filter large videos and images, find exact duplicates, and make smaller copies with FFmpeg.
+- See the limiting resource at a glance. The menu bar shows live numbers, and a warning names what is short
+  (memory, swap, disk reserve, or CPU) with one instruction.
+- Free memory by ranking apps and AI sessions such as Claude Code, Codex, and Cursor by RAM, then pausing,
+  resuming, or quitting them. Whole projects can be stopped along with their dev servers.
+- Revive apps that stopped or froze, and see whether each one actually recovered.
+- Find what fills your disk by browsing every drive with folder sizes, or by ranking the largest files.
+- Review caches, `node_modules`, build output, simulators, Docker, and merged worktrees before removing them,
+  and see when removed folders grow back.
+- Filter large videos and images, find exact duplicates, and make smaller copies with FFmpeg.
 
 <table>
   <tr>
@@ -64,15 +64,15 @@ Nothing leaves your Mac. Every removal is reviewed first, and personal files go 
 ## Try it on your Mac
 
 1. [Download the latest release][releases], unzip it, and move `BlitzClean.app` to Applications.
-2. Open BlitzClean. It appears in the menu bar; click it and choose **Open dashboard**.
-3. In **Settings → Finish setup**, allow the permissions you want:
+2. Open BlitzClean. It appears in the menu bar; click it and choose Open dashboard.
+3. In Settings > Finish setup, allow the permissions you want:
    Notifications for warnings, Accessibility for frozen-window checks, Full Disk Access for protected folders.
    Every permission is optional, and the section disappears once all are granted.
 
 Releases support Apple silicon and Intel Macs on macOS 14 or later.
 Each download is Developer ID signed, notarized by Apple, and published with a SHA-256 checksum.
 
-## Safe by design
+## Safety
 
 - Scans never select anything automatically, and nothing is removed without an inline review.
 - Personal files and folders go to the Trash. BlitzClean never empties the Trash for you.
@@ -87,7 +87,7 @@ The full rules are in [Features → Removal and process rules](docs/FEATURES.md#
 ## Privacy
 
 BlitzClean runs entirely on your Mac: no account, cloud service, analytics, or telemetry SDK.
-Charts, scan results, and the removal log stay in `~/Library/Application Support`, each with a size limit.
+Charts, scan results, and the removal log stay in `~/Library/Application Support/BlitzClean`, each with a size limit.
 Saved history never includes conversation contents, window text, environment variables, or process arguments.
 See [Privacy and permissions](docs/PRIVACY.md) for exactly what is read and stored.
 
@@ -115,7 +115,7 @@ Ad-hoc rebuilds can ask for permissions again. They are for local development, n
 ```sh
 ./scripts/check.sh        # build, tests, swift-format lint, plist and shell checks
 ./scripts/build-app.sh    # package the app bundle
-FREE_SPACE_DESIGN_DIR=/tmp/shots swift test --filter DesignRenderTests   # render every screen
+BLITZCLEAN_DESIGN_DIR=/tmp/shots swift test --filter DesignRenderTests   # render every screen
 ```
 
 Media tests need FFmpeg (`brew install ffmpeg`).
@@ -125,14 +125,12 @@ See [Releasing](docs/RELEASING.md) for universal packaging, signing, notarizatio
 
 | Path | What lives there |
 | --- | --- |
-| [Sources/FreeSpace](Sources/FreeSpace) | The app: monitoring, memory and process control, storage scans, cleanup, and UI |
-| [Tests/FreeSpaceTests](Tests/FreeSpaceTests) | Unit, integration, and screenshot render tests |
+| [Sources/BlitzClean](Sources/BlitzClean) | The app: monitoring, memory and process control, storage scans, cleanup, and UI |
+| [Tests/BlitzCleanTests](Tests/BlitzCleanTests) | Unit, integration, and screenshot render tests |
 | [docs](docs) | [Features](docs/FEATURES.md), [architecture](docs/ARCHITECTURE.md), [design rules](docs/DESIGN.md), [privacy](docs/PRIVACY.md), [releasing](docs/RELEASING.md), [roadmap](docs/ROADMAP.md) |
 | [script](script), [scripts](scripts) | Build-and-run, checks, packaging, and release scripts |
 | [support](support) | `Info.plist` and entitlements |
 | [assets](assets) | App icon and brand files |
-
-BlitzClean grew from an earlier project called FreeSpace, so the Swift target and some storage folders keep that name.
 
 ## Contribute
 

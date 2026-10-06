@@ -1,34 +1,47 @@
 # Changelog
 
-## 1.2.0 — 2026-10-06
+## 1.2.0 - 2026-10-06
+
+### Menu bar panel
+
+- Redesign the panel around three tiles: memory with a 60-second chart, CPU, and free storage.
+  Below them are the three apps using the most memory, then Revive apps and Open dashboard.
+- Show the pressure alert only when a resource is limited. Disk alerts open Storage Cleanup with disk advice;
+  memory and CPU alerts open Projects.
+
+### Dashboard
+
+- Request permissions in one place, Settings > Finish setup. It lists only what is missing, the Settings item
+  shows the count, and the section disappears once everything is granted. Pages no longer ask on their own.
+- Give each pressure warning one instruction and a separate line of numbers, colored by severity.
+  When nothing is limited, Overview shows a single status line.
+- Make the Storage, Memory, and CPU cards on Overview open their page when clicked.
+- Give Storage one toolbar row in both modes: drives on the left, Largest files or Browse folders on the right,
+  plus a free-space meter beside the tabs and a labeled Stop button.
+- Refresh Storage Cleanup with one Scan again button. Empty sections shrink to their title, worktrees that
+  can't be removed sit behind a toggle, and each simulator shows the one action that applies to it.
+- Keep one accent button per page and align project rows that have no Start or Stop action.
+
+### Speed
+
+- Filter and sort each list once per render instead of several times.
+- Cache app icons instead of reloading them from disk on every redraw.
+- Stop rebuilding the duplicate list for every file in Largest files.
+- Find the visible chart window with a binary search over the seven-day history.
+
+### Name and data
+
+- Rename the Swift module, folders, and scripts to BlitzClean.
+- Keep local data in `~/Library/Application Support/BlitzClean`. On first launch, files from the older
+  `FreeSpace` folder move there without replacing anything, and cleanup reports dropped in the old
+  `reports` folder are still imported.
 
 ### Repository
 
-- Rewrite the README around what BlitzClean does, with screenshots, install steps, safety rules, and a repository map.
+- Rewrite the README with screenshots, install steps, safety rules, and a repository map.
 - Move the detailed feature reference to `docs/FEATURES.md`.
-- Add issue forms, a pull request template, release-note categories, and a label set.
-- Expand contributing and security guidance.
-
-### Tray and dashboard polish
-
-- Redesign the tray: an alert only under pressure, a Memory tile with a 60-second plot, CPU and Storage tiles,
-  the three apps using the most memory, and Revive apps (with its count) beside Open dashboard.
-- Send disk-limited alerts to Storage Cleanup instead of Projects, with disk-specific advice.
-- Tint the Overview pressure alert by severity; show a one-line status when capacity is fine.
-- Make the Overview Memory and CPU cards fully clickable and keep one accent action per view.
-- Give Storage one 28-point gutter, a free-space meter beside its tabs, and one toolbar row per mode:
-  location chips on the left, the Largest files / Browse folders switch on the right.
-- Merge Storage status messages into one line and replace the square stop icon with a labeled Stop.
-- Move permission requests to Settings → Finish setup, shown only while something is missing,
-  with a count on the Settings sidebar item; remove the Overview, Revive, and Largest files prompts.
-- Merge duplicated rows, headers, empty states, action bars, and badges into shared components.
-- Make Storage Cleanup refresh from one Scan again; simulators show one action per device.
-- Collapse empty Cleanup sections to their header; list only removable worktrees, with the rest behind a toggle.
-- Keep one accent action on Cleanup; Docker and cache bars use secondary buttons.
-- Give each pressure alert one specific instruction plus a metrics line, without repeated advice.
-- Keep project rows aligned when a project has no Start or Stop action.
-- Speed up rendering: lists are filtered once per render, icons are cached, Largest files no longer
-  rebuilds its duplicate set per file, and charts find their time window by binary search.
+- Add issue forms, a pull request template, release-note categories, and labels.
+- Expand the contributing and security guides.
 
 ### Menu bar monitoring
 
@@ -57,7 +70,7 @@
 - Add verified simulator-device shutdown and deletion through Apple's simulator service, preserving installed runtimes.
 - Route managed simulator folders to device controls instead of generic Trash.
 
-## 1.1.0 — 2026-10-02
+## 1.1.0 - 2026-10-02
 
 ### App recovery
 

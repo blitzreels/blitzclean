@@ -1,12 +1,13 @@
 # Privacy and permissions
 
 BlitzClean runs locally, without a telemetry SDK, account service, or remote AI inference.
-App/process names, directory paths, and local history remain on your Mac unless you choose to share them.
+App and process names, folder paths, and local history stay on your Mac unless you choose to share them.
 
 ## Local data
 
-The compatibility directory is `~/Library/Application Support/FreeSpace`.
-New chart and export stores use `~/Library/Application Support/BlitzClean`.
+Local files live in `~/Library/Application Support/BlitzClean`.
+On first launch, files from the folder used before 1.2.0 (`Application Support/FreeSpace`) move there without
+replacing anything, and cleanup reports dropped in that old `reports` folder are still imported.
 
 | Store | Retention and contents |
 | --- | --- |
@@ -21,7 +22,7 @@ Persisted JSON files have owner-only permissions.
 File filters, navigation, dismissed crash reports, project choices, and selected scan roots also survive relaunch.
 
 The `com.blitzreels.BlitzClean` preference domain stores notification choices, project settings, and start commands.
-Selected preferences migrate once from `fr.algomax.FreeSpace`; the original domain remains unchanged.
+Selected preferences are copied once from the older `fr.algomax.FreeSpace` domain, which is left unchanged.
 
 Do not put secrets directly in saved commands; use the project's environment setup instead.
 Process arguments are read locally to identify tools, but incident histories do not retain arguments or credentials.
@@ -39,7 +40,7 @@ A project or app name can itself be sensitive, so review exports before sharing.
 
 ## Permissions and connections
 
-Settings → **Finish setup** lists the permissions that are still missing; no page asks on its own.
+Settings > Finish setup lists the permissions that are still missing. No page asks on its own.
 
 - Notifications are optional and used for resource-pressure alerts.
 - Files and Folders access can be required for protected locations; denied paths are reported.

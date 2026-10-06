@@ -20,5 +20,5 @@
 - More cache recipes backed by dedicated safety tests.
 - User controls for history retention and exporting pressure diagnostics.
 
-A listed feature is not a guarantee of recovering an arbitrary frozen app or preventing a system-wide crash.
+Listed features cannot recover every frozen app or prevent every system-wide crash.
 Release notes describe what was validated for each build.

@@ -41,7 +41,7 @@ The check script runs native integration cases sequentially so timing-sensitive 
 Concurrency behavior is still exercised inside the relevant tests.
 
 Keep changes focused. Explain the user-visible behavior and include the relevant validation.
-For UI changes, render every screen with `FREE_SPACE_DESIGN_DIR=/tmp/shots swift test --filter DesignRenderTests`
+For UI changes, render every screen with `BLITZCLEAN_DESIGN_DIR=/tmp/shots swift test --filter DesignRenderTests`
 and attach before/after images. Screenshots must use synthetic project names and data;
 do not publish a contributor's running processes or history.
 
@@ -53,7 +53,7 @@ do not publish a contributor's running processes or history.
 - Never add silent deletion, automatic force-quitting or memory-purge commands.
 - Verify cleanup against disposable fixtures, not a contributor's real files.
 - Keep persisted history bounded and exclude commands, environment variables, tokens and conversation contents.
-- Preserve compatibility with existing FreeSpace preferences and receipts.
+- Keep the migration of data folders and preferences from earlier releases working.
 - Default to small build concurrency and avoid repeated full-disk scans.
 
 Use one input structure for functions with multiple domain parameters.

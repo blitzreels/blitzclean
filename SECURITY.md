@@ -2,7 +2,7 @@
 
 Please don't report security issues in public GitHub issues.
 
-Use the private **Report a vulnerability** form under this repository's Security tab, or email `support@blitzreels.com`.
+Use the private Report a vulnerability form under this repository's Security tab, or email `support@blitzreels.com`.
 
 BlitzClean inspects local processes, signals them, and can permanently delete reviewed files, so these count as
 security issues:
