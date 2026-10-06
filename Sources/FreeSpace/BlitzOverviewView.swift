@@ -51,19 +51,10 @@ struct BlitzOverviewView: View {
   var body: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: 20) {
+        let pressure = processes.pressure
         PressureBanner(
-          assessment: processes.pressure, actionTitle: "Review projects",
-          onReview: { navigation.page = .projects })
-        if !memory.notificationsAllowed {
-          HStack {
-            Text("Desktop warnings need notification permission").font(BlitzType.caption)
-              .foregroundStyle(BlitzUI.secondaryText)
-            Spacer()
-            Button("Enable alerts") {
-              Task { await memory.configureNotifications(requestPermission: true) }
-            }.blitzButton(.secondary).controlSize(.small)
-          }
-        }
+          assessment: pressure,
+          review: .init(title: pressure.reviewTitle, action: { navigation.review(pressure) }))
         StorageHero(
           snapshot: monitor.snapshot,
           action: {
@@ -90,20 +81,15 @@ struct BlitzOverviewView: View {
           HStack {
             Label("Running projects", systemImage: "folder.fill")
             Spacer()
-            let names = WorkspaceCatalog.resolvedProjects(
-              .init(
-                input: .init(
-                  resources: processes.resources, processes: processes.processes, preferences: []),
-                roots: processes.workspaceRoots)
-            ).filter(\.isRunning)
+            let names = processes.projects([]).filter(\.isRunning)
             Text(
               names.prefix(3).map { "\($0.preference.name) · \(ByteText.compact($0.memoryBytes))" }
                 .joined(separator: "   ")
             )
             .lineLimit(1).foregroundStyle(BlitzUI.secondaryText)
-            Image(systemName: "chevron.right")
+            BlitzChevron()
           }.blitzRow()
-        }.buttonStyle(.plain).blitzTable()
+        }.buttonStyle(.plain).blitzPointingHand().blitzTable()
         threadSection
         let suggestions = suggestions
         if !suggestions.isEmpty {
@@ -126,7 +112,7 @@ struct BlitzOverviewView: View {
     }
     .safeAreaInset(edge: .bottom, spacing: 0) {
       if let thread = forceQuitThread {
-        let name = thread.project.map { "\(thread.name) in \($0)" } ?? thread.name
+        let name = thread.displayName
         BlitzConfirmation(
           title: "Force quit \(name)?",
           message:
@@ -160,7 +146,7 @@ struct BlitzOverviewView: View {
             .help("Keeps the largest thread. Paused threads keep their RAM until you Quit.")
         }
       }
-      Text("Quit releases memory. Pause is available in each row’s menu.")
+      Text("Pause stops local workers and keeps RAM. Shared desktop chats may be grouped.")
         .font(BlitzType.caption).foregroundStyle(BlitzUI.secondaryText)
       if let message = processes.threadMessage {
         Text(message).font(BlitzType.body).foregroundStyle(BlitzUI.supportingText)
@@ -200,10 +186,9 @@ struct BlitzOverviewView: View {
           Text(suggestion.detail).font(BlitzType.caption).foregroundStyle(BlitzUI.secondaryText)
         }
         Spacer()
-        Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold))
-          .foregroundStyle(BlitzUI.tertiaryText)
-      }.blitzRow().contentShape(Rectangle())
-    }.buttonStyle(.plain)
+        BlitzChevron()
+      }.blitzRow()
+    }.buttonStyle(.plain).blitzPointingHand()
   }
 }
 
@@ -217,18 +202,19 @@ private struct OverviewResourceCard: View {
   let action: () -> Void
 
   var body: some View {
+    Button(action: action) { card }.buttonStyle(BlitzCardButtonStyle()).help("Open \(title)")
+  }
+
+  private var card: some View {
     VStack(alignment: .leading, spacing: 12) {
-      Button(action: action) {
-        HStack {
-          Text(title).font(.system(size: 13, weight: .medium))
-          Spacer()
-          Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold))
-            .foregroundStyle(.tertiary)
-        }.contentShape(Rectangle())
-      }.buttonStyle(.plain).help("Open \(title.lowercased())")
+      HStack {
+        Text(title).font(BlitzType.rowTitle)
+        Spacer()
+        BlitzChevron()
+      }
       VStack(alignment: .leading, spacing: 4) {
         Text(value).font(BlitzUI.valueFont).tracking(-0.8).monospacedDigit()
-        Text(detail).font(.system(size: 12)).foregroundStyle(.secondary)
+        Text(detail).font(BlitzType.body).foregroundStyle(BlitzUI.secondaryText)
       }
       ResourcePlot(samples: samples, kind: kind, color: BlitzUI.mint, seconds: 300)
         .frame(height: 48)
@@ -236,7 +222,7 @@ private struct OverviewResourceCard: View {
         Text(footnote)
         Spacer()
         Text("5 min")
-      }.font(.system(size: 11)).foregroundStyle(.secondary)
+      }.font(BlitzType.caption).monospacedDigit().foregroundStyle(BlitzUI.secondaryText)
     }.frame(maxWidth: .infinity, alignment: .leading).panelCard(padding: 20)
   }
 }
@@ -245,31 +231,28 @@ struct StorageHero: View {
   let snapshot: SystemSnapshot
   let action: () -> Void
 
-  private var used: UInt64 { snapshot.diskTotal - min(snapshot.diskTotal, snapshot.diskAvailable) }
-
   var body: some View {
-    VStack(alignment: .leading, spacing: 16) {
-      HStack {
-        Label("Internal storage", systemImage: "internaldrive")
-          .font(.system(size: 13, weight: .medium))
-        Spacer()
-        Button("Review storage", action: action).buttonStyle(BlitzButtonStyle(.accent))
-      }
-      HStack(alignment: .firstTextBaseline, spacing: 8) {
-        Text(snapshot.diskTotal > 0 ? ByteText.full(snapshot.diskAvailable) : "—")
-          .font(.system(size: 36, weight: .medium)).tracking(-1).monospacedDigit()
-        Text("available").font(.system(size: 13)).foregroundStyle(.secondary)
-      }
-      VStack(alignment: .leading, spacing: 10) {
-        CapacityBar(
-          usedRatio: Double(used) / Double(max(1, snapshot.diskTotal)),
-          tone: MenuBarTones.disk(snapshot))
+    Button(action: action) {
+      VStack(alignment: .leading, spacing: 16) {
         HStack {
-          Text("\(ByteText.full(used)) used")
+          Label("Internal storage", systemImage: "internaldrive").font(BlitzType.rowTitle)
           Spacer()
-          Text("\(ByteText.full(snapshot.diskTotal)) total")
-        }.font(.system(size: 11)).foregroundStyle(.secondary).monospacedDigit()
-      }
-    }.panelCard(padding: 20)
+          BlitzChevron()
+        }
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+          Text(snapshot.diskTotal > 0 ? ByteText.full(snapshot.diskAvailable) : "—")
+            .font(.system(size: 36, weight: .medium)).tracking(-1).monospacedDigit()
+          Text("available").font(BlitzType.callout).foregroundStyle(BlitzUI.secondaryText)
+        }
+        VStack(alignment: .leading, spacing: 10) {
+          CapacityBar(usedRatio: snapshot.diskUsedRatio, tone: MenuBarTones.disk(snapshot))
+          HStack {
+            Text("\(ByteText.full(snapshot.diskUsed)) used")
+            Spacer()
+            Text("\(ByteText.full(snapshot.diskTotal)) total")
+          }.font(BlitzType.caption).foregroundStyle(BlitzUI.secondaryText).monospacedDigit()
+        }
+      }.frame(maxWidth: .infinity, alignment: .leading).panelCard(padding: 20)
+    }.buttonStyle(BlitzCardButtonStyle()).help("Open Storage")
   }
 }

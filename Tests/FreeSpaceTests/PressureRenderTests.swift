@@ -18,15 +18,17 @@ struct PressureRenderTests {
     }
     let controller = WorkspaceController()
     let assessment = PressureAssessment(
-      risk: .critical, title: "Memory and disk under pressure",
+      risk: .critical, limit: .memory, title: "Memory and disk under pressure",
       detail:
         "Swap is competing with a low disk reserve. 3 GB RAM available · 29 GB swap · 9 GB disk free",
       action: "Avoid starting new threads or builds. Pause slows work; Quit releases RAM.",
       date: .now)
     for width in [CGFloat(708), CGFloat(868)] {
       let view = VStack(spacing: 0) {
-        PressureBanner(assessment: assessment, actionTitle: "Review projects", onReview: {})
-          .padding(20)
+        PressureBanner(
+          assessment: assessment, review: .init(title: "Review projects", action: {})
+        )
+        .padding(20)
         WorkspaceProjectsView(processes: processes, controller: controller)
       }.blitzTheme()
       let host = NSHostingView(rootView: view.frame(width: width, height: 780))

@@ -84,6 +84,8 @@ struct AIThreadsTests {
         record(11, 10, "/usr/local/bin/codex exec fix"),
       ]))
     #expect(threads.map(\.processIDs.count) == [2])
+    #expect(threads.first?.delegatedTools == ["Codex CLI"])
+    #expect(threads.first?.identityDetail.contains("includes Codex CLI") == true)
   }
 
   @Test func orphanedCursorAgentIsDetached() {
@@ -95,6 +97,18 @@ struct AIThreadsTests {
     #expect(threads.first?.tool == .cursorAgent)
     #expect(threads.first?.isDetached == true)
     #expect(threads.first?.project == "api")
+  }
+
+  @Test func nestedCodexHostDoesNotDoubleCountClaudeWorkers() {
+    let threads = AIThreadGrouping.threads(
+      input([
+        record(10, 1, "claude"),
+        record(11, 10, "codex app-server"),
+        record(12, 11, "node mcp"),
+      ]))
+    #expect(threads.count == 1)
+    #expect(Set(threads.first?.processIDs ?? []) == [10, 11, 12])
+    #expect(threads.first?.memoryBytes == 300)
   }
 
   @Test func desktopCodexChildrenSplitIntoThreadsByLaunchTime() {
@@ -118,7 +132,7 @@ struct AIThreadsTests {
     #expect(threads.allSatisfy { $0.tool == .codexDesktop })
     let first = threads.first { $0.processIDs.contains(41) }
     #expect(Set(first?.processIDs ?? []) == [41, 42, 43, 44])
-    #expect(first?.name == "Codex thread")
+    #expect(first?.name == "Codex workers")
     #expect(first?.project == "web")
     #expect(threads.first { $0.processIDs == [50] }?.name == "Codex · pnpm dev")
     #expect(!threads.contains { $0.processIDs.contains(40) })
@@ -164,11 +178,57 @@ struct AIThreadsTests {
     #expect(threads.map(\.tool) == [.codexCLI, .claudeCode])
   }
 
+  @Test func cmuxIsHostAndClaudeOwnsDelegatedCodex() {
+    let threads = AIThreadGrouping.threads(
+      input([
+        record(8, 1, "/Applications/cmux.app/Contents/MacOS/cmux"),
+        record(9, 8, "-/bin/zsh", tty: "ttys001"),
+        record(10, 9, "claude", tty: "ttys001"),
+        record(11, 10, "codex exec fix"),
+        record(12, 11, "node mcp"),
+      ]))
+    #expect(threads.count == 1)
+    #expect(threads.first?.tool == .claudeCode)
+    #expect(threads.first?.hostName == "cmux")
+    #expect(threads.first?.delegatedTools == ["Codex CLI"])
+    #expect(Set(threads.first?.processIDs ?? []) == [10, 11, 12])
+  }
+
+  @Test func quittingPausedProcessDeliversTermination() async throws {
+    let child = Process()
+    child.executableURL = URL(fileURLWithPath: "/bin/sleep")
+    child.arguments = ["20"]
+    try child.run()
+    let pid = child.processIdentifier
+    defer {
+      if child.isRunning {
+        _ = Darwin.kill(pid, SIGCONT)
+        child.terminate()
+      }
+    }
+    let identity = try #require(DevProcessIdentity.read(pid))
+    let thread = AIThread(
+      id: "sleep", tool: .otherAgent, name: "sleep", directory: nil, terminal: nil,
+      startedAt: nil, processIDs: [pid], memoryBytes: 1, cpuPercent: 0, isPaused: false,
+      isDetached: false)
+    let request = AIThreadStopRequest(thread: thread, expected: [pid: identity], force: false)
+    #expect(AIThreadStopper.signal(request, .pause) == 1)
+    for _ in 0..<20 where !AIThreadStopper.paused(request) {
+      try await Task.sleep(for: .milliseconds(20))
+    }
+    #expect(AIThreadStopper.paused(request))
+    #expect(AIThreadStopper.signal(request, .quit) == 1)
+    for _ in 0..<40 where AIThreadStopper.running(request) {
+      try await Task.sleep(for: .milliseconds(25))
+    }
+    #expect(!AIThreadStopper.running(request))
+  }
+
   @Test func liveGroupingWhenRequested() {
     guard ProcessInfo.processInfo.environment["FREE_SPACE_LIVE_THREADS"] != nil else { return }
     for thread in DevProcessScanner().snapshot().threads {
       print(
-        "THREAD", thread.name, thread.project ?? "-", thread.processIDs.count,
+        "THREAD", thread.displayName, thread.identityDetail, thread.processIDs.count,
         ByteText.full(thread.memoryBytes), thread.isDetached ? "detached" : "",
         thread.terminal ?? "")
     }

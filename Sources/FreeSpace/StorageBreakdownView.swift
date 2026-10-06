@@ -1,4 +1,3 @@
-import AppKit
 import SwiftUI
 
 struct DeveloperCleanupView: View {
@@ -8,122 +7,89 @@ struct DeveloperCleanupView: View {
   @State private var dependencySort = DependencySort.largest
   @State private var dependencyVisibility = DependencyVisibility.canDelete
   @State private var dependencySearch = ""
-  @State private var showsAllSimulators = false
 
-  private var allNodeItems: [StorageItem] {
-    model.categories.first { category in
-      category.id == "node-modules"
-    }?.items.filter { item in
-      item.cleanupKind == .nodeModules
-    } ?? []
+  /// Every derived list for one render; the filters and sorts run once.
+  private struct Listing {
+    let all: [StorageItem]
+    let matches: [StorageItem]
+    let displayed: [StorageItem]
+    let generated: [StorageItem]
+    let simulatorCache: StorageItem?
+    let deletableCount: Int
+    let inUseCount: Int
   }
 
-  private var nodeItems: [StorageItem] {
-    let cutoff =
-      Calendar.current.date(
-        byAdding: .day,
-        value: -ageThreshold,
-        to: .now
-      ) ?? .now
-    let visibleItems = allNodeItems.filter { item in
-      let matchesVisibility: Bool
-
-      switch dependencyVisibility {
-      case .canDelete:
-        matchesVisibility = item.cleanupAvailability?.isReady == true
-      case .inUse:
-        matchesVisibility = item.activeProcesses?.isEmpty == false
-      case .all:
-        matchesVisibility = true
+  private var listing: Listing {
+    var all: [StorageItem] = []
+    var generated: [StorageItem] = []
+    var simulatorCache: StorageItem?
+    for category in model.categories {
+      for item in category.items {
+        switch item.cleanupKind {
+        case .nodeModules where category.id == "node-modules": all.append(item)
+        case .generatedBuildCache where category.id == "node-modules": generated.append(item)
+        case .simulatorCache where simulatorCache == nil: simulatorCache = item
+        default: break
+        }
       }
-
-      let matchesAge =
-        ageThreshold == 0
-        || (item.lastActivityAt ?? .distantFuture) < cutoff
+    }
+    let cutoff = Calendar.current.date(byAdding: .day, value: -ageThreshold, to: .now) ?? .now
+    let filtered = all.filter { item in
+      let matchesVisibility: Bool
+      switch dependencyVisibility {
+      case .canDelete: matchesVisibility = item.cleanupAvailability?.isReady == true
+      case .inUse: matchesVisibility = item.activeProcesses?.isEmpty == false
+      case .all: matchesVisibility = true
+      }
+      let matchesAge = ageThreshold == 0 || (item.lastActivityAt ?? .distantFuture) < cutoff
       let matchesSearch =
         dependencySearch.isEmpty
         || item.name.localizedCaseInsensitiveContains(dependencySearch)
         || item.path.localizedCaseInsensitiveContains(dependencySearch)
       return matchesVisibility && matchesAge && matchesSearch
     }
-
-    switch dependencySort {
-    case .largest:
-      return visibleItems.sorted { left, right in
-        left.bytes > right.bytes
+    let matches =
+      switch dependencySort {
+      case .largest: filtered.sorted { $0.bytes > $1.bytes }
+      case .oldest:
+        filtered.sorted {
+          ($0.lastActivityAt ?? .distantFuture) < ($1.lastActivityAt ?? .distantFuture)
+        }
       }
-    case .oldest:
-      return visibleItems.sorted { left, right in
-        (left.lastActivityAt ?? .distantFuture) < (right.lastActivityAt ?? .distantFuture)
-      }
-    }
-  }
-
-  private var displayedNodeItems: [StorageItem] { Array(nodeItems.prefix(dependencyLimit)) }
-
-  private var generatedItems: [StorageItem] {
-    model.categories.first { category in
-      category.id == "node-modules"
-    }?.items.filter { item in
-      item.cleanupKind == .generatedBuildCache
-    }.sorted { left, right in
-      left.bytes > right.bytes
-    } ?? []
-  }
-
-  private var simulatorCache: StorageItem? {
-    model.categories.flatMap(\.items).first { item in
-      item.cleanupKind == .simulatorCache
-    }
-  }
-
-  private var deletableNodeItems: [StorageItem] {
-    allNodeItems.filter { item in
-      item.cleanupAvailability?.isReady == true
-    }
-  }
-
-  private var inUseNodeCount: Int {
-    allNodeItems.filter { item in
-      item.activeProcesses?.isEmpty == false
-    }.count
+    return Listing(
+      all: all, matches: matches, displayed: Array(matches.prefix(dependencyLimit)),
+      generated: generated.sorted { $0.bytes > $1.bytes }, simulatorCache: simulatorCache,
+      deletableCount: all.count(where: { $0.cleanupAvailability?.isReady == true }),
+      inUseCount: all.count(where: { $0.activeProcesses?.isEmpty == false }))
   }
 
   var body: some View {
+    let listing = listing
     VStack(spacing: 12) {
-      CleanupSection(
-        title: "Dependencies",
-        detail:
-          "\(ByteText.full(allNodeItems.reduce(0) { $0 + $1.bytes })) · \(allNodeItems.count) project folders",
-        systemImage: "shippingbox.fill"
+      BlitzStorageSection(
+        title: "Dependencies", symbol: "shippingbox.fill",
+        detail: dependencyDetail(listing),
+        trailing: listing.all.isEmpty
+          ? nil : ByteText.full(listing.all.reduce(0) { $0 + $1.bytes }),
+        showsContent: !listing.all.isEmpty
       ) {
-        nodeControls
-
-        if dependencyVisibility != .canDelete {
-          DependencyLegend()
-        }
-
-        if nodeItems.isEmpty && model.isScanning {
-          SectionLoadingRow(text: "Scanning dependency folders…")
-        } else if nodeItems.isEmpty {
-          EmptySectionRow(text: "No dependency folders found in configured project roots.")
+        nodeControls(listing)
+        if dependencyVisibility != .canDelete { DependencyLegend() }
+        if listing.matches.isEmpty {
+          BlitzEmptyRow(
+            text: model.isScanning
+              ? "Scanning dependency folders…" : "No dependency folders match these filters",
+            isLoading: model.isScanning)
         } else {
-          ForEach(displayedNodeItems) { item in
-            CleanupItemRow(
-              item: item,
-              isSelected: model.selectedPaths.contains(item.path),
-              onSelectionChange: { selection in
-                model.setSelected(selection)
-              },
-              onStopAndSelect: { model.stopProcessesAndSelect($0) },
-              isStoppingProcesses: model.stoppingProcessPath == item.path
-            )
+          LazyVStack(spacing: 0) {
+            ForEach(listing.displayed) { item in itemRow(item) }
           }
         }
-        if nodeItems.count > dependencyLimit {
-          Button("Show next \(min(20, nodeItems.count - dependencyLimit)) folders") {
+        if listing.matches.count > dependencyLimit {
+          Button("Show next \(min(20, listing.matches.count - dependencyLimit)) folders") {
             dependencyLimit += 20
-          }.frame(maxWidth: .infinity, alignment: .leading).padding(14)
+          }.blitzButton(.quiet).controlSize(.small)
+            .frame(maxWidth: .infinity, alignment: .leading).padding(12)
         }
       }
       .onChange(of: dependencySearch) { _, _ in dependencyLimit = 20 }
@@ -131,81 +97,59 @@ struct DeveloperCleanupView: View {
       .onChange(of: dependencyVisibility) { _, _ in dependencyLimit = 20 }
       .onChange(of: ageThreshold) { _, _ in dependencyLimit = 20 }
 
-      if !generatedItems.isEmpty {
-        CleanupSection(
-          title: "Build caches",
-          detail:
-            "\(ByteText.full(generatedItems.reduce(0) { $0 + $1.bytes })) · npm, Vercel, and Trigger outputs",
-          systemImage: "hammer.fill"
+      if !listing.generated.isEmpty {
+        BlitzStorageSection(
+          title: "Build caches", symbol: "hammer.fill", detail: "npm, Vercel, and Trigger outputs",
+          trailing: ByteText.full(listing.generated.reduce(0) { $0 + $1.bytes }),
+          showsContent: true
         ) {
-          ForEach(generatedItems) { item in
-            CleanupItemRow(
-              item: item,
-              isSelected: model.selectedPaths.contains(item.path),
-              onSelectionChange: { selection in
-                model.setSelected(selection)
-              },
-              onStopAndSelect: { _ in },
-              isStoppingProcesses: false
-            )
-          }
+          ForEach(listing.generated) { item in itemRow(item) }
         }
       }
 
-      CleanupSection(
-        title: "Simulators",
-        detail: "\(model.simulatorDeviceCount) devices · \(model.bootedSimulatorCount) running",
-        systemImage: "iphone.gen3"
-      ) {
-        if model.simulatorDevices.isEmpty && model.isScanning {
-          SectionLoadingRow(text: "Reading simulator devices…")
-        } else {
-          ForEach(displayedSimulators) { device in
-            SimulatorDeviceRow(device: device)
-          }
-          if model.simulatorDevices.count > 5 {
-            Button(
-              showsAllSimulators
-                ? "Show fewer" : "Show all \(model.simulatorDevices.count) devices"
-            ) { showsAllSimulators.toggle() }
-            .blitzButton(.quiet).controlSize(.small)
-            .frame(maxWidth: .infinity).padding(.vertical, 8)
-          }
-        }
-
-        if let simulatorCache {
-          CleanupItemRow(
-            item: simulatorCache,
-            isSelected: model.selectedPaths.contains(simulatorCache.path),
-            onSelectionChange: { selection in
-              model.setSelected(selection)
-            },
-            onStopAndSelect: { _ in },
-            isStoppingProcesses: false
-          )
+      if let simulatorCache = listing.simulatorCache {
+        BlitzStorageSection(
+          title: "Simulator cache", symbol: "iphone.gen3", detail: "Temporary simulator data",
+          trailing: ByteText.full(simulatorCache.bytes),
+          showsContent: true
+        ) {
+          itemRow(simulatorCache)
         }
       }
     }
   }
 
-  private var nodeControls: some View {
-    VStack(spacing: 9) {
+  private func dependencyDetail(_ listing: Listing) -> String {
+    if !listing.all.isEmpty { return "\(listing.all.count) project folders" }
+    return model.isScanning ? "Scanning project folders…" : "No dependency folders found"
+  }
+
+  private func itemRow(_ item: StorageItem) -> some View {
+    CleanupItemRow(
+      item: item,
+      isSelected: model.selectedPaths.contains(item.path),
+      onSelectionChange: { model.setSelected($0) },
+      onStopAndSelect: { model.stopProcessesAndSelect($0) },
+      isStoppingProcesses: model.stoppingProcessPath == item.path)
+  }
+
+  private func nodeControls(_ listing: Listing) -> some View {
+    let selectable = listing.displayed.filter { $0.cleanupAvailability?.isReady == true }
+    return VStack(spacing: 9) {
       HStack(spacing: 10) {
         BlitzSegmentedPicker(
           title: "Status", options: [DependencyVisibility.canDelete, .inUse, .all],
           selection: $dependencyVisibility,
           label: { value in
             switch value {
-            case .canDelete: "Can delete \(deletableNodeItems.count)"
-            case .inUse: "In use \(inUseNodeCount)"
-            case .all: "All \(allNodeItems.count)"
+            case .canDelete: "Can delete \(listing.deletableCount)"
+            case .inUse: "In use \(listing.inUseCount)"
+            case .all: "All \(listing.all.count)"
             }
           }
         ).frame(width: 330)
-
         BlitzSearchField(title: "Find a project or path", text: $dependencySearch)
           .frame(minWidth: 180)
-
       }
       HStack(alignment: .top, spacing: 12) {
         BlitzSegmentedPicker(
@@ -216,122 +160,58 @@ struct DeveloperCleanupView: View {
           label: { $0.rawValue }
         ).frame(width: 200)
       }
-
       HStack {
         Text(
-          "\(displayedNodeItems.count) of \(nodeItems.count) matches · "
-            + "\(ByteText.full(nodeItems.reduce(0) { $0 + $1.bytes }))"
+          "\(listing.displayed.count) of \(listing.matches.count) matches · "
+            + ByteText.full(listing.matches.reduce(0) { $0 + $1.bytes })
         )
-        .font(.caption)
-        .foregroundStyle(.secondary)
-
+        .font(BlitzType.caption).monospacedDigit().foregroundStyle(BlitzUI.secondaryText)
         Spacer()
-
         Button("Select visible") {
-          for item in displayedNodeItems where item.cleanupAvailability?.isReady == true {
-            model.setSelected(
-              StorageSelection(path: item.path, isSelected: true)
-            )
+          for item in selectable {
+            model.setSelected(StorageSelection(path: item.path, isSelected: true))
           }
-        }
-        .disabled(
-          !nodeItems.contains { item in
-            item.cleanupAvailability?.isReady == true
-          }
-        )
-
-        Button("Clear Selection") {
-          model.clearSelection()
-        }
-        .disabled(model.selectedPaths.isEmpty)
+        }.blitzButton(.quiet).controlSize(.small).disabled(selectable.isEmpty)
+        Button("Clear selection") { model.clearSelection() }
+          .blitzButton(.quiet).controlSize(.small).disabled(model.selectedPaths.isEmpty)
       }
     }
     .padding(.horizontal, 14)
     .padding(.vertical, 10)
-    .background(.quaternary.opacity(0.35))
-  }
-
-  private var displayedSimulators: [SimulatorDeviceInfo] {
-    let sorted = model.simulatorDevices.sorted { left, right in
-      let leftBooted = left.state == "Booted"
-      let rightBooted = right.state == "Booted"
-      return leftBooted != rightBooted ? leftBooted : left.bytes > right.bytes
-    }
-    return showsAllSimulators ? sorted : Array(sorted.prefix(5))
+    .background(BlitzUI.quietFill)
   }
 }
+
 struct DeveloperCleanupActions: View {
   @ObservedObject var model: StorageBreakdownModel
   @State private var showsConfirmation = false
 
   var body: some View {
+    let selected = model.selectedItems
+    let bytes = selected.reduce(0) { $0 + $1.bytes }
     VStack(spacing: 0) {
-      if !model.selectedItems.isEmpty || model.isCleaning || model.cleanupMessage != nil {
-        cleanupBar
+      if !selected.isEmpty || model.isCleaning || model.cleanupMessage != nil {
+        StorageActionBar(
+          summary: "\(selected.count) selected · \(ByteText.full(bytes))",
+          progress: model.isCleaning
+            ? "Deleting \(model.cleanupCompletedCount) of \(model.cleanupTotalCount)" : nil,
+          message: model.cleanupMessage, actionTitle: "Review selected…",
+          emphasis: .accent, isDisabled: selected.isEmpty || model.isCleaning,
+          action: { showsConfirmation = true }
+        ).padding(.horizontal, BlitzUI.pagePadding).background(BlitzUI.panelBackground)
       }
       if showsConfirmation {
         BlitzConfirmation(
           title: "Delete selected items permanently?",
           message:
-            "\(model.selectedItems.count) items, \(ByteText.full(model.selectedBytes)). This cannot be undone. Rebuild and activity checks run before deletion; changed or busy items are skipped.\n\n"
-            + model.selectedItems.map(\.path).joined(separator: "\n"),
+            "\(selected.count) items, \(ByteText.full(bytes)). This cannot be undone. Rebuild and activity checks run before deletion; changed or busy items are skipped.\n\n"
+            + selected.map(\.path).joined(separator: "\n"),
           confirmTitle: "Delete permanently",
           onConfirm: {
             showsConfirmation = false
             model.cleanSelected()
           }, onCancel: { showsConfirmation = false })
       }
-    }
-  }
-
-  private var cleanupBar: some View {
-    VStack(spacing: 8) {
-      if model.isCleaning {
-        ProgressView(value: model.cleanupProgress) {
-          Text("Deleting \(model.cleanupCompletedCount) of \(model.cleanupTotalCount)")
-        }
-      } else if let cleanupMessage = model.cleanupMessage {
-        Text(cleanupMessage)
-          .font(.caption)
-          .foregroundStyle(.secondary)
-      }
-
-      HStack {
-        Text("\(model.selectedItems.count) selected")
-          .foregroundStyle(.secondary)
-        Text("·")
-          .foregroundStyle(.tertiary)
-        Text(ByteText.full(model.selectedBytes))
-          .fontWeight(.semibold)
-          .monospacedDigit()
-
-        Spacer()
-
-        Button("Review selected…") {
-          showsConfirmation = true
-        }
-        .buttonStyle(.borderedProminent)
-        .disabled(model.selectedItems.isEmpty || model.isCleaning)
-      }
-    }
-    .padding(.horizontal, 18)
-    .padding(.vertical, 12)
-    .background(.bar)
-    .overlay(alignment: .top) {
-      Divider()
-    }
-  }
-}
-
-private struct CleanupSection<Content: View>: View {
-  let title: String
-  let detail: String
-  let systemImage: String
-  @ViewBuilder let content: Content
-
-  var body: some View {
-    BlitzStorageSection(title: title, symbol: systemImage, detail: detail) {
-      content
     }
   }
 }
@@ -348,7 +228,7 @@ private struct CleanupItemRow: View {
     VStack(spacing: 0) {
       HStack(spacing: 12) {
         Toggle(
-          "",
+          "Select \(item.name)",
           isOn: Binding(
             get: { isSelected },
             set: { value in
@@ -360,61 +240,39 @@ private struct CleanupItemRow: View {
         .disabled(!isReady)
 
         VStack(alignment: .leading, spacing: 3) {
-          Text(projectName)
-            .fontWeight(.medium)
-            .lineLimit(1)
-          Text(item.path)
-            .font(.caption2)
-            .foregroundStyle(.tertiary)
-            .lineLimit(1)
-            .truncationMode(.middle)
-        }
+          Text(item.name).font(BlitzType.rowTitle).lineLimit(1)
+          Text(item.path).font(BlitzType.caption).foregroundStyle(BlitzUI.tertiaryText)
+            .lineLimit(1).truncationMode(.middle).help(item.path)
+        }.frame(maxWidth: .infinity, alignment: .leading)
 
-        Spacer()
-
-        VStack(alignment: .trailing, spacing: 2) {
-          Text("Project changed")
-            .font(.caption2)
-            .foregroundStyle(.tertiary)
-          if let lastActivityAt = item.lastActivityAt {
-            Text(lastActivityAt, style: .relative)
-              .font(.callout.weight(.medium))
-              .help(lastActivityAt.formatted(date: .abbreviated, time: .shortened))
-          } else {
-            Text("Unknown")
-              .font(.callout.weight(.medium))
-              .foregroundStyle(.secondary)
-          }
-        }
-        .frame(width: 105, alignment: .trailing)
+        BlitzTrailingValue(
+          value: item.lastActivityAt.map {
+            $0.formatted(.relative(presentation: .named))
+          } ?? "Unknown",
+          detail: "project changed"
+        )
+        .frame(width: 110, alignment: .trailing)
+        .help(
+          item.lastActivityAt?.formatted(date: .abbreviated, time: .shortened)
+            ?? "No recent project activity found")
 
         if let processes = item.activeProcesses, !processes.isEmpty {
-          Text("\(processes.count) running")
-            .font(.system(size: 11)).foregroundStyle(.orange)
-        } else {
-          if case .blocked = item.cleanupAvailability {
-            StorageAvailabilityLabel(availability: item.cleanupAvailability)
-          }
+          BlitzStatusBadge(title: "\(processes.count) running", tone: .warning)
+        } else if case .blocked = item.cleanupAvailability {
+          StorageAvailabilityLabel(availability: item.cleanupAvailability)
         }
 
-        VStack(alignment: .trailing, spacing: 2) {
-          Text("\(ByteText.full(item.bytes)) on disk")
-            .fontWeight(.semibold)
-            .monospacedDigit()
-
-          if let contentBytes = item.contentBytes, contentBytes < item.bytes {
-            Text("\(ByteText.full(contentBytes)) file data")
-              .font(.caption2)
-              .foregroundStyle(.secondary)
+        BlitzTrailingValue(
+          value: ByteText.full(item.bytes),
+          detail: item.contentBytes.flatMap {
+            $0 < item.bytes ? "\(ByteText.full($0)) file data" : nil
           }
-        }
-        .frame(width: 118, alignment: .trailing)
+        )
+        .frame(width: 110, alignment: .trailing)
         .help(diskUsageHelp)
 
         BlitzActionMenu(label: "Actions for \(item.name)") {
-          Button("Show in Finder") {
-            NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: item.path)])
-          }
+          Button("Show in Finder") { Finder.reveal(item.path) }
           if let processes = item.activeProcesses, !processes.isEmpty {
             Button(showsProcesses ? "Hide running processes" : "Show running processes") {
               showsProcesses.toggle()
@@ -434,18 +292,11 @@ private struct CleanupItemRow: View {
         )
       }
     }
-    .overlay(alignment: .bottom) {
-      Divider()
-        .padding(.leading, 42)
-    }
+    .overlay(alignment: .bottom) { BlitzRowDivider(leading: 42) }
   }
 
   private var isReady: Bool {
     item.cleanupAvailability?.isReady == true
-  }
-
-  private var projectName: String {
-    return item.name
   }
 
   private var diskUsageHelp: String {
@@ -469,42 +320,28 @@ private struct RunningProcessesDetail: View {
     VStack(alignment: .leading, spacing: 9) {
       HStack {
         Label("Processes using this project", systemImage: "terminal.fill")
-          .font(.caption.weight(.semibold))
+          .font(BlitzType.captionEmphasis)
         Spacer()
 
         if isStopping {
-          ProgressView()
-            .controlSize(.small)
-          Text("Stopping…")
-            .font(.caption)
-            .foregroundStyle(.secondary)
+          ProgressView().controlSize(.small)
+          Text("Stopping…").font(BlitzType.caption).foregroundStyle(BlitzUI.secondaryText)
         } else {
-          Button("Stop and select…") {
-            reviewingStop = true
-          }
-          .buttonStyle(.bordered)
+          Button("Stop and select…") { reviewingStop = true }
+            .blitzButton(.secondary).controlSize(.small)
         }
       }
 
       ForEach(processes) { process in
         HStack(spacing: 8) {
-          Text(process.name)
-            .font(.callout.weight(.medium))
-          Text("PID \(process.processID)")
-            .font(.caption.monospacedDigit())
-            .foregroundStyle(.secondary)
-
+          Text(process.name).font(BlitzType.label)
+          Text("PID \(process.processID)").monospacedDigit()
+            .foregroundStyle(BlitzUI.secondaryText)
           Spacer()
-
-          if process.listeningPorts.isEmpty {
-            Text("No listening ports")
-              .foregroundStyle(.secondary)
-          } else {
-            Text(portList(process))
-              .foregroundStyle(.blue)
-          }
+          Text(process.listeningPorts.isEmpty ? "No listening ports" : portList(process))
+            .monospacedDigit().foregroundStyle(BlitzUI.secondaryText)
         }
-        .font(.caption)
+        .font(BlitzType.caption)
       }
 
       if reviewingStop {
@@ -522,7 +359,7 @@ private struct RunningProcessesDetail: View {
     .padding(.leading, 50)
     .padding(.trailing, 14)
     .padding(.vertical, 10)
-    .background(.orange.opacity(0.055))
+    .background(BlitzUI.warning.opacity(0.055))
     .overlay(alignment: .top) {
       BlitzRowDivider(leading: 42)
     }
@@ -544,7 +381,7 @@ private struct DependencyLegend: View {
           "In use · protected: a dev server, Terminal, Codex, or another app is using the project.")
       } icon: {
         Image(systemName: "lock.fill")
-          .foregroundStyle(.orange)
+          .foregroundStyle(BlitzUI.warning)
       }
 
       Label {
@@ -553,11 +390,11 @@ private struct DependencyLegend: View {
         )
       } icon: {
         Image(systemName: "externaldrive.fill")
-          .foregroundStyle(.secondary)
+          .foregroundStyle(BlitzUI.secondaryText)
       }
     }
-    .font(.caption)
-    .foregroundStyle(.secondary)
+    .font(BlitzType.caption)
+    .foregroundStyle(BlitzUI.secondaryText)
     .frame(maxWidth: .infinity, alignment: .leading)
     .padding(.horizontal, 14)
     .padding(.vertical, 10)
@@ -587,10 +424,7 @@ private struct StorageAvailabilityLabel: View {
   let availability: StorageCleanupAvailability?
 
   var body: some View {
-    Text(label)
-      .font(.caption2.weight(.medium))
-      .foregroundStyle(color)
-      .help(helpText)
+    BlitzStatusBadge(title: label, tone: tone).help(helpText)
   }
 
   private var label: String {
@@ -643,88 +477,12 @@ private struct StorageAvailabilityLabel: View {
     }
   }
 
-  private var color: Color {
+  private var tone: BlitzStatusTone {
     switch availability {
-    case .ready:
-      return .green
-    case .blocked:
-      return .orange
-    case nil:
-      return .secondary
+    case .ready: .good
+    case .blocked: .warning
+    case nil: .muted
     }
-  }
-}
-
-private struct SimulatorDeviceRow: View {
-  let device: SimulatorDeviceInfo
-
-  var body: some View {
-    HStack(spacing: 12) {
-      Image(systemName: device.state == "Booted" ? "play.circle.fill" : "stop.circle")
-        .foregroundStyle(device.state == "Booted" ? .green : .secondary)
-        .frame(width: 24)
-
-      VStack(alignment: .leading, spacing: 2) {
-        Text(device.name)
-          .fontWeight(.medium)
-        Text(device.runtime)
-          .font(.caption)
-          .foregroundStyle(.secondary)
-      }
-
-      Spacer()
-
-      if let lastBootedAt = device.lastBootedAt {
-        Text("Booted \(lastBootedAt, style: .relative)")
-          .font(.caption)
-          .foregroundStyle(.secondary)
-      }
-
-      if device.state == "Booted" {
-        Text("Running")
-          .font(.caption2.weight(.medium))
-          .foregroundStyle(.green)
-      }
-
-      Text(ByteText.full(device.bytes))
-        .fontWeight(.semibold)
-        .monospacedDigit()
-        .frame(width: 82, alignment: .trailing)
-    }
-    .padding(.horizontal, 14)
-    .padding(.vertical, 10)
-    .overlay(alignment: .bottom) {
-      Divider()
-        .padding(.leading, 42)
-    }
-  }
-}
-
-private struct EmptySectionRow: View {
-  let text: String
-
-  var body: some View {
-    Text(text)
-      .font(.callout)
-      .foregroundStyle(.secondary)
-      .frame(maxWidth: .infinity, alignment: .leading)
-      .padding(14)
-  }
-}
-
-private struct SectionLoadingRow: View {
-  let text: String
-
-  var body: some View {
-    HStack(spacing: 10) {
-      ProgressView()
-        .controlSize(.small)
-      Text(text)
-        .font(.callout)
-        .foregroundStyle(.secondary)
-    }
-    .frame(maxWidth: .infinity, alignment: .leading)
-    .padding(14)
   }
 }
 
@@ -733,123 +491,52 @@ struct DockerStorageView: View {
   @State private var showsConfirmation = false
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 16) {
-      HStack {
-        Text("Containers and volumes are protected")
-          .font(.system(size: 12)).foregroundStyle(.secondary)
-        Spacer()
-        Button("Refresh Docker") { model.refresh() }
-          .disabled(model.isRefreshing || model.isCleaning)
-      }
+    let reclaimable = model.snapshot?.rebuildableBytes ?? 0
+    VStack(spacing: 0) {
       if let errorMessage = model.errorMessage {
-        Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
-          .foregroundStyle(.orange)
-          .frame(maxWidth: .infinity, alignment: .leading)
-          .padding(14)
-          .background(.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 12))
+        BlitzStatusLine(text: errorMessage, tone: .warning).padding(16)
+        BlitzRowDivider(leading: 0)
       }
-
       if let snapshot = model.snapshot {
-        DockerCategorySection(snapshot: snapshot)
-      } else if model.isRefreshing {
-        SectionLoadingRow(text: "Reading images, containers, volumes, and build cache…")
-      } else if !model.isInstalled {
-        ContentUnavailableView(
-          "Docker Not Installed",
-          systemImage: "shippingbox",
-          description: Text("Install Docker Desktop to see its native storage breakdown.")
+        ForEach(snapshot.categories) { category in
+          DockerCategoryRow(category: category)
+          if category.id != snapshot.categories.last?.id { BlitzRowDivider(leading: 52) }
+        }
+        Text(
+          "\(ByteText.full(snapshot.totalBytes)) allocated · updated \(snapshot.updatedAt.formatted(.relative(presentation: .named)))"
         )
+        .font(BlitzType.caption).foregroundStyle(BlitzUI.tertiaryText)
+        .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 16)
+        .padding(.vertical, 10)
+      } else if model.isRefreshing {
+        BlitzEmptyRow(
+          text: "Reading images, containers, volumes, and build cache…", isLoading: true)
+      } else if !model.isInstalled {
+        BlitzEmptyRow(text: "Docker Desktop is not installed", isLoading: false)
       }
-      dockerCleanupBar
+      if model.snapshot != nil || model.isCleaning || model.cleanupMessage != nil {
+        StorageActionBar(
+          summary: "\(ByteText.full(reclaimable)) reclaimable",
+          progress: model.isCleaning ? "Deleting unused Docker images and build cache…" : nil,
+          message: model.cleanupMessage, actionTitle: "Review Docker cleanup…",
+          emphasis: .secondary,
+          isDisabled: reclaimable == 0 || model.isCleaning || model.isRefreshing,
+          action: { showsConfirmation = true }
+        ).padding(.horizontal, 16)
+      }
       if showsConfirmation {
         BlitzConfirmation(
-          title: "Clean rebuildable Docker data?",
+          title: "Delete unused Docker images and build cache?",
           message:
-            "Unused images and build cache will be deleted permanently. Containers and volumes will not be deleted.",
-          confirmTitle: "Clean Docker",
+            "\(ByteText.full(reclaimable)) of unused images and build cache will be deleted permanently. Containers and volumes will not be deleted.",
+          confirmTitle: "Delete unused images and cache",
           onConfirm: {
             showsConfirmation = false
             model.cleanRebuildable()
           }, onCancel: { showsConfirmation = false })
       }
-    }.padding(16)
-      .task { model.refreshIfNeeded() }
-  }
-
-  private var dockerCleanupBar: some View {
-    VStack(spacing: 8) {
-      if model.isCleaning {
-        ProgressView()
-          .controlSize(.small)
-        Text("Cleaning unused Docker images and build cache…")
-          .font(.caption)
-          .foregroundStyle(.secondary)
-      } else if let cleanupMessage = model.cleanupMessage {
-        Text(cleanupMessage)
-          .font(.caption)
-          .foregroundStyle(.secondary)
-      }
-
-      HStack {
-        Text("Reclaimable")
-          .foregroundStyle(.secondary)
-        Text(ByteText.full(model.snapshot?.rebuildableBytes ?? 0))
-          .fontWeight(.semibold)
-          .monospacedDigit()
-
-        Spacer()
-
-        Button("Review Docker cleanup…") {
-          showsConfirmation = true
-        }
-        .buttonStyle(.borderedProminent)
-        .disabled(
-          (model.snapshot?.rebuildableBytes ?? 0) == 0
-            || model.isCleaning
-            || model.isRefreshing
-        )
-      }
     }
-    .padding(.horizontal, 18)
-    .padding(.vertical, 12)
-    .background(.bar)
-    .overlay(alignment: .top) {
-      Divider()
-    }
-  }
-}
-
-private struct DockerCategorySection: View {
-  let snapshot: DockerStorageSnapshot
-
-  var body: some View {
-    VStack(alignment: .leading, spacing: 0) {
-      HStack {
-        VStack(alignment: .leading, spacing: 2) {
-          Text("Allocated storage")
-            .font(.headline)
-          Text("\(ByteText.full(snapshot.totalBytes)) allocated across Docker resources")
-            .font(.caption)
-            .foregroundStyle(.secondary)
-        }
-        Spacer()
-        Text("Updated \(snapshot.updatedAt, style: .relative)")
-          .font(.caption)
-          .foregroundStyle(.secondary)
-      }
-      .padding(14)
-
-      Divider()
-
-      ForEach(snapshot.categories) { category in
-        DockerCategoryRow(category: category)
-      }
-    }
-    .background(.background, in: RoundedRectangle(cornerRadius: 12))
-    .overlay {
-      RoundedRectangle(cornerRadius: 12)
-        .stroke(.separator, lineWidth: 1)
-    }
+    .task { model.refreshIfNeeded() }
   }
 }
 
@@ -858,54 +545,33 @@ private struct DockerCategoryRow: View {
 
   var body: some View {
     HStack(spacing: 12) {
-      Image(systemName: systemImage)
-        .foregroundStyle(.secondary)
-        .frame(width: 26)
-
+      Image(systemName: systemImage).foregroundStyle(BlitzUI.secondaryText).frame(width: 26)
       VStack(alignment: .leading, spacing: 3) {
-        Text(category.name)
-          .fontWeight(.medium)
+        Text(category.name).font(BlitzType.rowTitle)
         Text("\(category.totalCount) total · \(category.activeCount) active")
-          .font(.caption)
-          .foregroundStyle(.secondary)
+          .font(BlitzType.caption).foregroundStyle(BlitzUI.secondaryText)
       }
-
       Spacer()
-
-      VStack(alignment: .trailing, spacing: 2) {
-        Text(ByteText.full(category.sizeBytes))
-          .fontWeight(.semibold)
-          .monospacedDigit()
-        Text("\(ByteText.full(category.reclaimableBytes)) reclaimable")
-          .font(.caption)
-          .foregroundStyle(category.reclaimableBytes > 0 ? Color.orange : Color.secondary)
-      }
-      .frame(width: 150, alignment: .trailing)
-
       if category.isProtected {
-        Text("Protected").font(.caption).foregroundStyle(.secondary)
+        BlitzStatusBadge(title: "Protected", tone: .muted)
       }
+      BlitzTrailingValue(
+        value: ByteText.full(category.sizeBytes),
+        detail: category.reclaimableBytes > 0
+          ? "\(ByteText.full(category.reclaimableBytes)) reclaimable" : nil
+      ).frame(width: 150, alignment: .trailing)
     }
-    .padding(.horizontal, 14)
+    .padding(.horizontal, 16)
     .padding(.vertical, 12)
-    .overlay(alignment: .bottom) {
-      Divider()
-        .padding(.leading, 52)
-    }
   }
 
   private var systemImage: String {
     switch category.id {
-    case "images":
-      return "square.stack.3d.up.fill"
-    case "containers":
-      return "shippingbox.fill"
-    case "volumes":
-      return "externaldrive.fill"
-    case "build-cache":
-      return "hammer.fill"
-    default:
-      return "circle.grid.2x2.fill"
+    case "images": "square.stack.3d.up.fill"
+    case "containers": "shippingbox.fill"
+    case "volumes": "externaldrive.fill"
+    case "build-cache": "hammer.fill"
+    default: "circle.grid.2x2.fill"
     }
   }
 }

@@ -8,19 +8,21 @@ struct RemovedBeforeView: View {
 
   private static let rowLimit = 8
 
-  private var detail: String {
+  private func detail(_ summary: RepeatCleanupModel.Summary) -> String {
     if model.entries.isEmpty { return "Folders you remove appear here when they grow back" }
     if model.isChecking && model.statuses.isEmpty { return "Checking what grew back…" }
-    let regrown = model.regrown
-    return regrown.isEmpty
+    return summary.regrown.isEmpty
       ? "\(model.entries.count) folders · none grew back"
-      : "\(regrown.count) grew back · \(ByteText.full(model.regrownBytes)) to remove again"
+      : "\(summary.regrown.count) grew back"
   }
 
   var body: some View {
-    let rows = showsAll ? model.ordered : Array(model.ordered.prefix(Self.rowLimit))
+    let summary = model.summary
+    let rows = showsAll ? summary.ordered : Array(summary.ordered.prefix(Self.rowLimit))
     BlitzStorageSection(
-      title: "Removed before", symbol: "arrow.counterclockwise", detail: detail
+      title: "Removed before", symbol: "arrow.counterclockwise", detail: detail(summary),
+      trailing: summary.regrown.isEmpty ? nil : ByteText.full(summary.regrownBytes),
+      showsContent: true
     ) {
       VStack(spacing: 0) {
         HStack(spacing: 10) {
@@ -29,10 +31,8 @@ struct RemovedBeforeView: View {
             .textSelection(.enabled)
           Spacer()
           if model.isChecking { ProgressView().controlSize(.small) }
-          Button("Check again") { model.check(force: true) }.blitzButton(.quiet).controlSize(.small)
-            .disabled(model.isChecking)
-          if model.ready.count > 1 {
-            Button("Remove \(model.ready.count) again…") { pending = model.ready }
+          if summary.ready.count > 1 {
+            Button("Remove \(summary.ready.count) again…") { pending = summary.ready }
               .blitzButton(.accent).controlSize(.small).disabled(!model.removing.isEmpty)
           }
         }.padding(.horizontal, 16).padding(.vertical, 12)
@@ -40,11 +40,10 @@ struct RemovedBeforeView: View {
           BlitzRowDivider(leading: 16)
           row(entry)
         }
-        if model.ordered.count > Self.rowLimit {
+        if summary.ordered.count > Self.rowLimit {
           BlitzRowDivider(leading: 16)
-          Button(showsAll ? "Show fewer" : "Show all \(model.ordered.count) folders") {
-            showsAll.toggle()
-          }.blitzButton(.quiet).controlSize(.small).padding(.vertical, 8)
+          BlitzShowAllButton(total: summary.ordered.count, noun: "folders", isExpanded: $showsAll)
+            .padding(.vertical, 8)
         }
       }
     }
@@ -68,7 +67,7 @@ struct RemovedBeforeView: View {
       }.frame(maxWidth: .infinity, alignment: .leading)
       Group {
         if let bytes = status?.bytes, back {
-          Text(ByteText.full(bytes)).font(BlitzType.numeric).foregroundStyle(BlitzUI.primaryText)
+          BlitzTrailingValue(value: ByteText.full(bytes), detail: nil)
         } else if status == nil && model.isChecking {
           Text("Checking…").font(BlitzType.caption).foregroundStyle(BlitzUI.tertiaryText)
         } else {
@@ -87,8 +86,7 @@ struct RemovedBeforeView: View {
       BlitzActionMenu(label: "More actions for \(entry.target.title)") {
         Button("Show in Finder") { reveal(entry.target.path) }
         Button("Copy path") {
-          NSPasteboard.general.clearContents()
-          NSPasteboard.general.setString(entry.target.path, forType: .string)
+          Pasteboard.copy(entry.target.path)
         }
       }
     }.padding(.horizontal, 16).padding(.vertical, 10)
@@ -116,10 +114,9 @@ struct RemovedBeforeView: View {
   }
 
   private func reveal(_ path: String) {
-    let url = URL(fileURLWithPath: path)
-    let target =
-      FileManager.default.fileExists(atPath: path) ? url : url.deletingLastPathComponent()
-    NSWorkspace.shared.activateFileViewerSelecting([target])
+    Finder.reveal(
+      FileManager.default.fileExists(atPath: path)
+        ? path : URL(fileURLWithPath: path).deletingLastPathComponent().path)
   }
 }
 
@@ -154,9 +151,9 @@ struct RemovalLogView: View {
     let rows = showsAll ? wins : Array(wins.prefix(Self.rowLimit))
     BlitzStorageSection(
       title: "Removal log", symbol: "list.bullet.rectangle",
-      detail: wins.isEmpty
-        ? "Nothing removed yet"
-        : "\(wins.count) removals · \(ByteText.full(history.ledger.internalGains)) measured on this Mac"
+      detail: wins.isEmpty ? "Nothing removed yet" : "\(wins.count) removals measured on this Mac",
+      trailing: wins.isEmpty ? nil : ByteText.full(history.ledger.internalGains),
+      showsContent: true
     ) {
       VStack(spacing: 0) {
         ForEach(rows) { win in
@@ -168,22 +165,20 @@ struct RemovalLogView: View {
                 .lineLimit(1).truncationMode(.middle).help(win.paths.joined(separator: "\n"))
                 .textSelection(.enabled)
             }.frame(maxWidth: .infinity, alignment: .leading)
-            Text((win.bytes ?? win.measuredGain).map(ByteText.full) ?? "—")
-              .font(BlitzType.numeric).foregroundStyle(BlitzUI.supportingText)
-              .frame(width: 88, alignment: .trailing)
-            Text(win.date.formatted(.dateTime.month(.abbreviated).day().hour().minute()))
-              .font(BlitzType.caption).foregroundStyle(BlitzUI.tertiaryText)
-              .frame(width: 110, alignment: .trailing)
+            BlitzTrailingValue(
+              value: (win.bytes ?? win.measuredGain).map(ByteText.full) ?? "—",
+              detail: win.date.formatted(.dateTime.month(.abbreviated).day().hour().minute())
+            ).frame(width: 120, alignment: .trailing)
           }.padding(.horizontal, 16).padding(.vertical, 9)
           if win.id != rows.last?.id { BlitzRowDivider(leading: 16) }
         }
         if wins.count > Self.rowLimit {
           BlitzRowDivider(leading: 16)
-          Button(showsAll ? "Show fewer" : "Show all \(wins.count)") { showsAll.toggle() }
-            .blitzButton(.quiet).controlSize(.small).padding(.vertical, 8)
+          BlitzShowAllButton(total: wins.count, noun: "removals", isExpanded: $showsAll)
+            .padding(.vertical, 8)
         }
         if let error = history.historyError {
-          Text(error).font(BlitzType.caption).foregroundStyle(BlitzUI.warning).padding(12)
+          BlitzStatusLine(text: error, tone: .warning).padding(12)
         }
       }
     }

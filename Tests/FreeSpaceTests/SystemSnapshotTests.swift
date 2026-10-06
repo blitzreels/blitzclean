@@ -134,7 +134,8 @@ struct SystemSnapshotTests {
         snapshot: snapshot,
         showDisk: true,
         showCPU: true,
-        showMemory: true
+        showMemory: true,
+        memoryDisplay: .percentage
       )
     )
 

@@ -21,7 +21,7 @@ struct DashboardRenderTests {
     monitor.refresh()
 
     let view = BlitzTrayView(
-      monitor: monitor, memory: memoryRescue,
+      monitor: monitor, memory: memoryRescue, recovery: AppRecoveryModel(),
       navigation: CleanNavigation())
 
     for key in [

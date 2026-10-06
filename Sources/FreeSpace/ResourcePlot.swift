@@ -1,7 +1,25 @@
 import Charts
 import SwiftUI
 
-enum ResourceKind { case memory, cpu }
+enum ResourceKind {
+  case memory, availableMemory, cpu
+
+  var label: String {
+    switch self {
+    case .memory: "RAM usage"
+    case .availableMemory: "RAM available"
+    case .cpu: "CPU usage"
+    }
+  }
+
+  func value(_ sample: ResourceSample) -> Double? {
+    switch self {
+    case .memory: sample.memory
+    case .availableMemory: max(0, 1 - min(1, sample.memory))
+    case .cpu: sample.cpu
+    }
+  }
+}
 
 struct ResourcePlot: View {
   let samples: [ResourceSample]
@@ -10,12 +28,20 @@ struct ResourcePlot: View {
   let seconds: TimeInterval
 
   private var visibleSamples: [ResourceSample] {
-    let end = samples.last?.date ?? .now
-    let visible = samples.filter { $0.date >= end.addingTimeInterval(-seconds) }
-    guard visible.count > 450 else { return visible }
+    let cutoff = (samples.last?.date ?? .now).addingTimeInterval(-seconds)
+    var low = samples.startIndex
+    var high = samples.endIndex
+    while low < high {
+      let mid = (low + high) / 2
+      if samples[mid].date < cutoff { low = mid + 1 } else { high = mid }
+    }
+    let visible = samples[low...]
+    guard visible.count > 450 else { return Array(visible) }
     let step = Int(ceil(Double(visible.count) / 450))
-    var reduced = stride(from: 0, to: visible.count, by: step).map { visible[$0] }
-    if reduced.last?.id != visible.last?.id { reduced.append(visible[visible.count - 1]) }
+    var reduced = stride(from: visible.startIndex, to: visible.endIndex, by: step).map {
+      visible[$0]
+    }
+    if reduced.last?.id != visible.last?.id, let last = visible.last { reduced.append(last) }
     return reduced
   }
 
@@ -28,13 +54,13 @@ struct ResourcePlot: View {
 
   var body: some View {
     Chart(visibleSamples) { sample in
-      if let value = kind == .cpu ? sample.cpu : sample.memory {
-        AreaMark(x: .value("Time", sample.date), y: .value("Usage", value))
+      if let value = kind.value(sample) {
+        AreaMark(x: .value("Time", sample.date), y: .value(kind.label, value))
           .foregroundStyle(
             LinearGradient(
               colors: [color.opacity(0.12), color.opacity(0.01)], startPoint: .top,
               endPoint: .bottom))
-        LineMark(x: .value("Time", sample.date), y: .value("Usage", value))
+        LineMark(x: .value("Time", sample.date), y: .value(kind.label, value))
           .foregroundStyle(color).lineStyle(StrokeStyle(lineWidth: 1.5))
       }
     }
@@ -51,7 +77,7 @@ struct ResourcePlot: View {
         }.accessibilityHidden(true)
       }
     }
-    .accessibilityLabel(kind == .cpu ? "CPU usage history" : "RAM usage history")
+    .accessibilityLabel("\(kind.label) history")
   }
 }
 

@@ -1,4 +1,3 @@
-import AppKit
 import SwiftUI
 
 struct QuickCleanView: View {
@@ -12,105 +11,56 @@ struct QuickCleanView: View {
   }
 
   var body: some View {
-    VStack(spacing: 16) {
-      VStack(alignment: .leading, spacing: 22) {
+    let selectedItems = model.selectedItems
+    let isLocked = model.isScanning || model.isCleaning
+    return VStack(spacing: 0) {
+      if model.isScanning && model.candidates.isEmpty {
+        BlitzEmptyRow(text: "Checking known caches, ages, and running tools…", isLoading: true)
+      } else if model.candidates.isEmpty {
+        BlitzEmptyRow(text: "No caches unused for 7 days", isLoading: false)
+      }
+      if let status = model.status {
+        BlitzStatusLine(text: status, tone: .working).padding(.horizontal, 16)
+          .padding(.vertical, 10)
+      }
+      if !model.candidates.isEmpty {
         HStack {
-          Text("Unused for at least 7 days")
-            .font(.system(size: 12)).foregroundStyle(.secondary)
+          Toggle(
+            "Select all",
+            isOn: Binding(
+              get: { selectedItems.count == model.candidates.count },
+              set: { model.selected = $0 ? Set(model.candidates.map(\.path)) : [] }
+            )
+          ).toggleStyle(BlitzCheckboxStyle()).font(BlitzType.label).disabled(isLocked)
           Spacer()
-          Button("Scan caches") { model.scan() }
-            .disabled(model.isScanning || model.isCleaning)
-        }
-        if model.isScanning {
-          HStack(spacing: 12) {
-            ProgressView().controlSize(.small)
-            Text("Checking known caches, ages, and running tools…").foregroundStyle(.secondary)
-          }.padding(.vertical, 10)
-        }
-        if let status = model.status {
-          Text(status).font(.callout).textSelection(.enabled).panelCard()
-        }
-        if model.candidates.isEmpty, !model.isScanning {
-          Text("Nothing older than 7 days. Caches used by running tools are kept.")
-            .font(.system(size: 12)).foregroundStyle(.secondary)
-        }
-        if !model.candidates.isEmpty {
-          HStack {
-            Toggle(
-              "Select all",
-              isOn: Binding(
-                get: {
-                  !model.candidates.isEmpty && model.selectedItems.count == model.candidates.count
-                },
-                set: { model.selected = $0 ? Set(model.candidates.map(\.path)) : [] }
-              )
-            ).toggleStyle(BlitzCheckboxStyle())
-              .disabled(model.isScanning || model.isCleaning || model.candidates.isEmpty)
-            Spacer()
-          }.font(.system(size: 12))
-          LazyVStack(spacing: 0) {
-            ForEach(model.candidates) { item in
-              HStack(spacing: 12) {
-                Toggle(
-                  "Select \(item.displayName)",
-                  isOn: Binding(
-                    get: { model.selected.contains(item.path) },
-                    set: {
-                      if $0 {
-                        model.selected.insert(item.path)
-                      } else {
-                        model.selected.remove(item.path)
-                      }
-                    })
-                ).toggleStyle(BlitzCheckboxStyle(showsLabel: false)).disabled(
-                  model.isScanning || model.isCleaning)
-                ApplicationIcon(source: .file(item.path), size: 28, fallback: "folder")
-                VStack(alignment: .leading, spacing: 6) {
-                  Text(item.displayName).font(.system(size: 13, weight: .medium))
-                    .lineLimit(1).truncationMode(.middle)
-                  Text(item.rule.title).font(.system(size: 11)).foregroundStyle(.secondary)
-                }.help(item.rule.recipe + "\n" + item.path)
-                Spacer()
-                Text(ByteText.full(item.tree.bytes)).font(.system(size: 12, weight: .medium))
-                  .monospacedDigit()
-                Button("Show in Finder") {
-                  NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: item.path)]
-                  )
-                }
-                .controlSize(.small)
-              }.blitzRow()
-              if item.id != model.candidates.last?.id { BlitzRowDivider(leading: 44) }
-            }
-          }.blitzTable()
-        }
-        if !model.notes.isEmpty {
-          VStack(alignment: .leading, spacing: 0) {
-            Text("Kept or skipped · \(model.notes.count)")
-              .font(.system(size: 12, weight: .semibold)).foregroundStyle(.secondary)
-            ForEach(Array(model.notes.enumerated()), id: \.offset) { note in
-              Text(note.element).font(.caption).foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 4)
-            }
+        }.padding(.horizontal, 16).padding(.vertical, 4)
+        BlitzRowDivider(leading: 0)
+        LazyVStack(spacing: 0) {
+          ForEach(model.candidates) { item in
+            row((item: item, isLocked: isLocked))
+            if item.id != model.candidates.last?.id { BlitzRowDivider(leading: 56) }
           }
         }
-
+      }
+      if !model.notes.isEmpty {
+        BlitzRowDivider(leading: 0)
+        VStack(alignment: .leading, spacing: 4) {
+          Text("Kept or skipped · \(model.notes.count)").font(BlitzType.captionEmphasis)
+            .foregroundStyle(BlitzUI.secondaryText)
+          ForEach(Array(model.notes.enumerated()), id: \.offset) { note in
+            Text(note.element).font(BlitzType.caption).foregroundStyle(BlitzUI.secondaryText)
+              .frame(maxWidth: .infinity, alignment: .leading)
+          }
+        }.padding(16)
       }
       if !model.candidates.isEmpty || model.isCleaning {
-        Divider()
-        HStack {
-          VStack(alignment: .leading, spacing: 4) {
-            Text("\(model.selectedItems.count) selected · \(ByteText.full(model.selectedBytes))")
-              .font(.callout.weight(.semibold)).monospacedDigit()
-          }
-          Spacer()
-          if model.isCleaning { ProgressView().controlSize(.small) }
-          Button("Review cleanup…") {
-            let items = model.selectedItems
-            guard !items.isEmpty else { return }
-            pendingReview = CacheCleanupReview(items: items)
-          }.buttonStyle(BlitzButtonStyle(.accent)).controlSize(.large)
-            .disabled(model.selectedItems.isEmpty || model.isCleaning || model.isScanning)
-        }
+        StorageActionBar(
+          summary: "\(selectedItems.count) selected · \(ByteText.full(model.selectedBytes))",
+          progress: model.isCleaning ? "Deleting selected caches…" : nil, message: nil,
+          actionTitle: "Review cleanup…", emphasis: .secondary,
+          isDisabled: selectedItems.isEmpty || isLocked,
+          action: { pendingReview = CacheCleanupReview(items: selectedItems) }
+        ).padding(.horizontal, 16)
       }
       if let review = pendingReview {
         BlitzConfirmation(
@@ -125,7 +75,29 @@ struct QuickCleanView: View {
             model.clean(history: history)
           }, onCancel: { pendingReview = nil })
       }
-    }.padding(16)
-      .task { if model.scannedAt == nil { model.scan() } }
+    }
+    .task { if model.scannedAt == nil { model.scan() } }
+  }
+
+  private func row(_ input: (item: CacheCandidate, isLocked: Bool)) -> some View {
+    let item = input.item
+    return HStack(spacing: 12) {
+      Toggle(
+        "Select \(item.displayName)",
+        isOn: Binding(
+          get: { model.selected.contains(item.path) },
+          set: {
+            if $0 { model.selected.insert(item.path) } else { model.selected.remove(item.path) }
+          })
+      ).toggleStyle(BlitzCheckboxStyle(showsLabel: false)).disabled(input.isLocked)
+      ApplicationIcon(source: .file(item.path), size: 28, fallback: "folder")
+      VStack(alignment: .leading, spacing: 3) {
+        Text(item.displayName).font(BlitzType.rowTitle).lineLimit(1).truncationMode(.middle)
+        Text(item.rule.title).font(BlitzType.caption).foregroundStyle(BlitzUI.secondaryText)
+      }.frame(maxWidth: .infinity, alignment: .leading).help(item.rule.recipe + "\n" + item.path)
+      BlitzTrailingValue(value: ByteText.full(item.tree.bytes), detail: nil)
+      Button("Show in Finder") { Finder.reveal(item.path) }.blitzButton(.quiet)
+        .controlSize(.small)
+    }.blitzRow()
   }
 }

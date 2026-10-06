@@ -212,8 +212,12 @@ final class QuickCleanModel: ObservableObject {
   @Published private(set) var completed = 0
   @Published var selected: Set<String> = []
 
-  var selectedItems: [CacheCandidate] { candidates.filter { selected.contains($0.path) } }
-  var selectedBytes: UInt64 { selectedItems.reduce(0) { $0 + $1.tree.bytes } }
+  var selectedItems: [CacheCandidate] {
+    selected.isEmpty ? [] : candidates.filter { selected.contains($0.path) }
+  }
+  var selectedBytes: UInt64 {
+    candidates.reduce(0) { selected.contains($1.path) ? $0 + $1.tree.bytes : $0 }
+  }
   var totalBytes: UInt64 { candidates.reduce(0) { $0 + $1.tree.bytes } }
 
   func scan() {

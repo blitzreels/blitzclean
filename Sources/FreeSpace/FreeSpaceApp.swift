@@ -9,6 +9,7 @@ struct FreeSpaceApp: App {
   @StateObject private var dockerStorage = DockerStorageModel()
   @StateObject private var memoryRescue = MemoryRescueModel()
   @StateObject private var appRecovery = AppRecoveryModel()
+  @StateObject private var permissions = PermissionsModel()
   @StateObject private var devProcesses = DevProcessModel()
   @StateObject private var folderExplorer = FolderExplorerModel()
   @StateObject private var workspaces = WorkspaceController()
@@ -20,7 +21,7 @@ struct FreeSpaceApp: App {
   var body: some Scene {
     MenuBarExtra {
       BlitzTrayView(
-        monitor: monitor, memory: memoryRescue,
+        monitor: monitor, memory: memoryRescue, recovery: appRecovery,
         navigation: cleanNavigation)
     } label: {
       MenuBarHealthLabel(
@@ -36,7 +37,7 @@ struct FreeSpaceApp: App {
         storage: storageBreakdown, navigation: cleanNavigation,
         developerBrowser: developerBrowser, processes: devProcesses, workspaces: workspaces,
         services: .init(
-          recovery: appRecovery, docker: dockerStorage,
+          recovery: appRecovery, permissions: permissions, docker: dockerStorage,
           folders: folderExplorer,
           launchAtLogin: launchAtLogin))
     }
@@ -45,6 +46,9 @@ struct FreeSpaceApp: App {
     .opensOnlyOnRequest()
     .commands {
       CommandGroup(replacing: .sidebar) {}
+      CommandGroup(replacing: .appTermination) {
+        Button("Close dashboard") { NSApp.terminate(nil) }.keyboardShortcut("q")
+      }
       CommandGroup(replacing: .newItem) {
         Button("Open BlitzClean") {
           NotificationCenter.default.post(name: .openWorkspace, object: nil)
@@ -67,6 +71,17 @@ struct FreeSpaceApp: App {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+  func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+    guard
+      AppQuitPolicy.keepsMonitoring(
+        .init(
+          explicitStop: AppLifetime.explicitStop,
+          event: NSAppleEventManager.shared().currentAppleEvent))
+    else { return .terminateNow }
+    AppLifetime.closeDashboard(sender)
+    return .terminateCancel
+  }
+
   func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
     false
   }

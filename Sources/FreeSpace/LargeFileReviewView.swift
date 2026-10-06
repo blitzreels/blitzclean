@@ -4,6 +4,7 @@ import SwiftUI
 struct LargeFileReviewView: View {
   @ObservedObject var model: CleanupOverviewModel
   @ObservedObject var monitor: SystemMonitor
+  let onBrowseFolders: () -> Void
   @StateObject private var media = MediaLibraryModel.application
   @State private var duplicateOnly = false
   @State private var showingFilters = false
@@ -13,13 +14,21 @@ struct LargeFileReviewView: View {
   @State private var result: String?
   @State private var visibleCount = 200
 
-  private var duplicatePaths: Set<String> { Set(media.duplicates.flatMap { $0.files.map(\.path) }) }
-  private var visibleFiles: [ReviewFile] {
-    model.mediaFilter.apply(.init(files: model.files, date: .now))
-      .filter { !duplicateOnly || duplicatePaths.contains($0.path) }
+  /// Derived lists computed once per render; rows and actions read these instead of refiltering.
+  private struct Listing {
+    let duplicatePaths: Set<String>
+    let visibleFiles: [ReviewFile]
+    let selectedFiles: [ReviewFile]
   }
-  private var selectedFiles: [ReviewFile] {
-    model.files.filter { media.selected.contains($0.path) }
+
+  private var listing: Listing {
+    let duplicates = Set(media.duplicates.flatMap { $0.files.map(\.path) })
+    let filtered = model.mediaFilter.apply(.init(files: model.files, date: .now))
+    return Listing(
+      duplicatePaths: duplicates,
+      visibleFiles: duplicateOnly ? filtered.filter { duplicates.contains($0.path) } : filtered,
+      selectedFiles: media.selected.isEmpty
+        ? [] : model.files.filter { media.selected.contains($0.path) })
   }
   private var busy: Bool {
     moving || media.isExporting || media.isFindingDuplicates || model.isScanning
@@ -40,30 +49,29 @@ struct LargeFileReviewView: View {
   }
 
   private var fileBrowser: some View {
-    VStack(spacing: 0) {
+    let listing = listing
+    let visibleFiles = listing.visibleFiles
+    let selectedFiles = listing.selectedFiles
+    return VStack(spacing: 0) {
       ScrollView {
         VStack(alignment: .leading, spacing: 16) {
           DriveSourceBrowser(
-            model: model, blocked: moving || media.isExporting || media.isFindingDuplicates)
+            model: model, blocked: moving || media.isExporting || media.isFindingDuplicates,
+            onBrowseFolders: onBrowseFolders)
           filterControls
           if let error = model.reviewPersistenceError {
             Label(error, systemImage: "exclamationmark.triangle").font(.callout).foregroundStyle(
               .orange)
           }
           scanProgress
-          if model.scanLimited && model.driveProgress == nil {
-            Text("Showing saved results. Scan again to update every accessible location.")
-              .font(BlitzType.caption).foregroundStyle(BlitzUI.secondaryText)
-          }
           if let status = result ?? media.status ?? model.scanStatus {
             Text(status).font(.system(size: 12)).textSelection(.enabled)
               .frame(maxWidth: .infinity, alignment: .leading).panelCard()
           }
           HStack {
-            Text(
-              "Largest files · \(visibleFiles.count) results"
-            )
-            .font(.system(size: 12, weight: .medium)).monospacedDigit()
+            Text("\(visibleFiles.count.formatted()) files").font(BlitzType.section)
+              .monospacedDigit()
+            Text(filterSummary).font(BlitzType.caption).foregroundStyle(BlitzUI.secondaryText)
             Spacer()
             if !media.duplicates.isEmpty {
               Toggle("Duplicates only", isOn: $duplicateOnly).toggleStyle(BlitzCheckboxStyle())
@@ -86,7 +94,9 @@ struct LargeFileReviewView: View {
             }.frame(maxWidth: .infinity)
           }
           LazyVStack(spacing: 0) {
-            ForEach(visibleFiles.prefix(visibleCount)) { file in fileRow(file) }
+            ForEach(visibleFiles.prefix(visibleCount)) { file in
+              fileRow((file: file, isDuplicate: listing.duplicatePaths.contains(file.path)))
+            }
           }.blitzTable()
           if visibleFiles.count > visibleCount {
             Button("Show more files") { visibleCount += 200 }.blitzButton(.quiet)
@@ -109,12 +119,12 @@ struct LargeFileReviewView: View {
               }
             }.font(.system(size: 12))
           }
-        }.padding(24)
+        }.padding(.horizontal, BlitzUI.pagePadding).padding(.top, 16).padding(.bottom, 24)
       }
-      Divider()
+      Rectangle().fill(BlitzUI.separator).frame(height: 1)
       HStack(spacing: 10) {
         VStack(alignment: .leading, spacing: 4) {
-          Text("\(selectedFiles.count) selected").font(.system(size: 12, weight: .semibold))
+          Text("\(selectedFiles.count) selected").font(BlitzType.caption).monospacedDigit()
         }
         Spacer()
         if media.isExporting || media.isFindingDuplicates {
@@ -134,9 +144,10 @@ struct LargeFileReviewView: View {
             }.disabled(busy || selectedFiles.isEmpty || selectedFiles.count > 20)
           }.fixedSize()
           Button("Move to Trash…", role: .destructive) { pendingTrash = selectedFiles }
-            .disabled(busy || selectedFiles.isEmpty)
+            .blitzButton(.secondary).disabled(busy || selectedFiles.isEmpty)
         }
-      }.padding(.horizontal, 24).padding(.vertical, 14).background(BlitzUI.cardFill)
+      }.padding(.horizontal, BlitzUI.pagePadding).padding(.vertical, 12)
+        .background(BlitzUI.panelBackground)
     }
     .task { model.refreshIfNeeded() }
     .onChange(of: model.scannedAt) { _, _ in
@@ -184,13 +195,6 @@ struct LargeFileReviewView: View {
             Text("\(progress.unreadable.formatted()) locations could not be read")
               .font(BlitzType.caption).foregroundStyle(BlitzUI.warning)
             Spacer()
-            Button("Full Disk Access…") {
-              if let url = URL(
-                string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles")
-              {
-                NSWorkspace.shared.open(url)
-              }
-            }.blitzButton(.quiet)
           }
           Text(progress.unreadablePaths.prefix(3).joined(separator: " · "))
             .font(BlitzType.caption).foregroundStyle(BlitzUI.secondaryText)
@@ -204,8 +208,11 @@ struct LargeFileReviewView: View {
     } else if model.isScanning {
       ProgressView("Reading drives…").controlSize(.small)
     } else if let date = model.scannedAt {
-      Text("Saved scan · \(date.formatted(date: .abbreviated, time: .shortened))")
-        .font(BlitzType.caption).foregroundStyle(BlitzUI.secondaryText)
+      Text(
+        "Saved results from \(date.formatted(date: .abbreviated, time: .shortened))"
+          + (model.scanLimited ? ". Scan again to update every accessible location." : "")
+      )
+      .font(BlitzType.caption).foregroundStyle(BlitzUI.secondaryText)
     }
   }
 
@@ -220,7 +227,6 @@ struct LargeFileReviewView: View {
             showingFilters ? "Hide filters" : "Filters", systemImage: "line.3.horizontal.decrease")
         }
       }
-      Text(filterSummary).font(BlitzType.caption).foregroundStyle(BlitzUI.secondaryText)
       if showingFilters { fileFilterPanel }
     }
   }
@@ -328,8 +334,9 @@ struct LargeFileReviewView: View {
     }.frame(maxWidth: .infinity, alignment: .leading)
   }
 
-  private func fileRow(_ file: ReviewFile) -> some View {
-    VStack(spacing: 0) {
+  private func fileRow(_ input: (file: ReviewFile, isDuplicate: Bool)) -> some View {
+    let file = input.file
+    return VStack(spacing: 0) {
       HStack(spacing: 12) {
         Toggle(
           "Select \(file.name)",
@@ -344,14 +351,13 @@ struct LargeFileReviewView: View {
         .help(
           ReviewFileDeletion.canTrashPath(file.path)
             ? "Select file" : "System or app file · view only")
-        Image(nsImage: NSWorkspace.shared.icon(forFile: file.path)).resizable().frame(
-          width: 30, height: 30)
+        ApplicationIcon(source: .file(file.path), size: 30, fallback: "doc")
         VStack(alignment: .leading, spacing: 4) {
           Text(file.name).font(.system(size: 12, weight: .medium)).lineLimit(1).truncationMode(
             .middle)
           Text(file.path).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
             .truncationMode(.middle)
-          if duplicatePaths.contains(file.path) {
+          if input.isDuplicate {
             Text("Exact duplicate").font(.system(size: 10)).foregroundStyle(BlitzUI.lavender)
           }
         }
@@ -362,7 +368,7 @@ struct LargeFileReviewView: View {
             .foregroundStyle(.secondary)
         }.frame(minWidth: 80)
         Button("Show in Finder") {
-          NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: file.path)])
+          Finder.reveal(file.path)
         }
         .controlSize(.small)
       }.blitzRow()

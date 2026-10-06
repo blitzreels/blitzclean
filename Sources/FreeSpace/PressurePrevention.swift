@@ -2,15 +2,23 @@ import Darwin
 import Foundation
 import UserNotifications
 
+enum PressureLimit: Equatable, Sendable {
+  case none, memory, disk, cpu
+}
+
 struct PressureAssessment: Equatable, Sendable {
   let risk: MemoryRisk
+  let limit: PressureLimit
   let title: String
   let detail: String
   let action: String
   let date: Date
 
+  var reviewTitle: String { limit == .disk ? "Free up space" : "Review projects" }
+
   static let checking = Self(
-    risk: .normal, title: "Checking capacity", detail: "Reading memory, swap, CPU and disk reserve",
+    risk: .normal, limit: .none, title: "Checking capacity",
+    detail: "Reading memory, swap, CPU and disk reserve",
     action: "", date: .distantPast)
 }
 
@@ -39,35 +47,42 @@ struct PressureEvaluator {
     let swapConstrained =
       swap >= max(8 * gib, memory.total / 3)
       && (memory.compressed >= memory.total / 5 || memory.available < memory.total / 8)
-    let bottleneck: (MemoryRisk, String, String)
+    let bottleneck: (MemoryRisk, PressureLimit, String, String)
     if disk.risk >= .critical && (swapConstrained || memoryRisk >= .warning) {
       bottleneck = (
-        .critical, "Memory and disk under pressure", "Swap is competing with a low disk reserve"
+        .critical, .memory, "Memory and disk under pressure",
+        "Avoid starting new threads or builds. Quit unused projects; swap is competing with a low disk reserve."
       )
     } else if memoryRisk >= .warning || swapConstrained {
       bottleneck = (
-        max(memoryRisk, .warning), "Memory is the bottleneck",
-        "Quit an unused project to release RAM"
+        max(memoryRisk, .warning), .memory, "Memory is the bottleneck",
+        "Avoid starting new threads or builds. Quit an unused project to release RAM; Pause only slows it."
       )
     } else if disk.risk > .normal {
       bottleneck = (
-        disk.risk >= .critical ? .critical : .warning, "Disk reserve is the bottleneck", disk.detail
+        disk.risk >= .critical ? .critical : .warning, .disk, "Disk reserve is the bottleneck",
+        "Avoid large downloads and builds. Remove rebuildable data in Storage."
       )
     } else if memoryRisk == .growing {
-      bottleneck = (.growing, "Swap activity is rising", "Memory is moving to disk")
+      bottleneck = (
+        .growing, .memory, "Swap activity is rising",
+        "Avoid starting new threads or builds while memory moves to swap."
+      )
     } else if let busySince, memory.date.timeIntervalSince(busySince) >= 15 {
       bottleneck = (
-        .warning, "CPU is the bottleneck", "Pause unused projects to let active work finish"
+        .warning, .cpu, "CPU is the bottleneck", "Pause unused projects to let active work finish."
       )
     } else {
-      bottleneck = (.normal, "Capacity available", "No sustained resource bottleneck detected")
+      bottleneck = (.normal, .none, "Capacity available", "")
     }
-    let metrics =
-      "\(ByteText.compact(memory.available)) RAM available · \(ByteText.compact(swap)) swap · \(ByteText.compact(input.disk.available)) disk free"
+    let memoryMetrics =
+      "\(ByteText.compact(memory.available)) RAM available · \(ByteText.compact(swap)) swap"
     return PressureAssessment(
-      risk: bottleneck.0, title: bottleneck.1, detail: bottleneck.2 + ". " + metrics,
-      action: bottleneck.0 > .normal
-        ? "Avoid starting new threads or builds. Pause slows work; Quit releases RAM." : "",
+      risk: bottleneck.0, limit: bottleneck.1, title: bottleneck.2,
+      detail: bottleneck.1 == .disk
+        ? "\(disk.detail) · \(memoryMetrics)"
+        : "\(memoryMetrics) · \(ByteText.compact(input.disk.available)) disk free",
+      action: bottleneck.3,
       date: memory.date)
   }
 }
@@ -266,7 +281,7 @@ final class PressureSentinel: @unchecked Sendable {
         events.append([
           "at": ISO8601DateFormatter().string(from: memory.date), "risk": assessment.title,
           "detail": assessment.detail, "action": action ?? "",
-          "projects": targets.sorted { $0.memoryBytes > $1.memoryBytes }.prefix(8)
+          "projects": targets.largest(.init(count: 8, key: \.memoryBytes))
             .map { "\($0.name): \(ByteText.compact($0.memoryBytes))" }.joined(separator: "; "),
         ])
         if events.count > 240 { events.removeFirst(events.count - 240) }

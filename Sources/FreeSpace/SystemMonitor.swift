@@ -87,6 +87,14 @@ struct SystemSnapshot: Equatable, Sendable {
     return Double(ramUsed) / Double(ramTotal)
   }
 
+  var diskUsed: UInt64 {
+    diskTotal - min(diskTotal, diskAvailable)
+  }
+
+  var diskUsedRatio: Double {
+    diskTotal > 0 ? Double(diskUsed) / Double(diskTotal) : 0
+  }
+
   var diskStatus: CapacityStatus {
     DiskSpacePolicy.status(DiskCapacityInput(available: diskAvailable, total: diskTotal))
   }

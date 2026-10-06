@@ -1,32 +1,50 @@
 import SwiftUI
 
 struct PressureBanner: View {
+  struct Review {
+    let title: String
+    let action: () -> Void
+  }
+
   let assessment: PressureAssessment
-  let actionTitle: String
-  let onReview: () -> Void
+  /// Absent on the page that already resolves the pressure.
+  let review: Review?
+
+  private var tone: MetricTone { assessment.risk.tone }
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 8) {
+    if assessment.risk > .normal {
+      alert
+    } else {
       HStack(spacing: 10) {
-        Image(
-          systemName: assessment.risk > .normal
-            ? "exclamationmark.triangle.fill" : "gauge.with.dots.needle.33percent"
-        )
-        .foregroundStyle(
-          assessment.risk >= .critical
-            ? Color.red : assessment.risk > .normal ? .orange : BlitzUI.mint)
+        BlitzStatusDot(tone: .good, diameter: 7)
+        Text(assessment.title).font(BlitzType.label)
+        Text(assessment.detail).font(BlitzType.caption).foregroundStyle(BlitzUI.secondaryText)
+          .lineLimit(1).truncationMode(.tail)
+        Spacer(minLength: 0)
+      }.padding(.horizontal, 4)
+    }
+  }
+
+  private var alert: some View {
+    HStack(alignment: .top, spacing: 12) {
+      Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 14))
+        .foregroundStyle(tone.color).frame(width: 18).padding(.top, 1)
+      VStack(alignment: .leading, spacing: 6) {
         Text(assessment.title).font(BlitzType.section)
-        Spacer()
-        if assessment.risk > .normal {
-          Button(actionTitle, action: onReview).blitzButton(.secondary).controlSize(.small)
+        if !assessment.action.isEmpty {
+          Text(assessment.action).font(BlitzType.body).foregroundStyle(BlitzUI.supportingText)
+            .fixedSize(horizontal: false, vertical: true)
         }
-      }
-      Text(assessment.detail).font(BlitzType.caption).foregroundStyle(BlitzUI.secondaryText)
-        .fixedSize(horizontal: false, vertical: true)
-      if !assessment.action.isEmpty {
-        Text(assessment.action).font(BlitzType.body)
+        Text(assessment.detail).font(BlitzType.caption).monospacedDigit()
+          .foregroundStyle(BlitzUI.secondaryText)
           .fixedSize(horizontal: false, vertical: true)
       }
-    }.panelCard(padding: 16)
+      Spacer(minLength: 12)
+      if let review {
+        Button(review.title, action: review.action).blitzButton(.secondary).controlSize(.small)
+      }
+    }
+    .padding(16).frame(maxWidth: .infinity, alignment: .leading).blitzToneCard(tone)
   }
 }

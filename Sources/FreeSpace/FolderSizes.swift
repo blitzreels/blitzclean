@@ -10,16 +10,48 @@ struct FolderEntry: Identifiable, Equatable, Codable, Sendable {
   var bytes: UInt64?
   var device: Int32?
   var inode: UInt64?
+  var sizeEstimate: FolderSizeEstimate?
 
   var id: String {
     path
   }
 }
 
+enum FolderSizeEstimate: String, Codable, Sendable {
+  case minimum, previous
+}
+
 struct FolderListing: Codable, Equatable, Sendable {
   let path: String
   let scannedAt: Date
   let entries: [FolderEntry]
+  var complete = true
+
+  enum CodingKeys: String, CodingKey {
+    case path, scannedAt, entries, complete
+  }
+
+  init(_ input: Snapshot) {
+    path = input.path
+    scannedAt = input.scannedAt
+    entries = input.entries
+    complete = input.complete
+  }
+
+  struct Snapshot {
+    let path: String
+    let scannedAt: Date
+    let entries: [FolderEntry]
+    let complete: Bool
+  }
+
+  init(from decoder: Decoder) throws {
+    let values = try decoder.container(keyedBy: CodingKeys.self)
+    path = try values.decode(String.self, forKey: .path)
+    scannedAt = try values.decode(Date.self, forKey: .scannedAt)
+    entries = try values.decode([FolderEntry].self, forKey: .entries)
+    complete = try values.decodeIfPresent(Bool.self, forKey: .complete) ?? true
+  }
 
   var totalBytes: UInt64 {
     entries.reduce(0) { result, entry in
@@ -49,21 +81,22 @@ enum FolderListingSorter {
   }
 }
 
-enum FolderSizeCache {
+struct FolderSizeCache {
   private static let key = "folder-size-listings-v1"
   private static let maxEntries = 60
+  let defaults: UserDefaults
 
-  static func load() -> [String: FolderListing] {
-    guard let data = UserDefaults.standard.data(forKey: key),
+  func load() -> [String: FolderListing] {
+    guard let data = defaults.data(forKey: Self.key),
       let listings = try? JSONDecoder().decode([String: FolderListing].self, from: data)
     else {
       return [:]
     }
 
-    return listings
+    return Self.bounded(listings)
   }
 
-  static func save(_ listings: [String: FolderListing]) {
+  static func bounded(_ listings: [String: FolderListing]) -> [String: FolderListing] {
     var trimmed = listings
     if trimmed.count > maxEntries {
       let oldest = trimmed.values.sorted { left, right in
@@ -74,29 +107,26 @@ enum FolderSizeCache {
       }
     }
 
-    guard let data = try? JSONEncoder().encode(trimmed) else {
+    return trimmed
+  }
+
+  func save(_ listings: [String: FolderListing]) {
+    guard let data = try? JSONEncoder().encode(Self.bounded(listings)) else {
       return
     }
 
-    UserDefaults.standard.set(data, forKey: key)
+    defaults.set(data, forKey: Self.key)
   }
 }
 
 struct FolderSizeScanner: Sendable {
-  func listing(of path: String) -> [FolderEntry] {
+  func listing(of path: String) throws -> [FolderEntry] {
     let url = URL(fileURLWithPath: path)
     let keys: Set<URLResourceKey> = [
       .isDirectoryKey, .isSymbolicLinkKey, .isHiddenKey, .totalFileAllocatedSizeKey, .fileSizeKey,
     ]
-    guard
-      let children = try? FileManager.default.contentsOfDirectory(
-        at: url,
-        includingPropertiesForKeys: Array(keys),
-        options: []
-      )
-    else {
-      return []
-    }
+    let children = try FileManager.default.contentsOfDirectory(
+      at: url, includingPropertiesForKeys: Array(keys), options: [])
 
     return children.compactMap { child in
       guard let values = try? child.resourceValues(forKeys: keys) else {
@@ -136,19 +166,35 @@ final class FolderExplorerModel: ObservableObject {
   @Published var selected: Set<String> = []
   @Published private(set) var isTrashing = false
   @Published private(set) var visited = 0
-  @Published private(set) var sizesPartial = false
   @Published private(set) var backPaths: [String] = []
   @Published private(set) var forwardPaths: [String] = []
 
   private let scanner = FolderSizeScanner()
+  private let scan: @Sendable (DriveFileScanner.Request) -> DriveScanProgress
+  private let cacheStore: FolderSizeCache
   private var cache: [String: FolderListing]
   private var scanTask: Task<Void, Never>?
   private var sizeTask: Task<DriveScanProgress, Never>?
   private var generation = 0
+  private var hasListing = false
+  private var preservedSizePaths: Set<String> = []
 
-  init(path: String = "/") {
-    self.path = path
-    cache = FolderSizeCache.load()
+  struct Configuration {
+    let path: String
+    let cacheStore: FolderSizeCache
+    let scan: @Sendable (DriveFileScanner.Request) -> DriveScanProgress
+  }
+
+  convenience init(path: String = "/") {
+    self.init(
+      .init(path: path, cacheStore: .init(defaults: .standard), scan: DriveFileScanner.scan))
+  }
+
+  init(_ configuration: Configuration) {
+    path = configuration.path
+    cacheStore = configuration.cacheStore
+    cache = cacheStore.load()
+    scan = configuration.scan
   }
 
   var homePath: String {
@@ -189,7 +235,7 @@ final class FolderExplorerModel: ObservableObject {
   func loadIfNeeded() {
     guard !isScanning else { return }
     guard
-      entries.isEmpty || scannedAt == nil
+      !hasListing || cache[path]?.complete != true
         || Date.now.timeIntervalSince(scannedAt ?? .distantPast) >= Self.freshInterval
     else { return }
     open(path)
@@ -222,16 +268,19 @@ final class FolderExplorerModel: ObservableObject {
     query = ""
     selected = []
     statusMessage = nil
-    sizesPartial = false
+    hasListing = false
+    entries = []
+    scannedAt = nil
 
     if let listing = cache[path],
-      Date().timeIntervalSince(listing.scannedAt) < Self.freshInterval,
-      listing.entries.allSatisfy({ $0.inode != nil })
+      listing.entries.allSatisfy({ $0.inode != nil && $0.device != nil })
     {
       entries = FolderListingSorter.sorted(listing.entries)
       scannedAt = listing.scannedAt
-      cancelScan()
-      return
+      hasListing = true
+      if listing.complete, Date.now.timeIntervalSince(listing.scannedAt) < Self.freshInterval {
+        return
+      }
     }
 
     rescan()
@@ -249,29 +298,47 @@ final class FolderExplorerModel: ObservableObject {
     cancelScan()
     let currentGeneration = generation
     let scanner = scanner
+    let scan = scan
     let scanPath = path
+    let previous = Dictionary(uniqueKeysWithValues: entries.map { ($0.path, $0) })
     isScanning = true
     statusMessage = nil
-    scannedAt = nil
     visited = 0
-    sizesPartial = false
-    entries = []
+    preservedSizePaths = []
     scanTask = Task { [weak self] in
       let initial = await Task.detached(priority: .utility) {
-        scanner.listing(of: scanPath)
+        Result { try scanner.listing(of: scanPath) }
       }.value
       guard let self, !Task.isCancelled, self.generation == currentGeneration else { return }
-      entries = initial.sorted {
-        if $0.isDirectory != $1.isDirectory { return $0.isDirectory }
-        return $0.name.localizedStandardCompare($1.name) == .orderedAscending
+      guard case .success(let children) = initial else {
+        statusMessage =
+          hasListing
+          ? "Folder unavailable. Showing saved sizes." : "This folder could not be read."
+        saveListing(complete: false)
+        isScanning = false
+        scanTask = nil
+        return
       }
+      entries = children.map { entry in
+        guard entry.isDirectory, let saved = previous[entry.path], saved.isDirectory,
+          let bytes = saved.bytes, saved.inode == entry.inode, saved.device == entry.device
+        else { return entry }
+        var restored = entry
+        restored.bytes = bytes
+        restored.sizeEstimate = .previous
+        preservedSizePaths.insert(entry.path)
+        return restored
+      }
+      hasListing = true
+      if scannedAt == nil { scannedAt = .now }
       selected.formIntersection(Set(entries.map(\.path)))
-      pendingCount = initial.filter(\.isDirectory).count
+      pendingCount = entries.filter { $0.isDirectory && $0.bytes == nil }.count
       let worker = Task.detached(priority: .utility) { [weak self] in
-        DriveFileScanner.scan(
+        scan(
           .init(
             roots: [scanPath], minimumBytes: 0, resultLimit: 0,
             progress: { [weak self] progress in
+              guard !progress.complete else { return }
               Task { @MainActor [weak self] in
                 self?.applyProgress(.init(progress: progress, generation: currentGeneration))
               }
@@ -282,7 +349,7 @@ final class FolderExplorerModel: ObservableObject {
       guard !Task.isCancelled, self.generation == currentGeneration else { return }
       applyProgress(.init(progress: result, generation: currentGeneration))
       sizeTask = nil
-      finishScan(path: scanPath)
+      finishScan()
     }
   }
 
@@ -292,25 +359,30 @@ final class FolderExplorerModel: ObservableObject {
   }
 
   private func applyProgress(_ input: ProgressInput) {
-    guard generation == input.generation else { return }
+    guard isScanning, generation == input.generation else { return }
     visited = input.progress.visited
-    sizesPartial = input.progress.unreadable > 0 || !input.progress.complete
-    for index in entries.indices where entries[index].isDirectory {
-      if let bytes = input.progress.folderBytes[entries[index].path] {
-        entries[index].bytes = bytes
+    let partial = input.progress.unreadable > 0 || !input.progress.complete
+    var updated = entries
+    for index in updated.indices where updated[index].isDirectory {
+      if !input.progress.complete && preservedSizePaths.contains(updated[index].path) { continue }
+      if let bytes = input.progress.folderBytes[updated[index].path] {
+        updated[index].bytes = bytes
+        updated[index].sizeEstimate = partial ? .minimum : nil
       } else if input.progress.complete && input.progress.unreadable == 0 {
-        entries[index].bytes = 0
+        updated[index].bytes = 0
+        updated[index].sizeEstimate = nil
       }
     }
+    if updated != entries { entries = updated }
     if input.progress.unreadable > 0 {
       statusMessage =
-        "\(input.progress.unreadable) locations unreadable. Folder sizes are measured minimums."
+        "\(input.progress.unreadable) locations unreadable. ≥ is a measured minimum; ~ is a saved size."
     }
     pendingCount = entries.filter { $0.isDirectory && $0.bytes == nil }.count
   }
 
   func reveal(_ entry: FolderEntry) {
-    NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: entry.path)])
+    Finder.reveal(entry.path)
   }
 
   func canTrash(_ entry: FolderEntry) -> Bool {
@@ -333,6 +405,7 @@ final class FolderExplorerModel: ObservableObject {
     guard !isTrashing else { return }
     let allowed = items.filter(canTrash)
     guard !allowed.isEmpty else { return }
+    cancelScan()
     isTrashing = true
     Task {
       let results = await Task.detached(priority: .userInitiated) {
@@ -355,6 +428,7 @@ final class FolderExplorerModel: ObservableObject {
       entries.removeAll { removed.contains($0.path) }
       selected.subtract(removed)
       for path in removed { invalidateAncestors(of: path) }
+      if !removed.isEmpty { scannedAt = .distantPast }
       let errors = results.compactMap(\.1)
       statusMessage =
         "Moved \(removed.count) \(removed.count == 1 ? "item" : "items") to Trash."
@@ -363,18 +437,24 @@ final class FolderExplorerModel: ObservableObject {
     }
   }
 
-  private func finishScan(path scannedPath: String) {
+  private func finishScan() {
     isScanning = false
     pendingCount = 0
-    let listing = FolderListing(path: scannedPath, scannedAt: .now, entries: entries)
-    scannedAt = listing.scannedAt
-    if !sizesPartial {
-      cache[scannedPath] = listing
-      FolderSizeCache.save(cache)
-    }
+    scanTask = nil
+    scannedAt = .now
+    saveListing(complete: true)
+  }
+
+  private func saveListing(complete: Bool) {
+    guard hasListing, let scannedAt else { return }
+    cache[path] = FolderListing(
+      .init(path: path, scannedAt: scannedAt, entries: entries, complete: complete))
+    cache = FolderSizeCache.bounded(cache)
+    cacheStore.save(cache)
   }
 
   func cancelScan() {
+    if isScanning { saveListing(complete: false) }
     generation += 1
     scanTask?.cancel()
     sizeTask?.cancel()
@@ -385,6 +465,7 @@ final class FolderExplorerModel: ObservableObject {
   }
 
   private func invalidateAncestors(of entryPath: String) {
+    cache = cache.filter { $0.key != entryPath && !$0.key.hasPrefix(entryPath + "/") }
     var current = URL(fileURLWithPath: entryPath).deletingLastPathComponent().path
     while true {
       cache.removeValue(forKey: current)
@@ -395,6 +476,6 @@ final class FolderExplorerModel: ObservableObject {
       current = URL(fileURLWithPath: current).deletingLastPathComponent().path
     }
 
-    FolderSizeCache.save(cache)
+    cacheStore.save(cache)
   }
 }

@@ -126,4 +126,11 @@ final class ForceQuitModel: ObservableObject {
     lastReport = report
     return report
   }
+
+  /// Runs a force quit and returns the line to show beside the action, or nil if one was already running.
+  func runAndDescribe(_ app: MemoryApp) async -> String? {
+    guard let report = await run(app) else { return nil }
+    return report.outcome == .terminated
+      ? "\(app.name) was force quit." : "\(app.name): \(report.detail)"
+  }
 }

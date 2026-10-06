@@ -83,28 +83,6 @@ extension View {
   }
 }
 
-struct PanelSectionHeader<Trailing: View>: View {
-  let title: String
-  @ViewBuilder let trailing: () -> Trailing
-
-  init(_ title: String, @ViewBuilder trailing: @escaping () -> Trailing = { EmptyView() }) {
-    self.title = title
-    self.trailing = trailing
-  }
-
-  var body: some View {
-    HStack(alignment: .firstTextBaseline) {
-      Text(title)
-        .font(BlitzType.section)
-        .foregroundStyle(BlitzUI.primaryText)
-      Spacer()
-      trailing()
-        .font(BlitzType.caption)
-        .foregroundStyle(BlitzUI.tertiaryText)
-    }
-  }
-}
-
 struct CapacityBar: View {
   let usedRatio: Double
   let tone: MetricTone

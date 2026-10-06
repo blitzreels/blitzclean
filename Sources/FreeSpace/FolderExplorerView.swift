@@ -3,6 +3,7 @@ import SwiftUI
 
 struct FolderExplorerView: View {
   @ObservedObject var model: FolderExplorerModel
+  let onManageSimulators: () -> Void
   @State private var pendingTrash: [FolderEntry] = []
   @State private var visibleCount = 200
   @State private var largestFirst = true
@@ -20,12 +21,17 @@ struct FolderExplorerView: View {
     }
   }
 
-  private var selected: [FolderEntry] { model.entries.filter { model.selected.contains($0.path) } }
+  private var selected: [FolderEntry] {
+    model.selected.isEmpty ? [] : model.entries.filter { model.selected.contains($0.path) }
+  }
 
   var body: some View {
-    VStack(spacing: 0) {
+    let maximumBytes = model.maxBytes
+    let entries = entries
+    let selected = selected
+    return VStack(spacing: 0) {
       toolbar
-      columnHeader
+      columnHeader(entries)
       ScrollView {
         LazyVStack(spacing: 0) {
           if model.entries.isEmpty {
@@ -33,6 +39,7 @@ struct FolderExplorerView: View {
               model.isScanning
                 ? "Reading folder…"
                 : model.statusMessage?.contains("unreadable") == true
+                  || model.statusMessage == "This folder could not be read."
                   ? "No readable items in this folder" : "This folder is empty"
             )
             .font(BlitzType.body).foregroundStyle(BlitzUI.secondaryText)
@@ -42,14 +49,14 @@ struct FolderExplorerView: View {
               .padding(24)
           }
           ForEach(entries.prefix(visibleCount)) { entry in
-            entryRow(entry)
+            entryRow((entry: entry, maximumBytes: maximumBytes))
             BlitzRowDivider(leading: 58)
           }
           if entries.count > visibleCount {
             Button("Show more · \(entries.count.formatted()) items") { visibleCount += 200 }
               .blitzButton(.quiet).padding(12)
           }
-        }.blitzTable().padding(.horizontal, 24).padding(.bottom, 16)
+        }.blitzTable().padding(.horizontal, BlitzUI.pagePadding).padding(.bottom, 16)
       }
       VStack(spacing: 8) {
         if let inspectedFile {
@@ -73,7 +80,8 @@ struct FolderExplorerView: View {
           Button("Move to Trash…", role: .destructive) { pendingTrash = selected }
             .blitzButton(.secondary).disabled(selected.isEmpty || model.isTrashing)
         }
-      }.padding(.horizontal, 24).padding(.vertical, 12).background(BlitzUI.panelBackground)
+      }.padding(.horizontal, BlitzUI.pagePadding).padding(.vertical, 12).background(
+        BlitzUI.panelBackground)
     }
     .task { model.loadIfNeeded() }
     .onChange(of: model.path) {
@@ -126,8 +134,9 @@ struct FolderExplorerView: View {
         Button {
           if model.isScanning { model.cancelScan() } else { model.rescan() }
         } label: {
-          Image(systemName: model.isScanning ? "stop" : "arrow.clockwise")
-            .frame(width: 16, height: 20)
+          Label(
+            model.isScanning ? "Stop" : "Refresh",
+            systemImage: model.isScanning ? "xmark" : "arrow.clockwise")
         }.blitzButton(.quiet)
           .accessibilityLabel(model.isScanning ? "Stop measuring" : "Refresh folder")
           .help(model.isScanning ? "Stop measuring folder sizes" : "Refresh folder")
@@ -138,22 +147,33 @@ struct FolderExplorerView: View {
           .toggleStyle(BlitzCheckboxStyle()).font(BlitzType.label).fixedSize()
           .padding(.leading, 8)
       }
-      HStack {
+      if SimulatorDeviceService.isDevicePath(model.path) {
+        HStack {
+          Text("Delete simulated devices with Apple’s tools.")
+            .font(BlitzType.caption).foregroundStyle(BlitzUI.secondaryText)
+          Spacer()
+          Button("Manage devices", action: onManageSimulators).blitzButton(.secondary)
+        }
+      }
+      HStack(spacing: 6) {
         if model.isScanning {
           ProgressView().controlSize(.mini)
-          Text("\(model.visited.formatted()) files measured")
-            .font(BlitzType.caption).foregroundStyle(BlitzUI.secondaryText)
+          Text("Measuring sizes · \(model.visited.formatted()) files checked")
+        } else if let date = model.scannedAt {
+          Text("Sizes from \(date.formatted(date: .omitted, time: .shortened))")
         }
-        Spacer()
-      }
-      if let message = model.statusMessage {
-        Text(message).font(BlitzType.caption).foregroundStyle(BlitzUI.supportingText)
-          .textSelection(.enabled)
-      }
-    }.padding(.horizontal, 24).padding(.vertical, 14)
+        if let message = model.statusMessage {
+          Text("·")
+          Text(message).lineLimit(1).truncationMode(.tail).help(message)
+            .textSelection(.enabled)
+        }
+        Spacer(minLength: 0)
+      }.font(BlitzType.caption).monospacedDigit().foregroundStyle(BlitzUI.secondaryText)
+        .frame(minHeight: 16)
+    }.padding(.horizontal, BlitzUI.pagePadding).padding(.top, 12).padding(.bottom, 8)
   }
 
-  private var columnHeader: some View {
+  private func columnHeader(_ entries: [FolderEntry]) -> some View {
     let selectable = Set(entries.filter(model.canTrash).map(\.path))
     return HStack(spacing: 0) {
       Toggle(
@@ -176,11 +196,12 @@ struct FolderExplorerView: View {
       Button(largestFirst ? "Size on disk ↓" : "Size on disk") { largestFirst = true }
         .blitzButton(.quiet).controlSize(.small)
         .padding(.trailing, 28)
-    }.padding(.horizontal, 24)
+    }.padding(.horizontal, BlitzUI.pagePadding)
   }
 
-  private func entryRow(_ entry: FolderEntry) -> some View {
-    HStack(spacing: 0) {
+  private func entryRow(_ input: (entry: FolderEntry, maximumBytes: UInt64)) -> some View {
+    let entry = input.entry
+    return HStack(spacing: 0) {
       Toggle(
         "Select \(entry.name)",
         isOn: Binding(
@@ -211,9 +232,20 @@ struct FolderExplorerView: View {
             .font(.system(size: 20)).foregroundStyle(BlitzUI.secondaryText).frame(width: 24)
           Text(entry.name).font(BlitzType.rowTitle).lineLimit(1).truncationMode(.middle)
             .frame(maxWidth: .infinity, alignment: .leading)
+          GeometryReader { geometry in
+            let fraction =
+              input.maximumBytes == 0
+              ? 0 : min(1, Double(entry.bytes ?? 0) / Double(input.maximumBytes))
+            Capsule().fill(BlitzUI.mint.opacity(0.1))
+              .overlay(alignment: .leading) {
+                Capsule().fill(BlitzUI.mint.opacity(0.65))
+                  .frame(width: geometry.size.width * fraction)
+              }
+          }.frame(width: 84, height: 4).allowsHitTesting(false).accessibilityHidden(true)
           Text(
             entry.bytes.map {
-              (entry.isDirectory && model.sizesPartial ? "≥ " : "") + ByteText.full($0)
+              (entry.sizeEstimate == .minimum ? "≥ " : entry.sizeEstimate == .previous ? "~ " : "")
+                + ByteText.full($0)
             }
               ?? (model.isScanning ? "Measuring…" : "Unreadable")
           )
@@ -223,7 +255,7 @@ struct FolderExplorerView: View {
             .font(.system(size: 11)).foregroundStyle(BlitzUI.secondaryText).frame(width: 16)
         }.padding(.leading, 4).padding(.trailing, 16)
           .frame(minHeight: 52).contentShape(Rectangle())
-      }.buttonStyle(BlitzBrowserRowStyle()).disabled(model.isTrashing)
+      }.buttonStyle(BlitzRowButtonStyle()).disabled(model.isTrashing)
         .accessibilityLabel(entry.isDirectory ? "Open \(entry.name)" : "Select \(entry.name)")
         .help(entry.isDirectory ? "Open folder" : entry.path)
     }
@@ -235,27 +267,5 @@ struct FolderExplorerView: View {
         Button("Move to Trash…", role: .destructive) { pendingTrash = [entry] }
       }
     }
-  }
-}
-
-private struct BlitzBrowserRowStyle: ButtonStyle {
-  @State private var hovered = false
-
-  func makeBody(configuration: Configuration) -> some View {
-    configuration.label
-      .background(
-        configuration.isPressed ? BlitzUI.selectedFill : hovered ? BlitzUI.hoverFill : .clear
-      )
-      .contentShape(Rectangle())
-      .onHover { hovered = $0 }
-      .blitzPointingHand()
-  }
-}
-
-struct StatusLine: View {
-  let message: String
-  var body: some View {
-    Text(message).font(BlitzType.caption).foregroundStyle(BlitzUI.supportingText)
-      .frame(maxWidth: .infinity, alignment: .leading).padding(12)
   }
 }

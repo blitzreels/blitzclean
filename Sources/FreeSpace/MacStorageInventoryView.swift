@@ -7,83 +7,84 @@ struct MacStorageInventoryView: View {
   @State private var query = ""
   @State private var showingAll: Set<String> = []
   @State private var pendingApp: StorageItem?
-  @State private var status: String?
+  @State private var status: Status?
 
-  private var categories: [StorageCategory] {
-    let order = [
-      "computer-applications", "computer-xcode", "computer-user-caches", "large-files",
-      "computer-personal-files", "computer-library-data", "computer-system-data", "node-modules",
-    ]
-    return model.categories.filter { !$0.items.isEmpty }.sorted { left, right in
-      let leftIndex = order.firstIndex(of: left.id) ?? order.count
-      let rightIndex = order.firstIndex(of: right.id) ?? order.count
-      return leftIndex == rightIndex ? left.bytes > right.bytes : leftIndex < rightIndex
-    }
+  private struct Status {
+    let text: String
+    let tone: BlitzStatusTone
   }
 
-  private func items(in category: StorageCategory) -> [StorageItem] {
-    let sorted = category.items.sorted { $0.bytes > $1.bytes }
-    guard !query.isEmpty else { return sorted }
-    return sorted.filter {
-      $0.name.localizedCaseInsensitiveContains(query)
-        || $0.path.localizedCaseInsensitiveContains(query)
-    }
+  private struct Section: Identifiable {
+    let category: StorageCategory
+    let items: [StorageItem]
+    var id: String { category.id }
+    var isDeveloper: Bool { !category.id.hasPrefix("computer-") && category.id != "large-files" }
   }
 
-  private var matchingCategories: [StorageCategory] {
-    categories.filter { query.isEmpty || !items(in: $0).isEmpty }
+  private static let order = [
+    "computer-applications", "computer-xcode", "computer-user-caches", "large-files",
+    "computer-personal-files", "computer-library-data", "computer-system-data", "node-modules",
+  ]
+
+  /// Sorted, query-filtered sections computed once per render.
+  private var sections: [Section] {
+    model.categories.filter { !$0.items.isEmpty }
+      .sorted { left, right in
+        let leftIndex = Self.order.firstIndex(of: left.id) ?? Self.order.count
+        let rightIndex = Self.order.firstIndex(of: right.id) ?? Self.order.count
+        return leftIndex == rightIndex ? left.bytes > right.bytes : leftIndex < rightIndex
+      }
+      .map { category in
+        let sorted = category.items.sorted { $0.bytes > $1.bytes }
+        return Section(
+          category: category,
+          items: query.isEmpty
+            ? sorted
+            : sorted.filter {
+              $0.name.localizedCaseInsensitiveContains(query)
+                || $0.path.localizedCaseInsensitiveContains(query)
+            })
+      }
+      .filter { query.isEmpty || !$0.items.isEmpty }
   }
 
   var body: some View {
-    ScrollView {
-      VStack(alignment: .leading, spacing: 16) {
+    let sections = sections
+    let developer = sections.filter(\.isDeveloper)
+    return ScrollView {
+      LazyVStack(alignment: .leading, spacing: 16) {
         HStack {
           BlitzSearchField(title: "Search apps, files, and folders", text: $query)
           Button("Browse folders") {
             onBrowse(FileManager.default.homeDirectoryForCurrentUser.path)
-          }
-          Button("Scan Mac") { model.scan() }
+          }.blitzButton(.quiet)
+          Button("Scan Mac") { model.scan() }.blitzButton(.secondary)
             .disabled(model.isScanning)
         }
-        if let scannedAt = model.scannedAt {
-          Text(
-            "Scanned \(scannedAt.formatted(date: .abbreviated, time: .shortened))"
-          )
-          .font(.system(size: 11)).foregroundStyle(.secondary)
-          .help(
-            "Allocated disk space. Categories can overlap. Protected locations require Full Disk Access; large files use Spotlight."
-          )
-        }
-        if model.isScanning {
-          HStack(spacing: 8) {
+        HStack(spacing: 8) {
+          if model.isScanning {
             ProgressView().controlSize(.small)
             Text("Measuring apps and folders…")
-              .font(.system(size: 12)).foregroundStyle(.secondary)
+          } else if let scannedAt = model.scannedAt {
+            Text("Scanned \(scannedAt.formatted(date: .abbreviated, time: .shortened))")
+              .help(
+                "Allocated disk space. Categories can overlap. Protected locations require Full Disk Access; large files use Spotlight."
+              )
           }
+        }.font(BlitzType.caption).foregroundStyle(BlitzUI.secondaryText)
+        if let status { BlitzStatusLine(text: status.text, tone: status.tone) }
+        if sections.isEmpty && !model.isScanning {
+          BlitzEmptyRow(
+            text: query.isEmpty
+              ? "No inventory yet. Scan Mac to measure apps and folders."
+              : "Nothing named \(query) found",
+            isLoading: false)
         }
-        if let status {
-          Text(status).font(.system(size: 12)).textSelection(.enabled)
-            .foregroundStyle(.orange)
-        }
-        if categories.isEmpty && !model.isScanning {
-          ContentUnavailableView(
-            "No inventory yet", systemImage: "internaldrive",
-            description: Text("Scan Mac to see installed apps and the largest folders."))
-        }
-        if !query.isEmpty && matchingCategories.isEmpty && !model.isScanning {
-          ContentUnavailableView(
-            "Nothing named \(query) found", systemImage: "magnifyingglass",
-            description: Text("Check the scan time, or search another app, file, or folder name."))
-        }
-        inventorySections(
-          matchingCategories.filter { $0.id.hasPrefix("computer-") || $0.id == "large-files" })
-        let developerCategories = matchingCategories.filter {
-          !$0.id.hasPrefix("computer-") && $0.id != "large-files"
-        }
-        if !developerCategories.isEmpty {
-          Text("Developer data").font(.system(size: 13, weight: .semibold))
-            .foregroundStyle(.secondary).padding(.top, 8)
-          inventorySections(developerCategories)
+        inventorySections(sections.filter { !$0.isDeveloper })
+        if !developer.isEmpty {
+          Text("Developer data").font(BlitzType.section).foregroundStyle(BlitzUI.secondaryText)
+            .padding(.top, 8)
+          inventorySections(developer)
         }
       }.padding(BlitzUI.pagePadding)
     }
@@ -104,49 +105,33 @@ struct MacStorageInventoryView: View {
     }
   }
 
-  private func inventorySections(_ categories: [StorageCategory]) -> some View {
-    ForEach(categories) { category in
-      let visible = items(in: category)
-      let displayed =
-        query.isEmpty && !showingAll.contains(category.id)
-        ? Array(visible.prefix(6)) : visible
-      if query.isEmpty || !visible.isEmpty {
-        VStack(alignment: .leading, spacing: 0) {
-          HStack(spacing: 10) {
-            Image(systemName: category.systemImage).frame(width: 20)
-              .foregroundStyle(.secondary)
-            VStack(alignment: .leading, spacing: 2) {
-              Text(category.name).font(.system(size: 14, weight: .semibold))
-              Text("\(category.items.count) items")
-                .font(.system(size: 11)).foregroundStyle(.secondary)
-            }
-            Spacer()
-            Text(ByteText.full(category.bytes)).font(.system(size: 12, weight: .semibold))
-              .monospacedDigit()
-          }.help(category.detail).accessibilityAddTraits(.isHeader)
-          LazyVStack(spacing: 0) {
-            ForEach(displayed) { item in
-              itemRow(.init(item: item, category: category))
-              if item.id != displayed.last?.id { Divider() }
-            }
-            if query.isEmpty && visible.count > 6 {
-              Button(
-                showingAll.contains(category.id)
-                  ? "Show fewer" : "Show all \(visible.count) items"
-              ) {
-                if showingAll.contains(category.id) {
-                  showingAll.remove(category.id)
-                } else {
-                  showingAll.insert(category.id)
+  private func inventorySections(_ sections: [Section]) -> some View {
+    ForEach(sections) { section in
+      let expanded = !query.isEmpty || showingAll.contains(section.id)
+      let displayed = expanded ? section.items : Array(section.items.prefix(6))
+      BlitzStorageSection(
+        title: section.category.name, symbol: section.category.systemImage,
+        detail: section.category.detail, trailing: ByteText.full(section.category.bytes),
+        showsContent: true
+      ) {
+        LazyVStack(spacing: 0) {
+          ForEach(displayed) { item in
+            itemRow(.init(item: item, category: section.category))
+            if item.id != displayed.last?.id { BlitzRowDivider(leading: 54) }
+          }
+          if query.isEmpty && section.items.count > 6 {
+            BlitzRowDivider(leading: 0)
+            BlitzShowAllButton(
+              total: section.items.count, noun: "items",
+              isExpanded: Binding(
+                get: { showingAll.contains(section.id) },
+                set: {
+                  if $0 { showingAll.insert(section.id) } else { showingAll.remove(section.id) }
                 }
-              }
-              .controlSize(.small)
-              .frame(maxWidth: .infinity, alignment: .leading)
-              .padding(.top, 10)
-            }
-          }.padding(.top, 8)
+              )
+            ).padding(.vertical, 8)
+          }
         }
-        .panelCard()
       }
     }
   }
@@ -161,34 +146,27 @@ struct MacStorageInventoryView: View {
     let category = input.category
     return HStack(spacing: 12) {
       if category.id == "computer-applications" {
-        Image(nsImage: NSWorkspace.shared.icon(forFile: item.path))
-          .resizable().frame(width: 26, height: 26)
+        ApplicationIcon(source: .file(item.path), size: 26, fallback: "app")
       } else {
         Image(systemName: category.id == "large-files" ? "doc" : "folder")
-          .frame(width: 26).foregroundStyle(.secondary)
+          .frame(width: 26).foregroundStyle(BlitzUI.secondaryText)
       }
       VStack(alignment: .leading, spacing: 3) {
-        Text(item.name).font(.system(size: 12, weight: .medium)).lineLimit(1)
-        Text(item.path).font(.system(size: 10)).foregroundStyle(.secondary)
+        Text(item.name).font(BlitzType.rowTitle).lineLimit(1)
+        Text(item.path).font(BlitzType.caption).foregroundStyle(BlitzUI.secondaryText)
           .lineLimit(1).truncationMode(.middle).textSelection(.enabled)
-      }
-      Spacer(minLength: 12)
-      Text(ByteText.full(item.bytes)).font(.system(size: 12, weight: .medium))
-        .monospacedDigit()
-      Button("Show in Finder") {
-        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: item.path)])
-      }.controlSize(.small)
-      if !item.path.hasSuffix(".app"),
-        (try? URL(fileURLWithPath: item.path).resourceValues(forKeys: [.isDirectoryKey]))?
-          .isDirectory == true
-      {
-        Button("Browse") { onBrowse(item.path) }.controlSize(.small)
+      }.frame(maxWidth: .infinity, alignment: .leading)
+      BlitzTrailingValue(value: ByteText.full(item.bytes), detail: nil)
+      Button("Show in Finder") { Finder.reveal(item.path) }.blitzButton(.quiet)
+        .controlSize(.small)
+      if !item.path.hasSuffix(".app"), DirectoryCheck.isDirectory(item.path) {
+        Button("Browse") { onBrowse(item.path) }.blitzButton(.secondary).controlSize(.small)
       } else if category.id == "computer-applications", canTrash(item) {
         BlitzActionMenu(label: "Actions for \(item.name)") {
           Button("Move app to Trash…", role: .destructive) { pendingApp = item }
         }
       }
-    }.padding(.vertical, 10)
+    }.blitzRow()
   }
 
   private func canTrash(_ item: StorageItem) -> Bool {
@@ -203,22 +181,41 @@ struct MacStorageInventoryView: View {
       ReviewFile.canonicalPath(item.path) == item.path,
       FileManager.default.fileExists(atPath: item.path)
     else {
-      status = "The app moved or changed. Scan again before uninstalling."
+      status = .init(
+        text: "The app moved or changed. Scan again before uninstalling.", tone: .warning)
       return
     }
     let running = NSWorkspace.shared.runningApplications.contains { app in
       app.bundleURL?.path == item.path
     }
     guard !running else {
-      status = "Quit \(item.name) before uninstalling it."
+      status = .init(text: "Quit \(item.name) before uninstalling it.", tone: .warning)
       return
     }
     do {
       try FileManager.default.trashItem(at: URL(fileURLWithPath: item.path), resultingItemURL: nil)
-      status = "\(item.name) moved to Trash. Empty Trash to reclaim space."
+      status = .init(
+        text: "\(item.name) moved to Trash. Empty Trash to reclaim space.", tone: .working)
       model.scan()
     } catch {
-      status = "Could not move \(item.name) to Trash: \(error.localizedDescription)"
+      status = .init(
+        text: "Could not move \(item.name) to Trash: \(error.localizedDescription)", tone: .warning)
     }
+  }
+}
+
+/// Remembers whether an inventory path is a folder, so rows avoid a file-system call per render.
+@MainActor
+private enum DirectoryCheck {
+  private static var cache: [String: Bool] = [:]
+
+  static func isDirectory(_ path: String) -> Bool {
+    if let known = cache[path] { return known }
+    let value =
+      (try? URL(fileURLWithPath: path).resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory
+      == true
+    if cache.count > 4_000 { cache.removeAll() }
+    cache[path] = value
+    return value
   }
 }

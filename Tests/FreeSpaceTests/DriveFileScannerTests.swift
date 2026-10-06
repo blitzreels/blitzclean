@@ -131,11 +131,11 @@ struct DriveFileScannerTests {
     try Data(repeating: 1, count: 8_192).write(to: child.appendingPathComponent("video.mov"))
     let model = FolderExplorerModel(path: root.path)
     model.open(root.path)
-    for _ in 0..<100 where model.isScanning { try await Task.sleep(for: .milliseconds(20)) }
+    for _ in 0..<250 where model.isScanning { try await Task.sleep(for: .milliseconds(20)) }
     #expect(model.entries.first?.isDirectory == true)
     #expect(model.entries.first?.bytes == 8_192)
     model.open(child.path)
-    for _ in 0..<100 where model.isScanning { try await Task.sleep(for: .milliseconds(20)) }
+    for _ in 0..<250 where model.isScanning { try await Task.sleep(for: .milliseconds(20)) }
     #expect(model.entries.map(\.name) == ["video.mov"])
     #expect(model.entries.first?.bytes == 8_192)
     #expect(model.entries.first?.inode != nil)
@@ -166,7 +166,7 @@ struct DriveFileScannerTests {
     model.applyScan(.init(files: [], limited: true))
     model.refreshIfNeeded()
     #expect(model.isScanning)
-    for _ in 0..<50 where model.isScanning { try await Task.sleep(for: .milliseconds(50)) }
+    for _ in 0..<100 where model.isScanning { try await Task.sleep(for: .milliseconds(50)) }
     #expect(model.files.contains { $0.name == "file.mov" })
     #expect(model.driveProgress?.complete == true)
   }

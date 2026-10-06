@@ -8,21 +8,20 @@ struct BlitzStorageView: View {
   @ObservedObject var docker: DockerStorageModel
   @ObservedObject var folders: FolderExplorerModel
   let worktrees: WorktreeSources
-  @State private var showsLargestFiles = false
+  @AppStorage("storage.showsLargestFiles") private var showsLargestFiles = false
   @State private var drives: [StorageDrive] = []
 
   var body: some View {
     VStack(spacing: 0) {
-      HStack {
+      HStack(spacing: 16) {
         BlitzSegmentedPicker(
           title: "Storage", options: CleanStoragePage.allCases,
           selection: $navigation.storagePage, label: { $0.rawValue }
-        ).frame(maxWidth: 340)
+        ).frame(maxWidth: 320)
         Spacer()
-        Text("\(ByteText.compact(monitor.snapshot.diskAvailable)) free")
-          .font(.system(size: 11)).foregroundStyle(.secondary).monospacedDigit().lineLimit(1)
-      }.padding(.horizontal, 24).padding(.vertical, 16)
-      Divider()
+        StorageCapacityMeter(snapshot: monitor.snapshot).frame(width: 200)
+      }.padding(.horizontal, BlitzUI.pagePadding).padding(.vertical, 12)
+      Rectangle().fill(BlitzUI.separator).frame(height: 1)
       switch navigation.storagePage {
       case .mac:
         MacStorageInventoryView(
@@ -33,50 +32,39 @@ struct BlitzStorageView: View {
             navigation.storagePage = .browse
           })
       case .browse:
-        HStack {
-          if showsLargestFiles {
-            Button("Back to folders", systemImage: "chevron.left") { showsLargestFiles = false }
-              .blitzButton(.quiet)
-          } else {
+        if !showsLargestFiles {
+          HStack(spacing: 12) {
             ScrollView(.horizontal, showsIndicators: false) {
-              HStack(spacing: 4) {
+              HStack(spacing: 2) {
                 ForEach(drives) { drive in
-                  Button {
-                    folders.open(drive.path)
-                  } label: {
-                    Label(
-                      drive.name,
-                      systemImage: drive.internalDisk ? "internaldrive" : "externaldrive")
-                  }.blitzButton(folders.path == drive.path ? .secondary : .quiet)
-                    .accessibilityLabel("Browse \(drive.name)")
+                  BlitzChip(
+                    title: drive.name,
+                    symbol: drive.internalDisk ? "internaldrive" : "externaldrive",
+                    isSelected: folders.path == drive.path, action: { folders.open(drive.path) })
                 }
-                Button("Home", systemImage: "house") { folders.open(folders.homePath) }
-                  .blitzButton(folders.path == folders.homePath ? .secondary : .quiet)
-                  .accessibilityLabel("Browse home folder")
-              }
-            }
-          }
-          Spacer()
-          if !showsLargestFiles {
-            Button("Largest files", systemImage: "arrow.down.to.line") {
+                BlitzChip(
+                  title: "Home", symbol: "house", isSelected: folders.path == folders.homePath,
+                  action: { folders.open(folders.homePath) })
+              }.blitzChipGroup()
+            }.fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 8)
+            Button("Largest files", systemImage: "list.number") {
               folders.cancelScan()
-              let roots = StorageDrives.roots
-              if Set(storage.overview.reviewRoots) != Set(roots) {
-                storage.overview.cancelScan()
-                storage.overview.configureReview(
-                  .init(
-                    roots: roots, minimumBytes: 100 * 1_024 * 1_024,
-                    maxEntries: 80_000, entireHierarchy: true))
-              }
               showsLargestFiles = true
             }.blitzButton(.secondary).fixedSize()
-              .help("Find the largest files across every connected drive")
-          }
-        }.padding(.horizontal, 24).padding(.top, 12)
+              .help("Rank individual files by size across drives. Your choice is remembered.")
+          }.padding(.horizontal, BlitzUI.pagePadding).padding(.top, 16)
+        }
         if showsLargestFiles {
-          LargeFileReviewView(model: storage.overview, monitor: monitor)
+          LargeFileReviewView(
+            model: storage.overview, monitor: monitor,
+            onBrowseFolders: {
+              storage.overview.cancelScan()
+              showsLargestFiles = false
+            })
         } else {
-          FolderExplorerView(model: folders)
+          FolderExplorerView(
+            model: folders, onManageSimulators: { navigation.storagePage = .cleanup })
         }
       case .cleanup:
         StorageCleanupView(
@@ -84,6 +72,21 @@ struct BlitzStorageView: View {
       }
     }
     .task { drives = StorageDrives.mounted() }
+  }
+}
+
+private struct StorageCapacityMeter: View {
+  let snapshot: SystemSnapshot
+
+  var body: some View {
+    VStack(alignment: .trailing, spacing: 6) {
+      HStack(alignment: .firstTextBaseline, spacing: 4) {
+        Text(ByteText.compact(snapshot.diskAvailable)).font(BlitzType.label)
+        Text("free of \(ByteText.compact(snapshot.diskTotal))").font(BlitzType.caption)
+          .foregroundStyle(BlitzUI.secondaryText)
+      }.monospacedDigit().lineLimit(1)
+      CapacityBar(usedRatio: snapshot.diskUsedRatio, tone: MenuBarTones.disk(snapshot))
+    }.accessibilityElement(children: .combine)
   }
 }
 
@@ -98,37 +101,41 @@ struct StorageCleanupView: View {
   @ObservedObject var caches: QuickCleanModel
   @ObservedObject var docker: DockerStorageModel
   let worktrees: WorktreeSources
+  @StateObject private var simulators = SimulatorDevicesModel()
   @State private var repeatPending: [RemovedEntry] = []
   @State private var worktreePending: DeveloperArtifact?
+
+  private var cacheDetail: String {
+    if caches.scannedAt == nil { return "Unused app and package caches" }
+    if caches.candidates.isEmpty { return "Nothing unused for at least 7 days" }
+    return "\(caches.candidates.count) unused for at least 7 days"
+  }
 
   var body: some View {
     ScrollView {
       LazyVStack(alignment: .leading, spacing: 12) {
+        CleanupScanBar(
+          storage: storage, caches: caches, docker: docker, simulators: simulators,
+          repeats: storage.repeats, worktrees: worktrees.model)
+        SimulatorDevicesView(model: simulators, history: storage.overview)
         RemovedBeforeView(model: storage.repeats, pending: $repeatPending)
-        HStack {
-          if storage.isScanning {
-            ProgressView().controlSize(.small)
-            Text("Checking project activity and build data…")
-          } else if let date = storage.scannedAt {
-            Text("Scanned \(date.formatted(date: .abbreviated, time: .shortened))")
-          }
-          Spacer()
-          Button("Scan again") { storage.scan() }
-            .disabled(storage.isScanning || storage.isCleaning)
-        }.font(.system(size: 12)).foregroundStyle(.secondary)
         BlitzStorageSection(
           title: "Caches", symbol: "archivebox",
-          detail: caches.scannedAt == nil
-            ? "Unused app and package caches"
-            : "\(ByteText.full(caches.totalBytes)) · \(caches.candidates.count) unused caches"
+          detail: cacheDetail,
+          trailing: caches.scannedAt == nil || caches.candidates.isEmpty
+            ? nil : ByteText.full(caches.totalBytes),
+          showsContent: caches.scannedAt == nil || caches.isScanning
+            || !caches.candidates.isEmpty
         ) {
           QuickCleanView(model: caches, history: storage.overview)
         }
         DeveloperCleanupView(model: storage)
         BlitzStorageSection(
           title: "Docker", symbol: "shippingbox",
-          detail: docker.snapshot.map { "\(ByteText.full($0.rebuildableBytes)) reclaimable" }
-            ?? "Unused images and build cache"
+          detail: docker.snapshot == nil
+            ? "Unused images and build cache" : "Reclaimable · containers and volumes protected",
+          trailing: docker.snapshot.map { ByteText.full($0.rebuildableBytes) },
+          showsContent: true
         ) {
           DockerStorageView(model: docker)
         }
@@ -166,26 +173,83 @@ struct StorageCleanupView: View {
   }
 }
 
+/// The Cleanup page's single refresh: every section rescans together.
+private struct CleanupScanBar: View {
+  @ObservedObject var storage: StorageBreakdownModel
+  @ObservedObject var caches: QuickCleanModel
+  @ObservedObject var docker: DockerStorageModel
+  @ObservedObject var simulators: SimulatorDevicesModel
+  @ObservedObject var repeats: RepeatCleanupModel
+  @ObservedObject var worktrees: DeveloperBrowserModel
+
+  private var isScanning: Bool {
+    storage.isScanning || caches.isScanning || docker.isRefreshing || simulators.isRefreshing
+      || repeats.isChecking || worktrees.isScanning
+  }
+
+  private var isBusy: Bool {
+    storage.isCleaning || caches.isCleaning || docker.isCleaning || simulators.busyID != nil
+      || !repeats.removing.isEmpty || !worktrees.deleting.isEmpty
+  }
+
+  var body: some View {
+    HStack(spacing: 8) {
+      if isScanning {
+        ProgressView().controlSize(.small)
+        Text("Scanning devices, caches, projects, Docker, and worktrees…")
+      } else if let date = storage.scannedAt {
+        Text("Scanned \(date.formatted(date: .abbreviated, time: .shortened))")
+      }
+      Spacer()
+      if worktrees.isScanning {
+        Button("Stop worktree scan") { worktrees.cancel() }.blitzButton(.quiet)
+          .controlSize(.small)
+      }
+      Button("Scan again") { scanAll() }.blitzButton(.secondary).controlSize(.small)
+        .disabled(isScanning || isBusy)
+    }.font(BlitzType.caption).foregroundStyle(BlitzUI.secondaryText)
+  }
+
+  private func scanAll() {
+    storage.scan()
+    caches.scan()
+    docker.refresh()
+    repeats.check(force: true)
+    worktrees.scan()
+    Task { await simulators.refresh() }
+  }
+}
+
 struct BlitzStorageSection<Content: View>: View {
   let title: String
   let symbol: String
   let detail: String
+  /// Total for the section, absent until it has been measured.
+  let trailing: String?
+  /// False when the section has nothing to act on; the header alone states that.
+  let showsContent: Bool
   @ViewBuilder let content: Content
 
   var body: some View {
     VStack(spacing: 0) {
       HStack(spacing: 12) {
-        Image(systemName: symbol).frame(width: 24).foregroundStyle(.secondary)
+        Image(systemName: symbol).frame(width: 24).foregroundStyle(BlitzUI.secondaryText)
         VStack(alignment: .leading, spacing: 4) {
-          Text(title).font(.system(size: 14, weight: .medium))
-          Text(detail).font(.system(size: 12)).foregroundStyle(.secondary)
+          Text(title).font(BlitzType.headline)
+          Text(detail).font(BlitzType.body).foregroundStyle(BlitzUI.secondaryText)
             .lineLimit(1).truncationMode(.middle)
         }
         Spacer()
+        if let trailing {
+          Text(trailing).font(BlitzType.rowTitle).monospacedDigit()
+            .foregroundStyle(BlitzUI.primaryText)
+        }
       }.padding(16).frame(maxWidth: .infinity, minHeight: 64, alignment: .leading)
         .accessibilityElement(children: .combine).accessibilityAddTraits(.isHeader)
-      Divider()
-      content
+      if showsContent {
+        BlitzRowDivider(leading: 0)
+        content
+      }
     }.blitzTable()
   }
 }

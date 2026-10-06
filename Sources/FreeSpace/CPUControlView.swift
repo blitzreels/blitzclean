@@ -13,7 +13,7 @@ struct CPUControlView: View {
             Text(monitor.snapshot.cpuUsage.map(PercentText.make) ?? "—")
               .font(BlitzUI.valueFont).monospacedDigit()
             Text("\(ProcessInfo.processInfo.activeProcessorCount) cores")
-              .font(.system(size: 12)).foregroundStyle(.secondary)
+              .font(BlitzType.body).foregroundStyle(BlitzUI.secondaryText)
             Spacer()
             HistoryRangePicker(seconds: $seconds)
           }
@@ -23,37 +23,36 @@ struct CPUControlView: View {
           .frame(height: 130)
           .help("Total CPU usage across all cores, from 0 to 100%")
           if monitor.snapshot.thermalStatus != .nominal {
-            Text("Thermals: \(monitor.snapshot.thermalStatus.title)")
-              .font(.system(size: 12)).foregroundStyle(.orange)
+            BlitzStatusBadge(
+              title: "Thermals: \(monitor.snapshot.thermalStatus.title)", tone: .warning)
           }
         }.panelCard(padding: 20)
-        HStack {
-          Text("Processes").font(.system(size: 13, weight: .semibold))
-          Spacer()
-          Button("Activity Monitor") {
+        let processes = monitor.topCPUProcesses
+        BlitzSectionHeader(title: "Processes", count: nil) {
+          Button("Open Activity Monitor") {
             NSWorkspace.shared.open(
               URL(fileURLWithPath: "/System/Applications/Utilities/Activity Monitor.app"))
-          }.buttonStyle(BlitzButtonStyle(.quiet))
-        }
-        if monitor.topCPUProcesses.isEmpty {
-          ContentUnavailableView("Measuring CPU activity…", systemImage: "cpu")
-            .frame(maxWidth: .infinity)
+          }.blitzButton(.quiet).controlSize(.small)
         }
         LazyVStack(spacing: 0) {
-          ForEach(monitor.topCPUProcesses) { process in
+          if processes.isEmpty {
+            BlitzEmptyRow(text: "Measuring CPU activity…", isLoading: true)
+          }
+          ForEach(processes) { process in
             HStack(spacing: 12) {
               ApplicationIcon(source: .process(process.id), size: 28, fallback: "terminal")
-              Text(process.name).font(.system(size: 13)).lineLimit(1)
+              Text(process.name).font(BlitzType.rowTitle).lineLimit(1)
               Spacer()
-              Text(String(format: "%.1f%%", process.percent))
-                .font(.system(size: 13, weight: .medium)).monospacedDigit()
+              BlitzTrailingValue(
+                value: process.percent.formatted(.number.precision(.fractionLength(1))) + "%",
+                detail: nil)
             }.blitzRow()
               .help("PID \(process.id)")
-            if process.id != monitor.topCPUProcesses.last?.id { BlitzRowDivider(leading: 56) }
+            if process.id != processes.last?.id { BlitzRowDivider(leading: 56) }
           }
         }.blitzTable()
         Text("100% per process equals one core. macOS restricts access to some processes.")
-          .font(.system(size: 11)).foregroundStyle(.secondary)
+          .font(BlitzType.caption).foregroundStyle(BlitzUI.secondaryText)
       }.padding(BlitzUI.pagePadding)
     }
   }

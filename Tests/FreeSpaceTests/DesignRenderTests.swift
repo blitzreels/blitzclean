@@ -30,7 +30,8 @@ struct DesignRenderTests {
 
     let navigation = CleanNavigation(try #require(UserDefaults(suiteName: "nav-\(UUID())")))
     let services = DashboardServices(
-      recovery: recovery, docker: DockerStorageModel(), folders: FolderExplorerModel(),
+      recovery: recovery, permissions: PermissionsModel(), docker: DockerStorageModel(),
+      folders: FolderExplorerModel(),
       launchAtLogin: LaunchAtLoginController())
     let processes = DevProcessModel()
     processes.refresh()
@@ -47,6 +48,10 @@ struct DesignRenderTests {
       )
       try await write(view, to: directory.appendingPathComponent("\(page.rawValue).png"))
     }
+    try await write(
+      BlitzTrayView(
+        monitor: monitor, memory: memory, recovery: recovery, navigation: navigation),
+      to: directory.appendingPathComponent("Tray.png"), size: .init(width: 340, height: 640))
     let storage = StorageBreakdownModel()
     try await write(
       StorageCleanupView(
@@ -55,18 +60,21 @@ struct DesignRenderTests {
           model: DeveloperBrowserModel(), processes: processes, workspaces: WorkspaceController())
       )
       .background(BlitzUI.canvasBackground).environment(\.colorScheme, .dark),
-      to: directory.appendingPathComponent("Storage cleanup.png"), wait: .seconds(20), height: 2600)
+      to: directory.appendingPathComponent("Storage cleanup.png"), wait: .seconds(20),
+      size: .init(width: 1080, height: 2600))
     try await write(
       MacStorageInventoryView(model: storage, onBrowse: { _ in })
         .background(BlitzUI.canvasBackground).environment(\.colorScheme, .dark),
-      to: directory.appendingPathComponent("Storage inventory.png"), height: 1400)
+      to: directory.appendingPathComponent("Storage inventory.png"),
+      size: .init(width: 1080, height: 1400))
   }
 
   private func write(
-    _ view: some View, to url: URL, wait: Duration = .seconds(2), height: CGFloat = 760
+    _ view: some View, to url: URL, wait: Duration = .seconds(2),
+    size: CGSize = .init(width: 1080, height: 760)
   ) async throws {
-    let host = NSHostingView(rootView: view.frame(width: 1080, height: height))
-    host.frame = NSRect(x: 0, y: 0, width: 1080, height: height)
+    let host = NSHostingView(rootView: view.frame(width: size.width, height: size.height))
+    host.frame = NSRect(origin: .zero, size: size)
     let window = NSWindow(
       contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
     window.appearance = NSAppearance(named: .darkAqua)
@@ -74,7 +82,12 @@ struct DesignRenderTests {
     window.orderFrontRegardless()
     try await Task.sleep(for: wait)
     host.layoutSubtreeIfNeeded()
-    let rep = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+    let rep = try #require(
+      NSBitmapImageRep(
+        bitmapDataPlanes: nil, pixelsWide: Int(size.width * 2), pixelsHigh: Int(size.height * 2),
+        bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+        colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+    rep.size = size
     host.cacheDisplay(in: host.bounds, to: rep)
     window.orderOut(nil)
     let data = try #require(rep.representation(using: .png, properties: [:]))

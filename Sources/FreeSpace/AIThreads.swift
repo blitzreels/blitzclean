@@ -12,7 +12,7 @@ enum AITool: String, Equatable, Sendable {
     switch self {
     case .claudeCode: "Claude Code"
     case .codexCLI: "Codex CLI"
-    case .codexDesktop: "Codex thread"
+    case .codexDesktop: "Codex workers"
     case .cursorAgent: "Cursor agent"
     case .otherAgent: "AI agent"
     }
@@ -42,8 +42,33 @@ struct AIThread: Identifiable, Equatable, Sendable {
   let isPaused: Bool
   /// The process that launched this thread has exited; nothing will close it.
   let isDetached: Bool
+  var sessionTitle: String? = nil
+  var sessionID: String? = nil
+  var hostName: String? = nil
+  var delegatedTools: [String] = []
 
   var project: String? { directory.map { URL(fileURLWithPath: $0).lastPathComponent } }
+
+  var displayName: String {
+    sessionTitle ?? project ?? name
+  }
+
+  var identityDetail: String {
+    var parts = displayName == tool.title ? [] : [tool.title]
+    if sessionTitle != nil, let project { parts.append(project) }
+    if !delegatedTools.isEmpty {
+      parts.append("includes \(delegatedTools.joined(separator: ", "))")
+    }
+    if let hostName { parts.append(hostName) }
+    if let processID = processIDs.first { parts.append("PID \(processID)") }
+    return parts.joined(separator: " · ")
+  }
+
+  func matches(_ query: String) -> Bool {
+    query.isEmpty
+      || [displayName, identityDetail, directory ?? "", sessionID ?? ""]
+        .contains { $0.localizedCaseInsensitiveContains(query) }
+  }
 }
 
 struct AIThreadInput: Sendable {
@@ -174,13 +199,37 @@ enum AIThreadGrouping {
     )
       -> AIThread
     {
-      AIThread(
+      var thread = AIThread(
         id: key, tool: tool, name: name, directory: directory(ids), terminal: root?.terminal,
         startedAt: start(ids), processIDs: ids,
         memoryBytes: ids.reduce(0) { $0 + (input.footprints[$1] ?? 0) },
         cpuPercent: ids.reduce(0) { $0 + (records[$1]?.cpuPercent ?? 0) },
         isPaused: !ids.isEmpty && Set(ids).isSubset(of: input.stoppedIDs),
         isDetached: root.map { $0.parentProcessID == 1 && $0.terminal == nil } ?? false)
+      thread.delegatedTools = Array(
+        Set(
+          ids.compactMap { pid -> String? in
+            switch roles[pid] {
+            case .root(let childTool) where childTool != tool:
+              return childTool.title
+            case .desktopHost where tool != .codexDesktop:
+              return "Codex"
+            default:
+              return nil
+            }
+          })
+      ).sorted()
+      var ancestor = root?.parentProcessID
+      var visited: Set<Int32> = []
+      while let pid = ancestor, visited.insert(pid).inserted, let parent = records[pid] {
+        let executable = executableName(parent.arguments).lowercased()
+        if executable == "cmux" || parent.arguments.contains("/cmux.app/") {
+          thread.hostName = "cmux"
+          break
+        }
+        ancestor = parent.parentProcessID
+      }
+      return thread
     }
 
     var threads: [AIThread] = []
@@ -194,6 +243,7 @@ enum AIThreadGrouping {
         let name = tool == .otherAgent ? executableName(record.arguments) : tool.title
         threads.append(make("\(tool.rawValue)-\(processID)-\(start)", tool, name, record, ids))
       case .desktopHost:
+        guard !claimed(processID) else { continue }
         let kids = children[processID, default: []].compactMap { records[$0] }.sorted {
           (input.startTimes[$0.processID] ?? 0) < (input.startTimes[$1.processID] ?? 0)
         }
@@ -259,7 +309,13 @@ enum AIThreadStopper {
         let current = DevProcessIdentity.read(processID), expected.matches(current),
         current.process.owner == getuid()
       else { continue }
-      if Darwin.kill(processID, signal.value) == 0 { signaled += 1 }
+      guard Darwin.kill(processID, signal.value) == 0 else { continue }
+      signaled += 1
+      if signal == .quit, current.process.stopped,
+        let latest = DevProcessIdentity.read(processID), expected.matches(latest)
+      {
+        _ = Darwin.kill(processID, SIGCONT)
+      }
     }
     return signaled
   }

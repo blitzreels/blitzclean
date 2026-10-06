@@ -421,7 +421,12 @@ struct DevProcessScanner: Sendable {
       cpuProcesses: CPUProcessRanking.ranked(
         .init(records: cpuRecords, workingDirectories: workingDirectories)),
       identities: identities,
-      threads: threads,
+      threads: AIThreadNames.enrich(
+        .init(
+          threads: threads, records: records,
+          startTimes: identities.mapValues {
+            Double($0.process.startSeconds) + Double($0.process.startMicroseconds) / 1_000_000
+          }, home: FileManager.default.homeDirectoryForCurrentUser)),
       resources: resources, workspaceRoots: roots,
       incomplete: recordResult.status != 0 || portResult.status < 0)
   }
@@ -554,9 +559,9 @@ final class DevProcessModel: ObservableObject {
       return
     }
 
-    let timer = Timer(timeInterval: 8, repeats: true) { [weak self] _ in
+    let timer = Timer(timeInterval: 2, repeats: true) { [weak self] _ in
       Task { @MainActor in
-        self?.refresh()
+        if NSApp?.isActive == true { self?.refresh() } else { self?.refreshIfStale() }
       }
     }
     RunLoop.main.add(timer, forMode: .common)
@@ -564,7 +569,7 @@ final class DevProcessModel: ObservableObject {
   }
 
   func refreshIfStale() {
-    if let scannedAt, Date().timeIntervalSince(scannedAt) < 8 {
+    if let scannedAt, Date().timeIntervalSince(scannedAt) < (NSApp?.isActive == true ? 2 : 8) {
       return
     }
 
@@ -606,6 +611,25 @@ final class DevProcessModel: ObservableObject {
       updateProjectTargets()
       if pressure.risk < .warning { probeStalePorts() }
     }
+  }
+
+  private struct ProjectCacheKey: Equatable {
+    let scannedAt: Date?
+    let preferences: [WorkspacePreference]
+  }
+
+  private var projectCache: (key: ProjectCacheKey, projects: [WorkspaceProject])?
+
+  /// Resolved projects for the latest scan, reused until a new scan or preference change.
+  func projects(_ preferences: [WorkspacePreference]) -> [WorkspaceProject] {
+    let key = ProjectCacheKey(scannedAt: scannedAt, preferences: preferences)
+    if let projectCache, projectCache.key == key { return projectCache.projects }
+    let projects = WorkspaceCatalog.resolvedProjects(
+      .init(
+        input: .init(resources: resources, processes: processes, preferences: preferences),
+        roots: workspaceRoots))
+    projectCache = (key, projects)
+    return projects
   }
 
   func updateProjectTargets() {
@@ -786,7 +810,7 @@ final class DevProcessModel: ObservableObject {
     let request = AIThreadStopRequest(
       thread: thread, expected: identities.filter { thread.processIDs.contains($0.key) },
       force: signal == .forceQuit)
-    let label = [thread.name, thread.project].compactMap { $0 }.joined(separator: " · ")
+    let label = thread.displayName
     Task { [weak self] in
       let outcome = await Task.detached(priority: .userInitiated) { () async -> String? in
         guard AIThreadStopper.signal(request, signal) > 0 else { return nil }
@@ -817,9 +841,13 @@ final class DevProcessModel: ObservableObject {
       threadMessage =
         switch (signal, outcome) {
         case (_, nil): "\(label) already exited or changed. The list is refreshed."
-        case (.pause, "paused"), (.pause, "pause-pending"):
+        case (.pause, "paused"):
           "\(label) paused · CPU stopped, \(ByteText.full(thread.memoryBytes)) RAM still held. Resume when you want it back."
-        case (.resume, _): "\(label) resumed"
+        case (.pause, "pause-pending"):
+          "Pause requested for \(label). Some local processes have not stopped yet."
+        case (.resume, "resumed"): "\(label) resumed"
+        case (.resume, "resume-pending"):
+          "Resume requested for \(label). Checking the local processes."
         case (.forceQuit, "quit"):
           "\(label) force quit · it was using \(ByteText.full(thread.memoryBytes))"
         case (.quit, "quit"):

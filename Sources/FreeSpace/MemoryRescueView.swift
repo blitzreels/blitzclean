@@ -5,6 +5,7 @@ struct MemoryGuardControls: View {
   @ObservedObject var model: MemoryRescueModel
 
   var body: some View {
+    let anyAlert = model.alertsEnabled || model.diskAlertsEnabled
     VStack(alignment: .leading, spacing: 9) {
       Toggle(
         "Memory alerts",
@@ -16,22 +17,15 @@ struct MemoryGuardControls: View {
         isOn: Binding(
           get: { model.diskAlertsEnabled }, set: { model.setDiskAlertsEnabled($0) }
         ))
-      Text(
-        model.alertsEnabled || model.diskAlertsEnabled
-          ? model.notificationStatus : "Alerts paused; monitoring continues"
-      )
-      .font(.caption).foregroundStyle(.secondary)
+      Text(anyAlert ? model.notificationStatus : "Alerts paused; monitoring continues")
+        .font(BlitzType.caption).foregroundStyle(BlitzUI.secondaryText)
       HStack {
-        Button("Test alert") { Task { await model.testNotification() } }
-        Button("Notification settings") {
-          if let url = URL(
-            string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension")
-          {
-            NSWorkspace.shared.open(url)
-          }
-        }
-      }.padding(.top, 4).controlSize(.small)
+        Button("Send test alert") { Task { await model.testNotification() } }
+          .disabled(!anyAlert)
+        Button("Notification settings…") { SystemSettingsPane.notifications.open() }
+      }.blitzButton(.quiet).controlSize(.small).padding(.top, 4)
     }
+    .toggleStyle(BlitzSwitchStyle()).font(BlitzType.callout)
     .panelCard()
   }
 }

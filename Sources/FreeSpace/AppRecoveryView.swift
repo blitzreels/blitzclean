@@ -14,64 +14,71 @@ struct AppRecoveryView: View {
     liveApps
   }
 
-  private var rows: [ReviveRow] {
-    eligibleApps.map { ReviveRow(app: $0, model: model) }
+  /// Built once per render: every row needs three model lookups, and the page redraws every 2 seconds.
+  private struct Listing {
+    let attention: [ReviveRow]
+    let others: [ReviveRow]
+    let crashes: [RecentCrash]
+    let stoppedApps: [MemoryApp]
+    let isReviving: Bool
   }
 
-  private var visibleRows: [ReviveRow] {
-    rows.filter { search.isEmpty || $0.app.name.localizedCaseInsensitiveContains(search) }
-  }
-
-  private var visibleCrashes: [RecentCrash] {
-    model.crashes.filter { search.isEmpty || $0.name.localizedCaseInsensitiveContains(search) }
-  }
-
-  private var stoppedApps: [MemoryApp] {
-    rows.filter(\.isStopped).map(\.app)
+  private var listing: Listing {
+    let rows = eligibleApps.map { ReviveRow(app: $0, model: model) }
+    let visible =
+      search.isEmpty ? rows : rows.filter { $0.app.name.localizedCaseInsensitiveContains(search) }
+    return Listing(
+      attention: visible.filter(\.needsAttention),
+      others: visible.filter { !$0.needsAttention },
+      crashes: search.isEmpty
+        ? model.crashes
+        : model.crashes.filter { $0.name.localizedCaseInsensitiveContains(search) },
+      stoppedApps: rows.filter(\.isStopped).map(\.app),
+      isReviving: rows.contains(where: \.isReviving))
   }
 
   var body: some View {
-    VStack(spacing: 0) {
+    let listing = listing
+    return VStack(spacing: 0) {
       BlitzPageHeader(title: "Revive apps", detail: summary) {
         Button {
           scan(force: true)
         } label: {
           Label("Check again", systemImage: "arrow.clockwise")
         }.blitzButton(.quiet).disabled(model.isScanning)
-        if !stoppedApps.isEmpty {
-          Button(
-            stoppedApps.count == 1 ? "Revive stopped app" : "Revive \(stoppedApps.count) stopped"
-          ) {
-            reviveAll()
-          }.blitzButton(.accent)
+        if listing.stoppedApps.count > 1 {
+          Button("Revive \(listing.stoppedApps.count) stopped") {
+            reviveAll(listing.stoppedApps)
+          }.blitzButton(.accent).disabled(listing.isReviving)
         }
       }
       Rectangle().fill(BlitzUI.separator).frame(height: 1)
       ScrollView {
         VStack(alignment: .leading, spacing: 24) {
-          if !model.accessibilityEnabled { accessibilityNotice }
-          if let status = model.status {
-            Text(status).font(BlitzType.body).foregroundStyle(BlitzUI.supportingText)
-              .textSelection(.enabled)
+          if let status = model.status { BlitzStatusLine(text: status, tone: .working) }
+          if !listing.attention.isEmpty {
+            section((title: "Stopped or frozen", count: listing.attention.count)) {
+              appRows(listing.attention)
+            }
           }
-          let attention = visibleRows.filter(\.needsAttention)
-          if !attention.isEmpty {
-            section("Stopped or frozen", count: attention.count) { appRows(attention) }
-          }
-          let others = visibleRows.filter { !$0.needsAttention }
-          if !others.isEmpty {
+          if !listing.others.isEmpty {
             section(
-              attention.isEmpty && visibleCrashes.isEmpty ? nil : "Running",
-              count: others.count
-            ) { appRows(others) }
-          } else if attention.isEmpty && visibleCrashes.isEmpty {
-            emptyState
+              (
+                title: listing.attention.isEmpty && listing.crashes.isEmpty ? nil : "Running",
+                count: listing.others.count
+              )
+            ) { appRows(listing.others) }
+          } else if listing.attention.isEmpty && listing.crashes.isEmpty {
+            Text(search.isEmpty ? "No running apps to check" : "No matching apps")
+              .font(BlitzType.body).foregroundStyle(BlitzUI.secondaryText)
+              .frame(maxWidth: .infinity, minHeight: 56)
           }
-          if !visibleCrashes.isEmpty {
-            section("Quit or crashed", count: visibleCrashes.count) {
-              ForEach(visibleCrashes) { crash in
+          if !listing.crashes.isEmpty {
+            let lastID = listing.crashes.last?.id
+            section((title: "Quit or crashed", count: listing.crashes.count)) {
+              ForEach(listing.crashes) { crash in
                 crashRow(crash)
-                if crash.id != visibleCrashes.last?.id { BlitzRowDivider() }
+                if crash.id != lastID { BlitzRowDivider() }
               }
             }
           }
@@ -79,9 +86,7 @@ struct AppRecoveryView: View {
         .padding(BlitzUI.pagePadding)
       }
       .safeAreaInset(edge: .top, spacing: 0) {
-        BlitzSearchField(title: "Search apps", text: $search)
-          .padding(.horizontal, BlitzUI.pagePadding).padding(.vertical, 12)
-          .background(BlitzUI.canvasBackground)
+        PageSearchBar(title: "Search apps", text: $search)
       }
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -131,73 +136,35 @@ struct AppRecoveryView: View {
   }
 
   private var summary: String? {
-    if model.isScanning {
-      return "Checking \(model.scannedCount) of \(model.scanTotal) apps…"
-    }
-    return "App list updates every 2 seconds"
-  }
-
-  private var accessibilityNotice: some View {
-    HStack(spacing: 12) {
-      Image(systemName: "hand.raised.fill").font(.system(size: 15, weight: .medium))
-        .foregroundStyle(BlitzUI.warning).frame(width: 28)
-      VStack(alignment: .leading, spacing: 2) {
-        Text("Detect frozen windows").font(BlitzType.rowTitle)
-        Text("Allow Accessibility so \(AppBrand.name) can tell when an app stops responding.")
-          .font(BlitzType.body).foregroundStyle(BlitzUI.secondaryText)
-      }
-      Spacer(minLength: 12)
-      Button("Allow…") { model.openAccessibilitySettings() }.blitzButton(.secondary)
-    }.panelCard()
-  }
-
-  private var emptyState: some View {
-    VStack(spacing: 6) {
-      Text(search.isEmpty ? "No apps to check" : "No matching apps").font(BlitzType.section)
-      Text(search.isEmpty ? "Running apps appear here." : "Try another name.")
-        .font(BlitzType.body).foregroundStyle(BlitzUI.secondaryText)
-    }.frame(maxWidth: .infinity, minHeight: 160)
+    model.isScanning ? "Checking \(model.scannedCount) of \(model.scanTotal) apps…" : nil
   }
 
   private func section<Content: View>(
-    _ title: String?, count: Int, @ViewBuilder content: () -> Content
+    _ header: (title: String?, count: Int), @ViewBuilder content: () -> Content
   ) -> some View {
     VStack(alignment: .leading, spacing: 10) {
-      if let title {
-        HStack(spacing: 6) {
-          Text(title).font(BlitzType.section)
-          Text("\(count)").font(BlitzType.caption).monospacedDigit()
-            .foregroundStyle(BlitzUI.tertiaryText)
-        }
+      if let title = header.title {
+        BlitzSectionHeader(title: title, count: header.count) {}
       }
       LazyVStack(spacing: 0) { content() }.blitzTable()
     }
   }
 
   private func appRows(_ rows: [ReviveRow]) -> some View {
-    ForEach(rows) { row in
+    let lastID = rows.last?.id
+    return ForEach(rows) { row in
       appRow(row)
-      if row.id != rows.last?.id { BlitzRowDivider() }
+      if row.id != lastID { BlitzRowDivider() }
     }
   }
 
   private func appRow(_ row: ReviveRow) -> some View {
     let app = row.app
     return HStack(spacing: 12) {
-      AppMemoryIcon(app: app)
-      VStack(alignment: .leading, spacing: 2) {
-        Text(app.name).font(BlitzType.rowTitle).lineLimit(1)
-        if let detail = row.detail {
-          Text(detail).font(BlitzType.caption).foregroundStyle(BlitzUI.secondaryText)
-            .lineLimit(1).help(detail)
-        }
-        if let message = memory.quitMessages[app.id] {
-          Text(message).font(BlitzType.caption).foregroundStyle(BlitzUI.warning)
-            .fixedSize(horizontal: false, vertical: true)
-        }
-      }.frame(maxWidth: .infinity, alignment: .leading)
-      Text(app.memoryBytes == 0 ? "—" : ByteText.full(app.memoryBytes)).font(BlitzType.numeric)
-        .foregroundStyle(BlitzUI.secondaryText).frame(width: 80, alignment: .trailing)
+      AppRowIdentity(app: app, detail: row.detail, warning: memory.quitMessages[app.id])
+      BlitzTrailingValue(
+        value: app.memoryBytes == 0 ? "—" : ByteText.full(app.memoryBytes), detail: nil
+      ).frame(width: 80, alignment: .trailing)
       ReviveStatusView(row: row).frame(width: 136, alignment: .trailing)
         .help(row.help(accessibilityEnabled: model.accessibilityEnabled))
       BlitzProcessButton(title: "Revive", label: "Revive \(app.name)", isBusy: row.isReviving) {
@@ -212,8 +179,7 @@ struct AppRecoveryView: View {
 
   private func crashRow(_ crash: RecentCrash) -> some View {
     HStack(spacing: 12) {
-      Image(nsImage: NSWorkspace.shared.icon(forFile: crash.bundleURL.path))
-        .resizable().frame(width: 28, height: 28).accessibilityHidden(true)
+      ApplicationIcon(source: .file(crash.bundleURL.path), size: 28, fallback: "app")
       VStack(alignment: .leading, spacing: 2) {
         Text(crash.name).font(BlitzType.rowTitle).lineLimit(1)
         Text(
@@ -257,8 +223,7 @@ struct AppRecoveryView: View {
     }
   }
 
-  private func reviveAll() {
-    let apps = stoppedApps
+  private func reviveAll(_ apps: [MemoryApp]) {
     Task {
       for report in await model.reviveAll(apps) { memory.recordRecovery(report) }
     }
@@ -267,11 +232,7 @@ struct AppRecoveryView: View {
   private func runForceQuit(_ app: MemoryApp) {
     forceQuitCandidate = nil
     Task {
-      if let report = await forceQuit.run(app) {
-        model.status =
-          report.outcome == .terminated
-          ? "\(app.name) was force quit." : "\(app.name): \(report.detail)"
-      }
+      if let message = await forceQuit.runAndDescribe(app) { model.status = message }
       memory.refresh()
       refreshLiveApps()
       scheduleScan(force: true)

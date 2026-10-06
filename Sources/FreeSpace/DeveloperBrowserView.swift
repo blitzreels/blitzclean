@@ -8,36 +8,69 @@ struct WorktreeCleanupView: View {
   @ObservedObject var workspaces: WorkspaceController
   @Binding var pending: DeveloperArtifact?
 
-  private var items: [DeveloperArtifact] { model.artifacts.filter { $0.kind == .worktree } }
+  @State private var showsBlocked = false
 
-  private var removableBytes: UInt64 {
-    items.filter { blocker($0) == nil }.compactMap(\.bytes).reduce(0, +)
+  /// Each worktree's blocker, evaluated once per render.
+  private struct Listing {
+    let removable: [DeveloperArtifact]
+    let blocked: [(artifact: DeveloperArtifact, reason: String)]
+
+    var count: Int { removable.count + blocked.count }
   }
 
-  private var detail: String {
-    if model.isScanning && items.isEmpty { return "Looking for linked worktrees…" }
-    if items.isEmpty { return "No linked worktrees" }
-    return "\(items.count) linked · \(ByteText.full(removableBytes)) removable"
+  private var listing: Listing {
+    var removable: [DeveloperArtifact] = []
+    var blocked: [(artifact: DeveloperArtifact, reason: String)] = []
+    for artifact in model.artifacts where artifact.kind == .worktree {
+      if let reason = blocker(artifact) {
+        blocked.append((artifact, reason))
+      } else {
+        removable.append(artifact)
+      }
+    }
+    return Listing(removable: removable, blocked: blocked)
+  }
+
+  private func detail(_ listing: Listing) -> String {
+    if model.isScanning && listing.count == 0 { return "Looking for linked worktrees…" }
+    if listing.count == 0 { return "No linked worktrees" }
+    let removable = listing.removable.isEmpty ? "none" : "\(listing.removable.count)"
+    return "\(listing.count) linked · \(removable) removable"
   }
 
   var body: some View {
-    BlitzStorageSection(title: "Worktrees", symbol: "arrow.triangle.branch", detail: detail) {
+    let listing = listing
+    let removableBytes = listing.removable.compactMap(\.bytes).reduce(0, +)
+    BlitzStorageSection(
+      title: "Worktrees", symbol: "arrow.triangle.branch", detail: detail(listing),
+      trailing: listing.removable.isEmpty ? nil : ByteText.full(removableBytes),
+      showsContent: listing.count > 0 || model.isScanning
+    ) {
       VStack(spacing: 0) {
         HStack(spacing: 10) {
           Text(status).font(BlitzType.body).foregroundStyle(BlitzUI.secondaryText).lineLimit(2)
             .textSelection(.enabled)
           Spacer()
-          if model.isScanning {
-            ProgressView().controlSize(.small)
-            Button("Stop") { model.cancel() }.blitzButton(.quiet).controlSize(.small)
-          } else {
-            Button("Scan again") { model.scan() }.blitzButton(.quiet).controlSize(.small)
-              .disabled(!model.deleting.isEmpty)
-          }
+          if model.isScanning { ProgressView().controlSize(.small) }
         }.padding(.horizontal, 16).padding(.vertical, 12)
-        ForEach(items) { artifact in
+        ForEach(listing.removable) { artifact in
           BlitzRowDivider(leading: 16)
-          row(artifact)
+          row((artifact: artifact, blocker: nil))
+        }
+        if !listing.blocked.isEmpty {
+          BlitzRowDivider(leading: 16)
+          Button(
+            showsBlocked
+              ? "Hide worktrees that can't be removed"
+              : "Show \(listing.blocked.count) that can't be removed"
+          ) { showsBlocked.toggle() }
+          .blitzButton(.quiet).controlSize(.small).padding(.vertical, 8)
+          if showsBlocked {
+            ForEach(listing.blocked, id: \.artifact.id) { entry in
+              BlitzRowDivider(leading: 16)
+              row((artifact: entry.artifact, blocker: entry.reason))
+            }
+          }
         }
       }
     }
@@ -51,8 +84,9 @@ struct WorktreeCleanupView: View {
     return "Only merged worktrees can be removed. Their local branches stay."
   }
 
-  private func row(_ artifact: DeveloperArtifact) -> some View {
-    let reason = model.messages[artifact.id] ?? blocker(artifact)
+  private func row(_ input: (artifact: DeveloperArtifact, blocker: String?)) -> some View {
+    let artifact = input.artifact
+    let reason = model.messages[artifact.id] ?? input.blocker
     return HStack(spacing: 12) {
       TechnologyIcon(technology: artifact.technology, size: 28)
       VStack(alignment: .leading, spacing: 2) {
@@ -62,23 +96,20 @@ struct WorktreeCleanupView: View {
         Text(reason ?? merge(artifact)).font(BlitzType.caption)
           .foregroundStyle(reason == nil ? BlitzUI.tertiaryText : BlitzUI.warning).lineLimit(2)
       }.frame(maxWidth: .infinity, alignment: .leading)
-      Text(artifact.bytes.map(ByteText.full) ?? "—").font(BlitzType.numeric)
-        .foregroundStyle(BlitzUI.primaryText).frame(width: 96, alignment: .trailing)
+      BlitzTrailingValue(value: artifact.bytes.map(ByteText.full) ?? "—", detail: nil)
+        .frame(width: 96, alignment: .trailing)
       Group {
         if model.deleting.contains(artifact.id) {
           ProgressView().controlSize(.small)
         } else {
           Button("Remove…") { pending = artifact }.blitzButton(.secondary).controlSize(.small)
-            .disabled(blocker(artifact) != nil)
+            .disabled(input.blocker != nil)
         }
       }.frame(width: 124, alignment: .trailing)
       BlitzActionMenu(label: "More actions for \(artifact.name)") {
-        Button("Show in Finder") {
-          NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: artifact.path)])
-        }
+        Button("Show in Finder") { Finder.reveal(artifact.path) }
         Button("Copy path") {
-          NSPasteboard.general.clearContents()
-          NSPasteboard.general.setString(artifact.path, forType: .string)
+          Pasteboard.copy(artifact.path)
         }
       }
     }.padding(.horizontal, 16).padding(.vertical, 10)

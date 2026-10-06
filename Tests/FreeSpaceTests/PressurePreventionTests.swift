@@ -15,7 +15,6 @@ struct PressurePreventionTests {
         kill(process.processIdentifier, SIGCONT)
         process.terminate()
       }
-      process.waitUntilExit()
     }
     let identity = try #require(DevProcessIdentity.read(process.processIdentifier))
     let root = "/tmp/stop-fixture-\(UUID())"
@@ -182,8 +181,7 @@ struct PressurePreventionTests {
     try process.run()
     defer {
       kill(process.processIdentifier, SIGCONT)
-      process.terminate()
-      process.waitUntilExit()
+      if process.isRunning { process.terminate() }
     }
     let identity = try #require(DevProcessIdentity.read(process.processIdentifier))
     let target = ProjectPauseTarget(
@@ -207,7 +205,12 @@ struct PressurePreventionTests {
       directory: target.directory, name: target.name, cpuPercent: 0, memoryBytes: 0,
       identities: [identity], capturedAt: .now.addingTimeInterval(-60))
     #expect(ProjectPausePolicy.signal(.init(target: stale, resume: false)) == 0)
-
+    process.terminate()
+    let deadline = Date.now.addingTimeInterval(3)
+    while ProjectPausePolicy.remaining(target) > 0, Date.now < deadline {
+      try await Task.sleep(for: .milliseconds(25))
+    }
+    #expect(ProjectPausePolicy.remaining(target) == 0)
   }
 
   @Test func scanIncludesNestedBackgroundWorkersWithoutPorts() async throws {
@@ -222,8 +225,7 @@ struct PressurePreventionTests {
     process.currentDirectoryURL = child
     try process.run()
     defer {
-      process.terminate()
-      process.waitUntilExit()
+      if process.isRunning { process.terminate() }
       try? FileManager.default.removeItem(at: root)
     }
     let start = Date.now

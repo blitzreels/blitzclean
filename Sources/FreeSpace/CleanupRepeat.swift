@@ -314,17 +314,28 @@ final class RepeatCleanupModel: ObservableObject {
     (statuses[entry.id]?.bytes ?? 0) >= Self.backThreshold
   }
 
-  var regrown: [RemovedEntry] {
-    entries.filter(isBack).sorted {
-      (statuses[$0.id]?.bytes ?? 0) > (statuses[$1.id]?.bytes ?? 0)
-    }
+  /// Every derived list in one pass, so a render reads statuses once.
+  struct Summary {
+    let regrown: [RemovedEntry]
+    let ready: [RemovedEntry]
+    let regrownBytes: UInt64
+    let ordered: [RemovedEntry]
   }
 
-  var ready: [RemovedEntry] { regrown.filter { statuses[$0.id]?.blocker == nil } }
+  var summary: Summary {
+    var regrown: [RemovedEntry] = []
+    var rest: [RemovedEntry] = []
+    for entry in entries {
+      if isBack(entry) { regrown.append(entry) } else { rest.append(entry) }
+    }
+    regrown.sort { (statuses[$0.id]?.bytes ?? 0) > (statuses[$1.id]?.bytes ?? 0) }
+    return Summary(
+      regrown: regrown, ready: regrown.filter { statuses[$0.id]?.blocker == nil },
+      regrownBytes: regrown.reduce(0) { $0 + (statuses[$1.id]?.bytes ?? 0) },
+      ordered: regrown + rest)
+  }
 
-  var regrownBytes: UInt64 { regrown.reduce(0) { $0 + (statuses[$1.id]?.bytes ?? 0) } }
-
-  var ordered: [RemovedEntry] { regrown + entries.filter { !isBack($0) } }
+  var ready: [RemovedEntry] { summary.ready }
 
   /// Re-measures every entry, publishing each row as its size arrives.
   func check(force: Bool = false) {

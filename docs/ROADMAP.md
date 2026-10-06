@@ -1,7 +1,9 @@
 # Roadmap
 
-## Available in 1.1.0
+## Available in 1.2.0
 
+- A redesigned menu-bar panel with memory, CPU, storage, and the apps using the most memory.
+- One Settings setup section for Notifications, Accessibility, and Full Disk Access.
 - Persistent menu-bar monitoring and seven-day CPU/RAM charts.
 - Direct app recovery with refreshed health checks, Force Quit, and crash reopening.
 - Recursive directory browsing and largest-file ranking across connected local drives.
@@ -12,6 +14,7 @@
 
 ## Next
 
+- Show GPU-wired and system memory so local AI models are visible in Memory and the menu bar.
 - Automate notarization for every public download and add automatic updates.
 - Broader hardware coverage and accessibility audits.
 - More cache recipes backed by dedicated safety tests.

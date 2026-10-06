@@ -31,7 +31,9 @@ resolve the user's task, use shared components, preserve consequential states, a
   Navigation choices are not action buttons; keep category navigation separate from actions.
 - Align values on the trailing edge with monospaced digits. App and file names truncate before values or actions.
 - Keep a control's label stable while it runs. Show progress beside it and disable conflicting actions.
-- Show a shared permission explanation once. Individual rows show their measured state, not copies of the warning.
+- Permissions (Notifications, Accessibility, Full Disk Access) are requested only from Settings → Finish setup,
+  which lists the missing ones and disappears when all are granted; the Settings sidebar item badges the count.
+  Pages never show their own permission prompts. Individual rows show their measured state.
 - Use the action's actual consequence: Quit selected apps, Force Quit, Move to Trash, Delete selected caches.
   Single-app Quit, single-thread Quit, and single-project Stop run immediately, per the October 2 request.
   Keep identity checks and native save dialogs; confirm Force Quit, bulk termination, and file removal inline.
@@ -57,9 +59,9 @@ The redesign replaces the storage dial with a capacity bar and explicit free/use
 The sidebar has six pages (Overview, Memory, CPU, Storage, Revive apps, Projects) plus Settings. Pages removed in
 1.0.12 and where they went: AI workers and Processes into Memory (AI threads) and CPU, History into Memory's
 pressure section, Worktrees and Developer storage into Storage Cleanup, Project folders into Settings. Saved page
-names from older versions redirect through `CleanPage.restored`. The tray gear menu has only Settings and Quit.
-Overview shows storage, memory, CPU, then the AI threads using the most RAM. Pause (SIGSTOP) is the
-available in the row menu so other threads can finish; it does not free RAM. Quit is the direct row action.
+names from older versions redirect through `CleanPage.restored`. The tray gear menu has Settings and Stop monitoring and quit.
+Overview shows storage, memory, CPU, then the AI sessions using the most RAM. Pause (SIGSTOP) and
+Resume (SIGCONT) are direct row actions. Quit and Force Quit are in the secondary menu.
 A header action pauses every thread except the largest. Suggestion rows only appear when something else
 is actionable: stopped or frozen apps, and folders that grew back.
 Recovery lists Stopped or frozen apps first, Running apps next, and Quit or crashed apps last. Each row shows its own
@@ -71,13 +73,13 @@ Revive remains available for every eligible running app, including apps with no 
 Each row has direct Revive and Force Quit actions; there is no action dropdown. Normal Quit stays in Memory.
 A responsive window returns an explicit result instead of silently removing the Revive action.
 The sidebar badge counts stopped and unresponsive apps from background process-state reads.
-Memory lists apps before AI threads, with a persistent search field above the scroll area. An AI thread is one agent session (Claude Code, Codex CLI, Cursor agent, or a
-Codex desktop thread grouped by launch time) with its tool servers, ranked by RAM. Its row has direct Quit (SIGTERM); Pause (SIGSTOP) and Resume (SIGCONT) live in its menu.
+Memory lists AI threads before apps, with a persistent search field above the scroll area. An AI thread is one agent session (Claude Code, Codex CLI, Cursor agent, or a
+Codex desktop thread grouped by launch time) with its tool servers, ranked by RAM. Its row has direct Pause/Resume; Quit (SIGTERM) lives in its menu.
 Pause keeps the RAM. Force Quit (SIGKILL) stays in the menu. A thread whose root was reparented to launchd without
 a terminal is marked Detached, and the section header offers to quit all detached threads. Each app row has Quit
 as its primary action and Force Quit in its menu. An explicit Quit skips suggestion-only guards (active, pinned,
 AI app) and still re-checks the process identity; macOS system apps and BlitzClean keep a lock instead of Quit.
-Storage Cleanup opens with Removed before: every folder removed earlier that tools rebuild (build output,
+Storage Cleanup includes Removed before: every folder removed earlier that tools rebuild (build output,
 dependencies, shared caches), its current size, and Remove again. Cleanup reports written by agents to
 `~/Library/Application Support/FreeSpace/reports/` are imported into the same history. The Removal log closes
 the page with every recorded removal.
@@ -142,6 +144,13 @@ The browser groups folders before files, preserving size ordering within each gr
 selects it or shows its path inline; it never launches Finder implicitly. Show in Finder is explicit.
 Home-folder files and user-created folders can be selected; core home folders and credential roots stay protected.
 
+Directory rows show proportional size bars against the largest item in the folder. Returning to a folder
+restores its saved listing immediately, including interrupted measurements. Refresh keeps prior sizes and
+bars until the new traversal finishes; a saved estimate uses ~ and a measured minimum uses ≥.
+Completed listings are reused for five minutes. Older or interrupted listings refresh in the background.
+The last 60 listings persist across app relaunch. Identity checks prevent replaced folders inheriting old sizes,
+and unavailable folders retain their saved listing with an inline explanation.
+
 ## October 2 live app recovery
 
 Revive uses the current macOS app roster, independent of the slower memory scan. Launch/exit notifications
@@ -152,3 +161,66 @@ Repeated Stop/Revive cycles are allowed without an arbitrary ten-second lock. Wi
 after half a second, with two observations before reporting a frozen window; recovery verification has a
 three-second budget. A resumed process is distinguished from a confirmed responsive window. Crash-report
 lookups run at most every 30 seconds. Force Quit keeps the inline unsaved-work confirmation.
+
+## October 3 AI session identity and direct pause
+
+Pause/Resume is the primary action in both Overview and Memory, with Quit and Force Quit in the row menu.
+Memory puts AI sessions immediately after its summary so the controls are easy to find.
+Rows show a verified local session title when available, then provider, project, delegated providers, terminal
+host and process ID. Search includes those identities. Claude launching Codex remains a Claude session
+with includes Codex CLI; cmux is the terminal host, never the AI provider.
+
+Claude PID metadata must match the process start time. Codex CLI titles require an explicit session ID or
+a single open rollout file. Cursor titles require an explicit session ID matching local metadata.
+Shared Codex desktop children remain launch-time worker groups, labeled Codex workers; the app does not
+guess individual chat titles from their folder or launch time. Pause affects local processes only; cloud
+generation can continue. No conversation bodies or encrypted message blobs are inspected for naming.
+
+## October 3 direct file ranking and simulator devices
+
+Browse keeps its initial directory default and remembers the last chosen folders/largest-files mode across relaunch.
+Largest files is a prominent action; file results follow a compact drive-scope header without a duplicate directory list.
+Process and AI-session snapshots refresh every two seconds in the foreground, with non-overlapping scans and slower
+background polling. Large-file rows use the shared icon cache.
+
+Cleanup starts with Simulated devices, loaded independently of the slower storage inventory.
+A booted device has Shut down; a shutdown device has Delete device with inline permanent-removal review.
+Deletion uses Apple's simulator service for the exact current device identity, verifies disappearance, and records
+the removal. Installed iOS runtimes stay available. Managed simulator directories link here with Manage devices;
+generic Trash is unavailable for those directories and their contents.
+
+## October 3 resident menu bar monitor
+
+The dashboard and monitoring have separate close actions, per the user's request.
+The red window button, Command-W, Command-Q, and Dock Quit close the dashboard while the monitor stays resident.
+The app menu calls Command-Q Close dashboard. Only the tray gear menu offers Stop monitoring and quit.
+System logout, restart, and shutdown remain normal termination paths; no relaunch loop or quit confirmation is added.
+
+Settings uses direct segments for the RAM value: Available GB, Used GB, or Used %.
+Available memory is the default, labeled free in the menu bar; used bytes are explicitly labeled used.
+The tray card follows the same saved choice, and unavailable readings use a dash.
+CPU remains a utilization percentage. Available RAM includes reclaimable memory, as described in the control's help.
+
+## October 6 tray and dashboard polish
+
+Applies [UI Skills](https://www.ui-skills.com/) baseline-ui and better-ui: one accent per view, tabular values,
+exceptions only, errors beside the action, and nested radii that match their padding.
+The tray is a 340-point panel: header with the gear menu, a pressure alert only when `PressureAssessment.risk`
+is above normal, a Memory tile (saved RAM display, 60-second plot, pressure badge only at warning or critical),
+CPU and Storage tiles, the three apps using the most memory (rows link to Memory without controls), and a footer
+with Revive apps (attention count) and Open dashboard. Every tile opens its page.
+`PressureAssessment.limit` names the limiting resource; disk alerts lead to Storage Cleanup with disk advice,
+memory and CPU alerts lead to Projects. The Overview banner is tinted by severity when actionable and a single
+status line otherwise. Storage location choices use `BlitzChip` inside `blitzChipGroup`; both Browse modes
+share one toolbar row with chips on the left and the mode switch on the right, and every Storage surface uses
+`BlitzUI.pagePadding`. Status text for a scan stays on one caption line.
+
+## October 6 shared components and permissions
+
+Shared views live in `BlitzComponents.swift`: `BlitzSectionHeader`, `BlitzEmptyRow`, `BlitzShowAllButton`,
+`BlitzStatusLine`, `BlitzTrailingValue`, `BlitzCountBadge`, `AppRowIdentity`, `PageSearchBar`, `MenuCheckLabel`,
+`StorageActionBar`, and the `Finder`/`Pasteboard` helpers. Row buttons use `BlitzRowButtonStyle`; whole cards use
+`BlitzCardButtonStyle` with `BlitzChevron`; alerts use `blitzToneCard`. Add to these before writing a new variant.
+Views derive filtered/sorted lists once per render and pass them down; app icons go through `ApplicationIcon`.
+`PermissionsModel` probes Full Disk Access; permission state refreshes whenever BlitzClean becomes active.
+Storage Cleanup has one page-level Scan again; sections do not carry their own refresh buttons.

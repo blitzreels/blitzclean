@@ -101,11 +101,7 @@ final class AppRecoveryModel: ObservableObject {
       [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
     accessibilityEnabled = AXIsProcessTrustedWithOptions(options)
     guard !accessibilityEnabled else { return }
-    if let url = URL(
-      string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
-    {
-      NSWorkspace.shared.open(url)
-    }
+    SystemSettingsPane.accessibility.open()
     permissionWait?.cancel()
     permissionWait = Task { [weak self] in
       for _ in 0..<180 {

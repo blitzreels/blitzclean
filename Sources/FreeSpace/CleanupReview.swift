@@ -303,6 +303,7 @@ struct ReviewDeleteRequest: Sendable {
 
 enum ReviewFileDeletion {
   static func canTrashPath(_ path: String) -> Bool {
+    guard !SimulatorDeviceService.isDevicePath(path) else { return false }
     let dataPrefix = "/System/Volumes/Data"
     let visible = path.hasPrefix(dataPrefix + "/") ? String(path.dropFirst(dataPrefix.count)) : path
     guard !visible.split(separator: "/").contains(where: { $0.hasSuffix(".app") }) else {

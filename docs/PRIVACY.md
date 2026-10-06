@@ -29,10 +29,17 @@ Process arguments are read locally to identify tools, but incident histories do 
 Developer browsing reads package manifests and Git metadata without fetching remote branches, querying GitHub, or running npx.
 Directory listings, recursive scans, duplicate hashing, and media processing run locally.
 
+AI session naming reads bounded local title indexes and Claude session identity records.
+For Codex CLI, an open rollout filename can identify the session; its conversation body is not read.
+Cursor metadata is read through a read-only database connection; message blobs and encryption keys are not used.
+Session titles stay in the live process list and are not added to monitoring history.
+
 No conversation contents, window text, environment variables, or stack dumps are collected into the monitoring history.
 A project or app name can itself be sensitive, so review exports before sharing.
 
 ## Permissions and connections
+
+Settings → **Finish setup** lists the permissions that are still missing; no page asks on its own.
 
 - Notifications are optional and used for resource-pressure alerts.
 - Files and Folders access can be required for protected locations; denied paths are reported.

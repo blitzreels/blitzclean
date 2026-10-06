@@ -61,6 +61,13 @@ enum CleanStoragePage: String, CaseIterable {
 }
 
 @MainActor
+extension OpenWindowAction {
+  @MainActor func dashboard() {
+    callAsFunction(id: "dashboard")
+    NSApp.activate(ignoringOtherApps: true)
+  }
+}
+
 final class CleanNavigation: ObservableObject {
   private let defaults: UserDefaults
   @Published var page: CleanPage {
@@ -81,10 +88,20 @@ final class CleanNavigation: ObservableObject {
     defaults.set(storagePage.rawValue, forKey: "navigation.storagePage")
   }
 
+  /// Opens the page that resolves the limiting resource.
+  func review(_ pressure: PressureAssessment) {
+    if pressure.limit == .disk {
+      storagePage = .cleanup
+      page = .storage
+    } else {
+      page = .projects
+    }
+  }
 }
 
 struct DashboardServices {
   let recovery: AppRecoveryModel
+  let permissions: PermissionsModel
   let docker: DockerStorageModel
   let folders: FolderExplorerModel
   let launchAtLogin: LaunchAtLoginController
@@ -103,7 +120,9 @@ struct BlitzDashboardView: View {
 
   var body: some View {
     HStack(spacing: 0) {
-      BlitzSidebar(navigation: navigation, recovery: services.recovery)
+      BlitzSidebar(
+        navigation: navigation, recovery: services.recovery, memory: memory,
+        permissions: services.permissions)
       Rectangle().fill(BlitzUI.separator).frame(width: 1)
       VStack(spacing: 0) {
         if navigation.page != .recovery {
@@ -123,6 +142,13 @@ struct BlitzDashboardView: View {
     .task {
       monitor.refresh()
       memory.refresh()
+    }
+    .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification))
+    {
+      _ in
+      services.permissions.refresh()
+      services.recovery.refreshPermission()
+      Task { await memory.configureNotifications(requestPermission: false) }
     }
     .onChange(of: memory.scannedAt) {
       guard navigation.page != .recovery else { return }
@@ -149,7 +175,9 @@ struct BlitzDashboardView: View {
     case .projects:
       WorkspaceProjectsView(processes: processes, controller: workspaces)
     case .settings:
-      BlitzSettingsView(memory: memory, launchAtLogin: services.launchAtLogin, storage: storage)
+      BlitzSettingsView(
+        memory: memory, launchAtLogin: services.launchAtLogin, storage: storage,
+        recovery: services.recovery, permissions: services.permissions)
     }
   }
 
@@ -158,6 +186,15 @@ struct BlitzDashboardView: View {
 private struct BlitzSidebar: View {
   @ObservedObject var navigation: CleanNavigation
   @ObservedObject var recovery: AppRecoveryModel
+  @ObservedObject var memory: MemoryRescueModel
+  @ObservedObject var permissions: PermissionsModel
+
+  private var missingPermissions: Int {
+    PermissionState(
+      notifications: memory.notificationsAllowed, accessibility: recovery.accessibilityEnabled,
+      fullDiskAccess: permissions.fullDiskAccess
+    ).missingCount
+  }
 
   private var selection: CleanPage { navigation.page }
 
@@ -192,11 +229,12 @@ private struct BlitzSidebar: View {
         Text(page.rawValue).font(BlitzType.callout).lineLimit(1)
         Spacer(minLength: 4)
         if page == .recovery, recovery.attentionCount > 0 {
-          Text("\(recovery.attentionCount)").font(BlitzType.captionEmphasis).monospacedDigit()
-            .foregroundStyle(.black.opacity(0.88))
-            .padding(.horizontal, 6).frame(minWidth: 18, minHeight: 18)
-            .background(BlitzUI.warning, in: .capsule)
-            .accessibilityLabel("\(recovery.attentionCount) apps need attention")
+          BlitzCountBadge(
+            count: recovery.attentionCount, label: "\(recovery.attentionCount) apps need attention")
+        }
+        if page == .settings, missingPermissions > 0 {
+          BlitzCountBadge(
+            count: missingPermissions, label: "\(missingPermissions) permissions to allow")
         }
       }.frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -214,7 +252,6 @@ private struct BlitzSidebar: View {
 struct AppMemoryIcon: View {
   let app: MemoryApp
   var body: some View {
-    Image(nsImage: NSWorkspace.shared.icon(forFile: app.bundleURL.path))
-      .resizable().frame(width: 28, height: 28).accessibilityHidden(true)
+    ApplicationIcon(source: .file(app.bundleURL.path), size: 28, fallback: "app")
   }
 }

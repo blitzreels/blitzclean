@@ -7,7 +7,9 @@ struct BlitzCleanTests {
   @Test
   func trayUsesUnderstandableMetricNames() {
     let text = MenuBarStatusText.make(
-      .init(snapshot: .empty, showDisk: true, showCPU: true, showMemory: true))
+      .init(
+        snapshot: .empty, showDisk: true, showCPU: true, showMemory: true, memoryDisplay: .available
+      ))
     #expect(text.contains("CPU"))
     #expect(text.contains("RAM"))
     #expect(text.contains("free"))

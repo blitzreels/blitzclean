@@ -21,20 +21,14 @@ struct WorkspaceProjectsView: View {
   private var projectList: some View {
     ScrollView {
       LazyVStack(alignment: .leading, spacing: 20) {
-        PressureBanner(
-          assessment: processes.pressure, actionTitle: "Refresh", onReview: { processes.refresh() })
+        PressureBanner(assessment: processes.pressure, review: nil)
         if let action = processes.projectAction {
-          Text(action).font(BlitzType.body).foregroundStyle(BlitzUI.supportingText)
+          BlitzStatusLine(text: action, tone: .working)
         }
         if let status = controller.status ?? processes.statusMessage {
-          Text(status).font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
+          BlitzStatusLine(text: status, tone: .working)
         }
-        let projects = WorkspaceCatalog.resolvedProjects(
-          .init(
-            input: .init(
-              resources: processes.resources, processes: processes.processes,
-              preferences: controller.preferences), roots: processes.workspaceRoots)
-        ).filter { project in
+        let projects = processes.projects(controller.preferences).filter { project in
           query.isEmpty || project.preference.name.localizedCaseInsensitiveContains(query)
             || project.directory.localizedCaseInsensitiveContains(query)
             || project.servers.flatMap(\.listeningPorts).contains { String($0).contains(query) }
@@ -43,14 +37,12 @@ struct WorkspaceProjectsView: View {
         let stopped = projects.filter { !$0.isRunning }
         if !running.isEmpty { section("Active projects", running) }
         if !stopped.isEmpty { section("Saved projects", stopped) }
-        if projects.isEmpty && !query.isEmpty {
-          Text("No projects match this search").foregroundStyle(.secondary)
-        } else if projects.isEmpty {
-          ContentUnavailableView(
-            "Add your first project", systemImage: "folder.badge.plus",
-            description: Text(
-              "Choose a project folder and save its start command. Running projects are also discovered automatically."
-            ))
+        if projects.isEmpty {
+          Text(
+            query.isEmpty
+              ? "No projects yet. Running projects appear here; use Add project to save one."
+              : "No projects match this search"
+          ).font(BlitzType.body).foregroundStyle(BlitzUI.secondaryText)
         }
       }.padding(BlitzUI.pagePadding)
     }
@@ -66,16 +58,13 @@ struct WorkspaceProjectsView: View {
   }
 
   private func section(_ title: String, _ projects: [WorkspaceProject]) -> some View {
-    VStack(alignment: .leading, spacing: 10) {
-      HStack(spacing: 6) {
-        Text(title).font(BlitzType.section)
-        Text("\(projects.count)").font(BlitzType.caption).monospacedDigit()
-          .foregroundStyle(BlitzUI.tertiaryText)
-      }
+    let lastID = projects.last?.id
+    return VStack(alignment: .leading, spacing: 10) {
+      BlitzSectionHeader(title: title, count: projects.count) {}
       LazyVStack(spacing: 0) {
         ForEach(projects) { project in
           projectRow(project)
-          if project.id != projects.last?.id { BlitzRowDivider(leading: 62) }
+          if project.id != lastID { BlitzRowDivider(leading: 62) }
         }
       }.blitzTable()
     }
@@ -91,23 +80,23 @@ struct WorkspaceProjectsView: View {
         fallbackSymbol: "folder.fill")
       VStack(alignment: .leading, spacing: 4) {
         HStack(spacing: 6) {
-          Text(project.preference.name).font(.system(size: 13, weight: .medium)).lineLimit(1)
+          Text(project.preference.name).font(BlitzType.rowTitle).lineLimit(1)
           if processes.projectTargets[project.directory]?.isPaused == true {
             BlitzStatusBadge(title: "Paused", tone: .warning)
           }
           if project.preference.keepRunning {
-            Image(systemName: "lock").font(.system(size: 10)).foregroundStyle(.secondary)
-              .help("This project is kept running")
+            Image(systemName: "lock").font(.system(size: 10))
+              .foregroundStyle(BlitzUI.secondaryText).help("This project is kept running")
           }
         }
-        Text(project.directory).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
-          .truncationMode(.middle)
+        Text(project.directory).font(BlitzType.caption).foregroundStyle(BlitzUI.secondaryText)
+          .lineLimit(1).truncationMode(.middle)
         if !project.servers.isEmpty {
           Text(
             project.servers.map {
               "\($0.name) \($0.listeningPorts.map { ":\($0)" }.joined(separator: ", "))"
             }.joined(separator: " · ")
-          ).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+          ).font(BlitzType.caption).foregroundStyle(BlitzUI.secondaryText).lineLimit(1)
         }
         if let message = processes.projectMessages[project.directory] {
           Text(message).font(BlitzType.caption).foregroundStyle(BlitzUI.supportingText)
@@ -115,13 +104,12 @@ struct WorkspaceProjectsView: View {
         }
       }
       Spacer(minLength: 16)
-      VStack(alignment: .trailing, spacing: 4) {
-        Text(ByteText.full(project.memoryBytes)).font(.system(size: 13, weight: .medium))
-          .monospacedDigit()
-        Text("\(project.resources.count) processes · \(Int(project.cpuPercent))% CPU")
-          .font(.system(size: 11)).foregroundStyle(.secondary)
-      }.fixedSize()
-      Group {
+      BlitzTrailingValue(
+        value: ByteText.full(project.memoryBytes),
+        detail: "\(project.resources.count) processes · \(Int(project.cpuPercent))% CPU"
+      ).fixedSize()
+      ZStack(alignment: .trailing) {
+        Color.clear
         if let target = processes.projectTargets[project.directory] {
           BlitzProcessButton(
             title: "Stop", label: "Stop \(project.preference.name)", isBusy: busy
@@ -135,47 +123,46 @@ struct WorkspaceProjectsView: View {
           .disabled(project.preference.keepRunning)
           .help("Stop this project's local servers.")
         } else if project.preference.startCommand != nil {
-          Button("Start") {
+          BlitzProcessButton(
+            title: "Start", label: "Start \(project.preference.name)",
+            isBusy: controller.starting.contains(project.id)
+          ) {
             controller.start(
               .init(preference: project.preference, existingServers: project.servers))
             processes.refresh()
-          }.disabled(controller.starting.contains(project.id))
+          }
         }
-      }.frame(width: 96, alignment: .trailing)
+      }.frame(width: 96, height: 34)
       BlitzActionMenu(label: "Options for \(project.preference.name)") {
         if let target = processes.projectTargets[project.directory] {
           Button(target.isPaused ? "Resume" : "Pause") { processes.pauseProject(target) }
             .disabled(project.preference.keepRunning && !target.isPaused)
           Divider()
         }
-        Toggle(
-          "Pause automatically under pressure",
-          isOn: Binding(
-            get: { processes.autoPauseDirectories.contains(project.directory) },
-            set: { processes.setAutoPause(.init(directory: project.directory, enabled: $0)) })
-        )
+        let autoPause = processes.autoPauseDirectories.contains(project.directory)
+        Button {
+          processes.setAutoPause(.init(directory: project.directory, enabled: !autoPause))
+        } label: {
+          MenuCheckLabel(title: "Pause automatically under pressure", isOn: autoPause)
+        }
         .disabled(
           project.preference.keepRunning || processes.projectTargets[project.directory] == nil)
         Button("Configure project…") { editing = project.preference }
-        Toggle(
-          "Keep running",
-          isOn: Binding(
-            get: { project.preference.keepRunning },
-            set: { controller.keep(.init(preference: project.preference, keep: $0)) }
-          ))
+        Button {
+          controller.keep(
+            .init(preference: project.preference, keep: !project.preference.keepRunning))
+        } label: {
+          MenuCheckLabel(title: "Keep running", isOn: project.preference.keepRunning)
+        }
       }.disabled(busy)
     }.blitzRow()
   }
 
   private func chooseProject() {
-    let panel = NSOpenPanel()
-    panel.canChooseFiles = false
-    panel.canChooseDirectories = true
-    panel.allowsMultipleSelection = false
-    guard panel.runModal() == .OK, let url = panel.url else { return }
+    guard let path = Finder.chooseFolder() else { return }
     editing = WorkspacePreference(
-      directory: WorkspacePreferences.canonical(url.path),
-      name: url.lastPathComponent, keepRunning: false, startCommand: nil)
+      directory: WorkspacePreferences.canonical(path),
+      name: URL(fileURLWithPath: path).lastPathComponent, keepRunning: false, startCommand: nil)
   }
 }
 
@@ -185,14 +172,15 @@ private struct WorkspaceEditor: View {
   let onClose: () -> Void
   var body: some View {
     VStack(alignment: .leading, spacing: 18) {
-      Text("Project setup").font(.title2.bold())
-      Text(preference.directory).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+      Text("Project setup").font(BlitzType.title)
+      Text(preference.directory).font(BlitzType.caption).foregroundStyle(BlitzUI.secondaryText)
+        .textSelection(.enabled)
       VStack(alignment: .leading, spacing: 8) {
-        Text("Project name").font(.system(size: 13, weight: .medium))
+        Text("Project name").font(BlitzType.rowTitle)
         TextField("Project name", text: $preference.name).blitzInput()
       }
       VStack(alignment: .leading, spacing: 8) {
-        Text("Start command").font(.headline)
+        Text("Start command").font(BlitzType.rowTitle)
         TextField(
           "For example: pnpm dev",
           text: Binding(
@@ -203,16 +191,17 @@ private struct WorkspaceEditor: View {
         Text(
           "Runs in this folder, using your zsh environment, only when you click Start. Use a foreground server command."
         )
-        .font(.caption).foregroundStyle(.secondary)
+        .font(BlitzType.caption).foregroundStyle(BlitzUI.secondaryText)
       }
       Toggle("Keep this project running", isOn: $preference.keepRunning)
+        .toggleStyle(BlitzSwitchStyle()).font(BlitzType.callout)
       HStack {
         Spacer()
-        Button("Cancel") { onClose() }.keyboardShortcut(.cancelAction)
+        Button("Cancel") { onClose() }.keyboardShortcut(.cancelAction).blitzButton(.secondary)
         Button("Save") {
           controller.save(preference)
           onClose()
-        }.keyboardShortcut(.defaultAction)
+        }.keyboardShortcut(.defaultAction).blitzButton(.accent)
           .disabled(preference.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
       }
     }.padding(BlitzUI.pagePadding).frame(

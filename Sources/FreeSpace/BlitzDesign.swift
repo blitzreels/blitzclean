@@ -183,6 +183,13 @@ struct BlitzSelectionButtonStyle: ButtonStyle {
   }
 }
 
+extension View {
+  func blitzChipGroup() -> some View {
+    padding(2)
+      .background(BlitzUI.controlFill, in: RoundedRectangle(cornerRadius: BlitzUI.controlRadius))
+  }
+}
+
 struct BlitzSegmentedPicker<Value: Hashable>: View {
   let title: String
   let options: [Value]
@@ -200,9 +207,23 @@ struct BlitzSegmentedPicker<Value: Hashable>: View {
         }.buttonStyle(BlitzSelectionButtonStyle(isSelected: value == selection))
           .accessibilityAddTraits(selection == value ? .isSelected : [])
       }
-    }.padding(2)
-      .background(BlitzUI.controlFill, in: RoundedRectangle(cornerRadius: BlitzUI.controlRadius))
+    }.blitzChipGroup()
       .accessibilityElement(children: .contain).accessibilityLabel(title)
+  }
+}
+
+struct BlitzChip: View {
+  let title: String
+  let symbol: String
+  let isSelected: Bool
+  let action: () -> Void
+
+  var body: some View {
+    Button(action: action) {
+      Label(title, systemImage: symbol).font(BlitzType.label).lineLimit(1).fixedSize()
+        .padding(.horizontal, 10).frame(minHeight: 30).contentShape(Rectangle())
+    }.buttonStyle(BlitzSelectionButtonStyle(isSelected: isSelected))
+      .accessibilityAddTraits(isSelected ? .isSelected : [])
   }
 }
 
@@ -414,7 +435,6 @@ private struct BlitzMenuActionStyle: PrimitiveButtonStyle {
 }
 
 private struct BlitzMenuItemStyle: ButtonStyle {
-  @State private var hovered = false
   @Environment(\.isEnabled) private var isEnabled
 
   func makeBody(configuration: Configuration) -> some View {
@@ -425,14 +445,72 @@ private struct BlitzMenuItemStyle: ButtonStyle {
       .lineLimit(2).multilineTextAlignment(.leading)
       .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
       .padding(.horizontal, 10)
+      .modifier(BlitzRowHighlight(isPressed: configuration.isPressed, radius: 6))
+      .opacity(isEnabled ? 1 : 0.4)
+  }
+}
+
+/// Hover and pressed fill shared by every full-row button: menus, browser rows, tray rows.
+private struct BlitzRowHighlight: ViewModifier {
+  let isPressed: Bool
+  let radius: CGFloat
+  @State private var hovered = false
+  @Environment(\.isEnabled) private var isEnabled
+
+  func body(content: Content) -> some View {
+    content
       .background(
-        configuration.isPressed
-          ? BlitzUI.selectedFill : hovered && isEnabled ? BlitzUI.hoverFill : .clear,
-        in: RoundedRectangle(cornerRadius: 6)
+        isPressed ? BlitzUI.selectedFill : hovered && isEnabled ? BlitzUI.hoverFill : .clear,
+        in: RoundedRectangle(cornerRadius: radius)
       )
-      .contentShape(Rectangle()).opacity(isEnabled ? 1 : 0.4)
+      .contentShape(RoundedRectangle(cornerRadius: radius))
       .onHover { hovered = $0 }
       .blitzPointingHand()
+  }
+}
+
+struct BlitzRowButtonStyle: ButtonStyle {
+  var radius: CGFloat = 0
+
+  func makeBody(configuration: Configuration) -> some View {
+    configuration.label.modifier(
+      BlitzRowHighlight(isPressed: configuration.isPressed, radius: radius))
+  }
+}
+
+/// A whole card that opens something: faint hover wash and a small press scale.
+struct BlitzCardButtonStyle: ButtonStyle {
+  @State private var hovered = false
+
+  func makeBody(configuration: Configuration) -> some View {
+    configuration.label
+      .overlay {
+        RoundedRectangle(cornerRadius: BlitzUI.cardRadius)
+          .fill(Color.white.opacity(hovered ? 0.03 : 0)).allowsHitTesting(false)
+      }
+      .contentShape(RoundedRectangle(cornerRadius: BlitzUI.cardRadius))
+      .scaleEffect(configuration.isPressed ? 0.98 : 1)
+      .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+      .onHover { hovered = $0 }
+      .blitzPointingHand()
+  }
+}
+
+struct BlitzChevron: View {
+  var body: some View {
+    Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold))
+      .foregroundStyle(BlitzUI.tertiaryText).accessibilityHidden(true)
+  }
+}
+
+extension View {
+  /// Severity-tinted surface for alerts.
+  func blitzToneCard(_ tone: MetricTone, radius: CGFloat = BlitzUI.cardRadius) -> some View {
+    background(tone.color.opacity(0.08), in: RoundedRectangle(cornerRadius: radius))
+      .overlay {
+        RoundedRectangle(cornerRadius: radius)
+          .strokeBorder(tone.color.opacity(0.22), lineWidth: 1).allowsHitTesting(false)
+      }
   }
 }
 
