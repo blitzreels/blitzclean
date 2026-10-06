@@ -132,3 +132,17 @@ so they are labeled as worker groups.
 
 Automatic pausing skips projects marked Keep running and never touches AI or tool sessions.
 BlitzClean uses no memory purge commands and no artificial memory pressure.
+
+### Conservative cleanup boundaries
+
+Docker inspection and cleanup require a local Unix socket; SSH and TCP contexts are rejected.
+Each operation pins its endpoint so a context switch cannot redirect its commands. Image pruning
+preserves tagged images and removes only dangling images; build-cache pruning remains available.
+Docker's displayed reclaimable estimate can therefore exceed the amount this conservative cleanup removes.
+
+Repeat folder removal honors Keep running and refuses recent files (seven days), tracked files,
+open files, symbolic links, incomplete checks, and trees that change during validation.
+This can keep dependency folders containing symlinks; review those with their package manager instead.
+
+Automatic HTTP probes use literal loopback addresses only. External redirects and external favicon
+URLs are rejected, and probes do not use configured HTTP proxies.

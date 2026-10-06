@@ -136,6 +136,26 @@ enum HTMLMetadataParser {
   }
 }
 
+/// Probes must stay on the literal loopback interface, including redirects and icons.
+enum LoopbackProbePolicy {
+  static func allows(_ url: URL) -> Bool {
+    guard ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
+      url.user == nil, url.password == nil
+    else { return false }
+    return ["127.0.0.1", "::1", "[::1]"].contains(url.host?.lowercased() ?? "")
+  }
+}
+
+final class LoopbackRedirectDelegate: NSObject, URLSessionTaskDelegate {
+  func urlSession(
+    _ session: URLSession, task: URLSessionTask,
+    willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest,
+    completionHandler: @escaping (URLRequest?) -> Void
+  ) {
+    completionHandler(request.url.map(LoopbackProbePolicy.allows) == true ? request : nil)
+  }
+}
+
 struct PortProber: Sendable {
   private let session: URLSession
 
@@ -145,11 +165,13 @@ struct PortProber: Sendable {
     configuration.timeoutIntervalForResource = 4
     configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
     configuration.httpAdditionalHeaders = ["Accept": "text/html,application/json;q=0.9,*/*;q=0.5"]
-    session = URLSession(configuration: configuration)
+    configuration.connectionProxyDictionary = [:]
+    session = URLSession(
+      configuration: configuration, delegate: LoopbackRedirectDelegate(), delegateQueue: nil)
   }
 
   func probe(port: Int) async -> PortProbe {
-    guard let url = URL(string: "http://localhost:\(port)/") else {
+    guard let url = URL(string: "http://127.0.0.1:\(port)/") else {
       return silent(port)
     }
 
@@ -205,7 +227,7 @@ struct PortProber: Sendable {
       candidates.append(root)
     }
 
-    for candidate in candidates {
+    for candidate in candidates where LoopbackProbePolicy.allows(candidate) {
       guard let (data, response) = try? await session.data(from: candidate),
         let http = response as? HTTPURLResponse, http.statusCode == 200,
         data.count > 16, data.count < 2_000_000,

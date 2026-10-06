@@ -59,8 +59,9 @@ struct DockerStorageService: Sendable {
   }
 
   func load() throws -> DockerStorageSnapshot {
+    let host = try localEndpoint()
     let output = try run(
-      DockerCommandRequest(arguments: ["system", "df", "--format", "{{json .}}"])
+      DockerCommandRequest(arguments: ["--host", host, "system", "df", "--format", "{{json .}}"])
     )
     let categories = try DockerStorageParser.categories(output.standardOutput)
 
@@ -68,16 +69,29 @@ struct DockerStorageService: Sendable {
   }
 
   func cleanRebuildable() throws -> String {
+    let host = try localEndpoint()
     let imageOutput = try run(
-      DockerCommandRequest(arguments: ["image", "prune", "--all", "--force"])
+      DockerCommandRequest(arguments: ["--host", host, "image", "prune", "--force"])
     )
     let buildOutput = try run(
-      DockerCommandRequest(arguments: ["builder", "prune", "--all", "--force"])
+      DockerCommandRequest(arguments: ["--host", host, "builder", "prune", "--all", "--force"])
     )
 
     return [imageOutput.standardOutput, buildOutput.standardOutput]
       .filter { output in !output.isEmpty }
       .joined(separator: "\n")
+  }
+
+  private func localEndpoint() throws -> String {
+    let environment = ProcessInfo.processInfo.environment
+    // Resolve the same target the CLI would use, then pin both cleanup commands to it.
+    if environment["DOCKER_CONTEXT", default: ""].isEmpty,
+      let host = environment["DOCKER_HOST"], !host.isEmpty
+    {
+      return try DockerLocalEndpoint.validate(host)
+    }
+    let output = try run(.init(arguments: ["context", "inspect"]))
+    return try DockerLocalEndpoint.parse(output.standardOutput)
   }
 
   private func run(_ request: DockerCommandRequest) throws -> DockerCommandOutput {
@@ -90,6 +104,15 @@ struct DockerStorageService: Sendable {
     let standardError = Pipe()
     process.executableURL = URL(fileURLWithPath: executablePath)
     process.arguments = request.arguments
+    if request.arguments.first == "--host" {
+      var environment = ProcessInfo.processInfo.environment
+      for key in [
+        "DOCKER_CONTEXT", "DOCKER_HOST", "DOCKER_TLS", "DOCKER_TLS_VERIFY", "DOCKER_CERT_PATH",
+      ] {
+        environment.removeValue(forKey: key)
+      }
+      process.environment = environment
+    }
     process.standardOutput = standardOutput
     process.standardError = standardError
 
@@ -108,6 +131,35 @@ struct DockerStorageService: Sendable {
     }
 
     return DockerCommandOutput(standardOutput: output)
+  }
+}
+
+enum DockerLocalEndpoint {
+  static func validate(_ host: String) throws -> String {
+    guard host.hasPrefix("unix:///"), let url = URL(string: host),
+      url.scheme == "unix", url.host == nil || url.host == "",
+      url.user == nil, url.password == nil, url.query == nil, url.fragment == nil,
+      !url.path.isEmpty, url.path != "/"
+    else {
+      throw DockerStorageError.commandFailed(
+        "Docker cleanup requires a local Unix socket. Remote contexts are not supported.")
+    }
+    return host
+  }
+
+  static func parse(_ output: String) throws -> String {
+    struct Context: Decodable {
+      struct Endpoint: Decodable {
+        let host: String
+        enum CodingKeys: String, CodingKey { case host = "Host" }
+      }
+      let endpoints: [String: Endpoint]
+      enum CodingKeys: String, CodingKey { case endpoints = "Endpoints" }
+    }
+    guard let contexts = try? JSONDecoder().decode([Context].self, from: Data(output.utf8)),
+      contexts.count == 1, let host = contexts.first?.endpoints["docker"]?.host
+    else { throw DockerStorageError.invalidOutput }
+    return try validate(host)
   }
 }
 

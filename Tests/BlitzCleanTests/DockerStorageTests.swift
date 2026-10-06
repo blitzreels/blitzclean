@@ -4,6 +4,28 @@ import Testing
 @testable import BlitzClean
 
 struct DockerStorageTests {
+  @Test func rejectsRemoteAndMalformedDockerEndpoints() throws {
+    #expect(
+      try DockerLocalEndpoint.validate("unix:///var/run/docker.sock")
+        == "unix:///var/run/docker.sock")
+    for host in [
+      "ssh://production", "tcp://127.0.0.1:2375", "https://docker.example.com",
+      "unix://remote/socket", "unix:///", "unix:///socket?other=host",
+    ] {
+      #expect(throws: (any Error).self) { try DockerLocalEndpoint.validate(host) }
+    }
+    #expect(throws: (any Error).self) { try DockerLocalEndpoint.parse("[]") }
+    #expect(throws: (any Error).self) { try DockerLocalEndpoint.parse("not JSON") }
+    #expect(
+      try DockerLocalEndpoint.parse(
+        "[{\"Endpoints\":{\"docker\":{\"Host\":\"unix:///var/run/docker.sock\"}}}]")
+        == "unix:///var/run/docker.sock")
+    #expect(throws: (any Error).self) {
+      try DockerLocalEndpoint.parse(
+        "[{\"Endpoints\":{\"docker\":{\"Host\":\"ssh://production\"}}}]")
+    }
+  }
+
   @Test
   func parsesDockerSizes() {
     #expect(DockerByteParser.bytes("0B") == 0)

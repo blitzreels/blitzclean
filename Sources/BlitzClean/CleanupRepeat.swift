@@ -200,6 +200,37 @@ enum RegrowCleaner {
     return kilobytes * 1_024
   }
 
+  /// Repeat removal must not bypass the cache review's freshness and identity checks.
+  static func reviewedTree(_ target: RegrowTarget) throws -> CacheTree {
+    let tree = try CacheCleaner.tree(
+      .init(path: target.path, deadline: .now.addingTimeInterval(15)))
+    guard tree.newest < Date.now.addingTimeInterval(-7 * 86_400) else {
+      throw CacheCleanError.recent
+    }
+    let directory = URL(fileURLWithPath: target.path).deletingLastPathComponent().path
+    let repository = DeveloperCommand.git(
+      .init(directory: directory, arguments: ["rev-parse", "--show-toplevel"]))
+    if repository.status == 0 {
+      let tracked = DeveloperCommand.git(
+        .init(directory: directory, arguments: ["ls-files", "-z", "--", target.path]))
+      guard tracked.status == 0, tracked.output.isEmpty else {
+        throw RegrowCleanError.busy("Folder contains tracked files or Git could not verify them")
+      }
+    } else {
+      // A failed Git check is only safe outside a repository, not inside a broken one.
+      var ancestor = URL(fileURLWithPath: directory)
+      while ancestor.path != "/" {
+        if FileManager.default.fileExists(atPath: ancestor.appendingPathComponent(".git").path) {
+          throw RegrowCleanError.unverified
+        }
+        ancestor.deleteLastPathComponent()
+      }
+    }
+    let handles = CleanupActivity.command(["-nP", "-Fpcn", "+D", target.path])
+    guard handles.status == 1, handles.output.isEmpty else { throw RegrowCleanError.unverified }
+    return tree
+  }
+
   static func remove(_ target: RegrowTarget, home: String) throws -> CleanupWin {
     guard RegrowCatalog.target(for: target.path, home: home) == target,
       ReviewFile.canonicalPath(target.path) == target.path,
@@ -212,9 +243,17 @@ enum RegrowCleaner {
     {
       throw RegrowCleanError.busy(reason)
     }
+    guard !WorkspacePreferences.isKeptRunning(RegrowCatalog.projectRoot(target, home: home)) else {
+      throw RegrowCleanError.busy("Keep running is enabled")
+    }
     let before = CleanupVolume.read(target.path)
     switch target.recipe {
     case .folder, .dependencies:
+      let reviewed = try reviewedTree(target)
+      guard ReviewFile.canonicalPath(target.path) == target.path,
+        try CacheCleaner.tree(.init(path: target.path, deadline: .now.addingTimeInterval(15)))
+          == reviewed
+      else { throw CacheCleanError.changed }
       try FileManager.default.removeItem(atPath: target.path)
     case .pnpmPrune:
       guard let pnpm = pnpmExecutable(home: home) else {

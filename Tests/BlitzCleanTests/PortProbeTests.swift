@@ -4,6 +4,36 @@ import Testing
 @testable import BlitzClean
 
 struct PortProbeTests {
+  @Test func restrictsProbeAndIconDestinationsToLiteralLoopback() throws {
+    for value in ["http://127.0.0.1:3000/", "https://[::1]:443/icon.png"] {
+      #expect(LoopbackProbePolicy.allows(try #require(URL(string: value))))
+    }
+    for value in [
+      "https://example.com/icon.png", "http://127.0.0.1.example.com/", "http://localhost/",
+      "http://192.168.1.1/", "file:///etc/passwd", "http://user:password@127.0.0.1/",
+    ] {
+      #expect(!LoopbackProbePolicy.allows(try #require(URL(string: value))))
+    }
+  }
+
+  @Test func refusesExternalRedirectBeforeFollowingIt() throws {
+    let delegate = LoopbackRedirectDelegate()
+    let session = URLSession(configuration: .ephemeral)
+    defer { session.invalidateAndCancel() }
+    let source = try #require(URL(string: "http://127.0.0.1:3000/"))
+    let task = session.dataTask(with: source)
+    let response = try #require(
+      HTTPURLResponse(url: source, statusCode: 302, httpVersion: nil, headerFields: nil))
+    for destination in ["https://example.com/", "http://127.0.0.1:3000/next"] {
+      let request = URLRequest(url: try #require(URL(string: destination)))
+      delegate.urlSession(
+        session, task: task, willPerformHTTPRedirection: response, newRequest: request
+      ) { redirected in
+        #expect((redirected != nil) == destination.contains("127.0.0.1"))
+      }
+    }
+  }
+
   @Test
   func extractsTitleAndDecodesEntities() {
     let html = "<html><head><title>\n  Alarya &mdash; Elle &amp; lui </title></head></html>"
