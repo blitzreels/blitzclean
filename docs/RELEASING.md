@@ -16,14 +16,18 @@ Updates are signed with an EdDSA key kept in the login keychain, never in the re
 ```
 
 The script creates the key under the keychain account `blitzreels-blitzclean` if it is missing and prints the
-public key. Export a backup of the private key to a password manager right away:
-
-```sh
-.build/artifacts/sparkle/Sparkle/bin/generate_keys --account blitzreels-blitzclean -x <file outside the repo>
-```
+public key. The private key is backed up in Infisical: BlitzReels project, `prod`, folder `/blitzclean`,
+secret `SPARKLE_PRIVATE_ED_KEY` (with `SPARKLE_PUBLIC_ED_KEY` beside it).
 
 Installed copies trust only this key. Losing it means every existing install has to download the next release
-by hand. On another Mac, import the backup with `generate_keys --account blitzreels-blitzclean -f <file>`.
+by hand. To set up another Mac, restore it from Infisical into the keychain:
+
+```sh
+infisical secrets get SPARKLE_PRIVATE_ED_KEY --projectId <BlitzReels project id> --env prod \
+  --path /blitzclean --plain --silent > /tmp/sparkle-key && chmod 600 /tmp/sparkle-key
+.build/artifacts/sparkle/Sparkle/bin/generate_keys --account blitzreels-blitzclean -f /tmp/sparkle-key
+rm /tmp/sparkle-key
+```
 
 ## Package a download
 
