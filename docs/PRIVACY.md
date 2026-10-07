@@ -3,6 +3,14 @@
 BlitzClean runs locally, without a telemetry SDK, account service, or remote AI inference.
 App and process names, folder paths, and local history stay on your Mac unless you choose to share them.
 
+## Network
+
+The only network request is the update check in release builds from 1.3.0. Once a day, and when you choose
+Check for updates, Sparkle fetches `appcast.xml` from GitHub Releases. The request carries the app and Sparkle
+versions in its user agent; no system profile, identifier, or usage data is sent. A found update downloads from
+GitHub and installs only if its EdDSA signature matches the key built into the app.
+Turn off automatic checks in Settings > Updates. Development builds have no feed and make no request.
+
 ## Local data
 
 Local files live in `~/Library/Application Support/BlitzClean`.

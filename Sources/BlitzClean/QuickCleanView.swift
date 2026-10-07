@@ -15,9 +15,10 @@ struct QuickCleanView: View {
     let isLocked = model.isScanning || model.isCleaning
     return VStack(spacing: 0) {
       if model.isScanning && model.candidates.isEmpty {
-        BlitzEmptyRow(text: "Checking known caches, ages, and running tools…", isLoading: true)
+        BlitzEmptyRow(
+          text: "Checking caches, diagnostic reports, and running tools…", isLoading: true)
       } else if model.candidates.isEmpty {
-        BlitzEmptyRow(text: "No caches unused for 7 days", isLoading: false)
+        BlitzEmptyRow(text: "No eligible files found in the checked locations", isLoading: false)
       }
       if let status = model.status {
         BlitzStatusLine(text: status, tone: .working).padding(.horizontal, 16)
@@ -56,7 +57,7 @@ struct QuickCleanView: View {
       if !model.candidates.isEmpty || model.isCleaning {
         StorageActionBar(
           summary: "\(selectedItems.count) selected · \(ByteText.full(model.selectedBytes))",
-          progress: model.isCleaning ? "Deleting selected caches…" : nil, message: nil,
+          progress: model.isCleaning ? "Deleting selected files…" : nil, message: nil,
           actionTitle: "Review cleanup…", emphasis: .secondary,
           isDisabled: selectedItems.isEmpty || isLocked,
           action: { pendingReview = CacheCleanupReview(items: selectedItems) }
@@ -64,11 +65,11 @@ struct QuickCleanView: View {
       }
       if let review = pendingReview {
         BlitzConfirmation(
-          title: "Delete \(review.items.count) rebuildable caches?",
+          title: "Delete \(review.items.count) selected items?",
           message:
-            "\(ByteText.full(review.items.reduce(0) { $0 + $1.tree.bytes })) will be checked for cleanup. This permanently removes the selected cache files; future downloads and builds can take longer.\n\n"
+            "\(ByteText.full(review.items.reduce(0) { $0 + $1.tree.bytes })) will be checked for cleanup. This permanently removes the selected files. Caches rebuild; diagnostic reports cannot be recovered. Future downloads and builds can take longer.\n\n"
             + review.items.map { $0.rule.title + " / " + $0.displayName }.joined(separator: "\n"),
-          confirmTitle: "Delete selected caches",
+          confirmTitle: "Delete selected files",
           onConfirm: {
             model.selected = Set(review.items.map(\.path))
             pendingReview = nil
@@ -93,7 +94,8 @@ struct QuickCleanView: View {
       ApplicationIcon(source: .file(item.path), size: 28, fallback: "folder")
       VStack(alignment: .leading, spacing: 3) {
         Text(item.displayName).font(BlitzType.rowTitle).lineLimit(1).truncationMode(.middle)
-        Text(item.rule.title).font(BlitzType.caption).foregroundStyle(BlitzUI.secondaryText)
+        Text("\(item.rule.title) · unchanged for \(item.rule.kind.minimumAgeDays)+ days")
+          .font(BlitzType.caption).foregroundStyle(BlitzUI.secondaryText)
       }.frame(maxWidth: .infinity, alignment: .leading).help(item.rule.recipe + "\n" + item.path)
       BlitzTrailingValue(value: ByteText.full(item.tree.bytes), detail: nil)
       Button("Show in Finder") { Finder.reveal(item.path) }.blitzButton(.quiet)

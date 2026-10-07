@@ -36,7 +36,7 @@ enum BlitzUI {
   static let primaryText = Color.white.opacity(0.92)
   static let supportingText = Color.white.opacity(0.72)
   static let secondaryText = Color.white.opacity(0.56)
-  static let tertiaryText = Color.white.opacity(0.38)
+  static let tertiaryText = Color.white.opacity(0.46)
   static let controlRadius: CGFloat = 8
   static let cardRadius: CGFloat = 12
   static let pagePadding: CGFloat = 28
@@ -105,7 +105,9 @@ struct BlitzButtonStyle: ButtonStyle {
           .strokeBorder(emphasis == .secondary ? BlitzUI.panelStroke : .clear, lineWidth: 1)
           .allowsHitTesting(false)
       }
-      .opacity(isEnabled ? (configuration.isPressed ? 0.76 : 1) : 0.4)
+      .scaleEffect(configuration.isPressed && isEnabled ? 0.97 : 1)
+      .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+      .opacity(isEnabled ? (configuration.isPressed ? 0.88 : 1) : 0.4)
       .contentShape(RoundedRectangle(cornerRadius: BlitzUI.controlRadius))
       .onHover { isHovered = $0 }
       .blitzPointingHand()

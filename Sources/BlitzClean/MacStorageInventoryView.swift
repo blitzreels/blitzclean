@@ -65,7 +65,7 @@ struct MacStorageInventoryView: View {
           if model.isScanning {
             ProgressView().controlSize(.small)
             Text("Measuring apps and folders…")
-          } else if let scannedAt = model.scannedAt {
+          } else if let scannedAt = model.inventoryScannedAt {
             Text("Scanned \(scannedAt.formatted(date: .abbreviated, time: .shortened))")
               .help(
                 "Allocated disk space. Categories can overlap. Protected locations require Full Disk Access; large files use Spotlight."

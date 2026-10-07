@@ -224,3 +224,126 @@ Shared views live in `BlitzComponents.swift`: `BlitzSectionHeader`, `BlitzEmptyR
 Views derive filtered/sorted lists once per render and pass them down; app icons go through `ApplicationIcon`.
 `PermissionsModel` probes Full Disk Access; permission state refreshes whenever BlitzClean becomes active.
 Storage Cleanup has one page-level Scan again; sections do not carry their own refresh buttons.
+
+## October 6 one-click cleanup
+
+At the user's request, Overview owns a Quick clean summary with a direct Clean action for the known,
+rebuildable cache allowlist. This explicit action replaces the extra confirmation for this narrow batch only;
+the consequence is visible beside it. Storage Cleanup keeps item selection and its existing inline review.
+Both entry points share one model, activity checks, deletion checks, progress, and removal history.
+Overview scans on first appearance. Scan again refreshes the estimate; Details opens Storage Cleanup.
+Caches now lead Storage Cleanup so this link lands at the relevant section. Skipped locations and cleanup
+results remain visible even when no candidates remain; simulated devices follow caches.
+The mint orbit runs only while work is active, honors Reduce Motion, and becomes a check after real removals.
+Progress counts checked candidates. Removed cache bytes and observed free-space changes remain separate.
+
+## October 6 process memory and System Data
+
+Launch feedback requested individual process RAM and System Data cleanup. Memory now has an Apps & AI /
+Processes choice below its summary, using the existing live resource snapshot rather than a second polling loop.
+Process rows show a single PID's footprint, owner, and unavailable readings explicitly; search includes PIDs.
+Storage Cleanup starts with System Data cleanup, replacing the narrower Caches heading. This section owns
+selection, review, retention rules, and skipped-item explanations for browser/developer caches and old diagnostic
+reports. Overview's direct Clean action excludes reports. Its Details link leads to this section.
+Inventory labels the shared-folder scan System folders to avoid presenting it as Apple's System Data total.
+
+## October 6 cleanup overview correction
+
+The user rejected the prominent 0 B cache card because it hid available Docker and project cleanup.
+Overview now summarizes eligible caches, diagnostic reports, project data, regrown folders, shutdown simulators,
+and Docker images/build cache, using the existing scanners. Overlapping filesystem paths count once; a pnpm
+store's full size is excluded because pruning cannot reclaim it all. Values are estimates for review, not a promise
+of freed space. Review cleanup opens the existing Storage flow. One-click Clean caches names its narrower size.
+An empty result is a compact sentence with Scan again; skipped/unavailable locations retain a Details link.
+No large zero, disabled Clean button, or decorative empty-state animation. Scans start from Overview, with cached
+estimates retained and labeled while refreshing. Docker failures do not contribute stale reclaimable bytes.
+
+## October 7 scan responsiveness
+
+Overview and Storage Cleanup request the cleanup scope only: simulator status/cache and project dependencies.
+The broad app, Library, system-folder, and Spotlight inventory runs when Inventory is opened or Scan Mac is used.
+Its completion timestamp is separate, so a cleanup refresh cannot label old inventory as freshly measured.
+Project age reads skip generated tool directories and stop at a time/entry budget. A partial read is Unknown,
+never an old date; age-based recommendations exclude it. Cached category results stay visible during refresh.
+
+## October 7 audit and action dashboard
+
+The user approved replacing the Overview stack with one audit-and-action flow. Check my Mac starts five
+independent checks: resources, eligible caches, project data and regrown folders, Docker, and app responsiveness.
+The dashboard no longer starts expensive storage work merely by opening. Findings appear as their checks finish;
+a check still running never inherits a previous run's findings. The audit survives sidebar navigation.
+
+Show three ranked findings by default, with Show all for the rest. Resource pressure and stopped/frozen apps
+lead, followed by eligible caches, detached AI sessions, Docker, project data, simulators, and diagnostic reports.
+Only Clean [size] removes anything from Overview, using the existing cache allowlist and deletion revalidation.
+Other actions open the owning page; storage actions jump directly to the matching section.
+
+After cleanup, keep actual removed bytes, skipped reasons, and measured free-space change visible while fresh
+checks run. The empty result is compact text; partial checks disclose their limits and never report an all-clear.
+Check details contains the per-check outcomes and reasons. The last-checked time changes only after all checks
+finish. One compact resource strip links to Storage, Memory, and CPU; detailed charts and process lists stay in
+their sidebar pages. Progress is driven by completed checks/items and respects Reduce Motion.
+
+## October 7 audit latency and ready actions
+
+Eligible cache actions become available as soon as their own check finishes, while project checks continue.
+Conflicting mutations stay disabled; every removal still performs the existing fresh activity and identity checks.
+A successful cleanup queues one fresh audit if a check is still running, preserving the actual cleanup result.
+
+Project and removal-history scans share measurements only within one audit, with at most four folder readers.
+New audit measurements share a twenty-second traversal budget. A timed-out folder contributes no guessed or
+partial size; Check details discloses unfinished folders, and Storage offers a deeper scan. Filesystem calls
+already in progress may overrun the budget. Full scans started separately retain their own lifetime.
+The pnpm store's full size is not a reclaimable estimate, so its separate measurement runs in detailed cleanup.
+Opening that detail during an audit queues the full history check; unchecked folders never say Not back.
+Docker inspection has a twelve-second deadline, and unavailable Docker never contributes stale cleanup bytes.
+
+## October 7 Overview and tray revamp
+
+The user asked for a more playful, game-like Overview and tray, using [UI Skills](https://www.ui-skills.com/),
+Emil Kowalski's motion guidance, Raycast, Shotbase, and DreamCut as references. They rejected eyebrows,
+decorative or "AI" icons such as sparkles, and gradients; surfaces use flat fills and no glows.
+A later pass removed common AI-generated design tells (from the "Signs of AI design" guide and Adrian Krebs'
+list of 16 patterns): violet accents, multicolor icon tiles, stat banner rows, connected step sequences,
+colored accent words in headlines, and cards inside cards. Tertiary text rose from 0.38 to 0.46 white for AA contrast.
+
+- `BlitzVitalRings` draws memory, CPU, and storage load as thin concentric rings: mint, then two white
+  opacities. Ring colors never change with severity, because two amber rings merged into one shape; warnings
+  color the legend value instead. The Overview center shows the busiest resource ("97% storage"); the tray
+  center stays empty because its legend sits beside the rings. Rings show measured load only and never a composite score.
+  `MacVital` holds each ring's value, compact value, caption, and page. The legend rows open that page.
+- The Overview hero puts the rings beside the audit state and Check my Mac. When findings have reclaimable
+  space, the headline reads "Up to [size] to reclaim". `AuditRecommendation.reward` carries each estimate.
+- After the first check, one status row lists the five checks. They run in parallel, so they have no connecting
+  path or numbering: a spinner while running, then a check mark or a warning mark.
+- Findings are "Next moves": a neutral category tile (amber or red only for warnings), title, detail, and one action.
+- A removal that frees space shows its size large, with a single short particle burst. This is the only
+  celebratory motion, honors Reduce Motion, and does not play for unchanged or failed cleanups.
+- One caption line below the card gives the last cleanup, space recovered, and cleanup count from the removal log.
+- The tray uses the same rings and legend, followed by last-minute memory and CPU plots and the top three
+  apps with share-of-RAM bars. Open dashboard is the panel's one accent button.
+- Motion: no ring entrance animation (Overview opens many times a day). Value changes ease out over
+  0.3 seconds, list changes over 0.22 seconds, and buttons scale to 0.97 when pressed.
+
+## October 7 automatic updates
+
+Settings > Updates shows the update status in one line, a single action (Check for updates, Update to [version],
+or Restart to update to [version]) and the automatic-check switch. Builds without a feed say so and link to
+GitHub releases. The tray shows the update action beside the gear only when an update is found or downloaded;
+otherwise Check for updates lives in the gear menu. Scheduled updates never open a window on their own
+(Sparkle's gentle reminders); a check the user starts uses Sparkle's native update window.
+
+## October 7 BlitzReels family
+
+Settings ends with Our other apps: the BlitzReels wordmark beside the heading, then one full-row link per product
+(icon, name, one-line description, domain, and an outbound arrow) for BlitzRecorder and BlitzReels. The version,
+license, and source link follow as one caption line. The tray gear menu lists the same products under
+More from BlitzReels. Links open in the browser; there is no in-app promotion elsewhere.
+
+## October 7 skippable permissions
+
+The user asked why the Settings badge kept counting a permission they did not want. Each Finish setup row now
+has Not needed (quiet) beside Allow…. A skipped permission leaves the list and the sidebar badge, and the section
+shrinks to one caption line, "Not needed: …", with Ask again. Skips persist in `permissions.skipped`;
+a permission granted later no longer counts as skipped. Features that need the permission keep their own
+inline state, so skipping never hides why something is unavailable.

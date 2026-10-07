@@ -6,6 +6,74 @@ import Testing
 struct CleanupRepeatTests {
   private let home = "/Users/me"
 
+  @MainActor @Test func unavailableSizeIsDistinctFromAFolderThatDidNotGrowBack() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let folder = root.appendingPathComponent("app/.next")
+    let missing = root.appendingPathComponent("missing/.next")
+    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    let history = CleanupOverviewModel(
+      .init(
+        store: .init(url: root.appendingPathComponent("history.json")),
+        scanRequest: .init(roots: [], minimumBytes: 0, maxEntries: 1),
+        synchronizesInBackground: false))
+    history.record(win("folders", day: 1, paths: [folder.path, missing.path], bytes: 1024))
+    let model = RepeatCleanupModel(history: history, home: root.path)
+    model.check(.init(force: true, scope: .overview, measure: { _ in nil }))
+    for _ in 0..<1000 where model.isChecking {
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(!model.isChecking)
+    #expect(model.statuses[folder.path]?.bytes == nil)
+    #expect(model.statuses[folder.path]?.blocker != nil)
+    #expect(model.statuses[missing.path] == .init(bytes: nil, blocker: nil))
+  }
+
+  @MainActor @Test func overviewSkipsPnpmSizeButDetailedCheckStillMeasuresIt() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let history = CleanupOverviewModel(
+      .init(
+        store: .init(url: root.appendingPathComponent("history.json")),
+        scanRequest: .init(roots: [], minimumBytes: 0, maxEntries: 1),
+        synchronizesInBackground: false))
+    history.record(win("pnpm", day: 1, paths: [home + "/Library/pnpm/store"], bytes: 1024))
+    history.record(win("project", day: 1, paths: [home + "/dev/app/.next"], bytes: 1024))
+    let model = RepeatCleanupModel(history: history, home: home)
+    model.check(.init(force: true, scope: .overview, measure: { _ in 2048 }))
+    for _ in 0..<1000 where model.isChecking {
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(!model.isChecking)
+    #expect(model.statuses[home + "/dev/app/.next"]?.bytes == 2048)
+    #expect(model.statuses[home + "/Library/pnpm/store"] == nil)
+    model.check(.init(force: false, scope: .all, measure: { _ in 4096 }))
+    for _ in 0..<1000 where model.isChecking {
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(!model.isChecking)
+    #expect(model.statuses[home + "/Library/pnpm/store"]?.bytes == 4096)
+  }
+
+  @MainActor @Test func openingDetailsDuringAuditQueuesTheFullHistoryCheck() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let history = CleanupOverviewModel(
+      .init(
+        store: .init(url: root.appendingPathComponent("history.json")),
+        scanRequest: .init(roots: [], minimumBytes: 0, maxEntries: 1),
+        synchronizesInBackground: false))
+    history.record(win("pnpm", day: 1, paths: [home + "/Library/pnpm/store"], bytes: 1024))
+    let model = RepeatCleanupModel(history: history, home: home)
+    model.check(.init(force: true, scope: .overview, measure: { _ in 2048 }))
+    model.check()
+    for _ in 0..<1000 where model.isChecking {
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(!model.isChecking)
+    #expect(model.statuses[home + "/Library/pnpm/store"]?.bytes == 2048)
+  }
+
   @Test
   func removedPathsMapToTheFolderThatRegrows() {
     let cases: [(String, String?, RegrowRecipe?)] = [

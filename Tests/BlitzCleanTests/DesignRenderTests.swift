@@ -32,7 +32,7 @@ struct DesignRenderTests {
     let services = DashboardServices(
       recovery: recovery, permissions: PermissionsModel(), docker: DockerStorageModel(),
       folders: FolderExplorerModel(),
-      launchAtLogin: LaunchAtLoginController())
+      launchAtLogin: LaunchAtLoginController(), updates: AppUpdateController { _ in nil })
     let processes = DevProcessModel()
     processes.refresh()
     for _ in 0..<40 where processes.threads.isEmpty {
@@ -50,7 +50,8 @@ struct DesignRenderTests {
     }
     try await write(
       BlitzTrayView(
-        monitor: monitor, memory: memory, recovery: recovery, navigation: navigation),
+        monitor: monitor, memory: memory, recovery: recovery, navigation: navigation,
+        updates: AppUpdateController { _ in nil }),
       to: directory.appendingPathComponent("Tray.png"), size: .init(width: 340, height: 640))
     let storage = StorageBreakdownModel()
     try await write(

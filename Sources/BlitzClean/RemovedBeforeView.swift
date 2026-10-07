@@ -11,6 +11,12 @@ struct RemovedBeforeView: View {
   private func detail(_ summary: RepeatCleanupModel.Summary) -> String {
     if model.entries.isEmpty { return "Folders you remove appear here when they grow back" }
     if model.isChecking && model.statuses.isEmpty { return "Checking what grew back…" }
+    if model.entries.contains(where: {
+      model.statuses[$0.id] == nil
+        || (model.statuses[$0.id]?.bytes == nil && model.statuses[$0.id]?.blocker != nil)
+    }) {
+      return "\(summary.regrown.count) grew back · some folders not checked yet"
+    }
     return summary.regrown.isEmpty
       ? "\(model.entries.count) folders · none grew back"
       : "\(summary.regrown.count) grew back"
@@ -54,7 +60,7 @@ struct RemovedBeforeView: View {
     let status = model.statuses[entry.id]
     let back = model.isBack(entry)
     let removing = model.removing.contains(entry.id)
-    let problem = model.failures[entry.id] ?? (back ? status?.blocker : nil)
+    let problem = model.failures[entry.id] ?? status?.blocker
     return HStack(spacing: 12) {
       Image(systemName: symbol(entry.target.recipe)).font(.system(size: 14))
         .foregroundStyle(BlitzUI.secondaryText).frame(width: 28)
@@ -68,8 +74,11 @@ struct RemovedBeforeView: View {
       Group {
         if let bytes = status?.bytes, back {
           BlitzTrailingValue(value: ByteText.full(bytes), detail: nil)
-        } else if status == nil && model.isChecking {
-          Text("Checking…").font(BlitzType.caption).foregroundStyle(BlitzUI.tertiaryText)
+        } else if status == nil {
+          Text(model.isChecking ? "Checking…" : "Not checked")
+            .font(BlitzType.caption).foregroundStyle(BlitzUI.tertiaryText)
+        } else if status?.blocker != nil {
+          Text("Not measured").font(BlitzType.caption).foregroundStyle(BlitzUI.warning)
         } else {
           BlitzStatusBadge(title: "Not back", tone: .muted)
         }

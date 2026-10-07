@@ -22,7 +22,7 @@ struct BlitzCleanApp: App {
     MenuBarExtra {
       BlitzTrayView(
         monitor: monitor, memory: memoryRescue, recovery: appRecovery,
-        navigation: cleanNavigation)
+        navigation: cleanNavigation, updates: appDelegate.updates)
     } label: {
       MenuBarHealthLabel(
         snapshot: monitor.snapshot, risk: max(memoryRescue.risk, memoryRescue.capacity.risk)
@@ -39,7 +39,7 @@ struct BlitzCleanApp: App {
         services: .init(
           recovery: appRecovery, permissions: permissions, docker: dockerStorage,
           folders: folderExplorer,
-          launchAtLogin: launchAtLogin))
+          launchAtLogin: launchAtLogin, updates: appDelegate.updates))
     }
     .windowStyle(.hiddenTitleBar)
     .defaultSize(width: 1080, height: 820)
@@ -70,7 +70,10 @@ struct BlitzCleanApp: App {
   }
 }
 
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
+  let updates = AppUpdateController()
+
   func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
     guard
       AppQuitPolicy.keepsMonitoring(
@@ -103,6 +106,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   func applicationDidFinishLaunching(_ notification: Notification) {
     NSApp.appearance = NSAppearance(named: .darkAqua)
     NSApp.setActivationPolicy(.regular)
+    updates.start()
   }
 }
 

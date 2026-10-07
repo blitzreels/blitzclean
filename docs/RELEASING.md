@@ -7,6 +7,24 @@
 3. Run `./scripts/check.sh`, then verify the changed screens in the installed app.
 4. Review the exact files being committed; exclude local reports, credentials, screenshots with personal data, and builds.
 
+## Update signing key (once per Mac)
+
+Updates are signed with an EdDSA key kept in the login keychain, never in the repository or GitHub secrets.
+
+```sh
+./scripts/sparkle-key.sh
+```
+
+The script creates the key under the keychain account `blitzreels-blitzclean` if it is missing and prints the
+public key. Export a backup of the private key to a password manager right away:
+
+```sh
+.build/artifacts/sparkle/Sparkle/bin/generate_keys --account blitzreels-blitzclean -x <file outside the repo>
+```
+
+Installed copies trust only this key. Losing it means every existing install has to download the next release
+by hand. On another Mac, import the backup with `generate_keys --account blitzreels-blitzclean -f <file>`.
+
 ## Package a download
 
 Use a Developer ID Application identity installed in the login keychain.
@@ -18,6 +36,10 @@ BLITZCLEAN_SIGNING_IDENTITY='Developer ID Application: Your Name (TEAMID)' \
 ```
 
 Outputs are `dist/BlitzClean-<version>-macOS.zip` and the matching `.zip.sha256` file.
+The script embeds the public update key and the feed URL in the app. When the build is notarized it also writes
+`dist/appcast.xml`, signed with the keychain key, with the version's `CHANGELOG.md` section as release notes.
+Rename `## Unreleased` to `## <version> - <date>` before packaging so the notes are found.
+`BLITZCLEAN_SKIP_UPDATES=1` packages a build without an updater.
 The app requires macOS 14+; local build concurrency defaults to two jobs.
 
 Signing alone does not notarize the app.
@@ -50,7 +72,14 @@ Do not disable Gatekeeper or remove quarantine as an installation workaround.
 ## Publish and verify
 
 Push the reviewed commit and confirm its GitHub checks pass.
-Tag that exact commit, then create a GitHub release with the ZIP, checksum, and version-specific release notes.
+Tag that exact commit as `v<version>`, then create a GitHub release with the ZIP, checksum, `appcast.xml`, and
+version-specific release notes. The tag must match: the appcast points at
+`https://github.com/blitzreels/blitzclean/releases/download/v<version>/BlitzClean-<version>-macOS.zip`.
+
+Installed apps read `https://github.com/blitzreels/blitzclean/releases/latest/download/appcast.xml`, which always
+resolves to the newest non-prerelease release. Publishing the release is what ships the update, so upload
+`appcast.xml` last, after checking the ZIP downloads and its checksum matches. A prerelease is never offered.
+To pull a bad update, delete `appcast.xml` from that release or mark it as a prerelease.
 
 Use a prerelease for a build whose notarization or required release validation is incomplete.
 For a stable release, require a stapled ticket and successful Gatekeeper assessment.

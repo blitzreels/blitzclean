@@ -6,35 +6,33 @@ struct BlitzTrayView: View {
   @ObservedObject var memory: MemoryRescueModel
   @ObservedObject var recovery: AppRecoveryModel
   @ObservedObject var navigation: CleanNavigation
+  @ObservedObject var updates: AppUpdateController
   @Environment(\.openWindow) private var openWindow
   @AppStorage(MenuBarPreferenceKey.memoryDisplay) private var memoryDisplay = MenuBarMemoryDisplay
     .available
 
   private var snapshot: SystemSnapshot { monitor.snapshot }
 
-  private var memoryDetail: String {
-    guard snapshot.ramTotal > 0 else { return "Reading memory…" }
-    return memoryDisplay == .available
-      ? "\(ByteText.compact(snapshot.ramUsed)) used of \(ByteText.compact(snapshot.ramTotal))"
-      : "\(ByteText.compact(snapshot.ramAvailable)) available"
+  private var vitals: [MacVital] {
+    MacVital.all(
+      .init(snapshot: snapshot, memoryDisplay: memoryDisplay, memoryTone: memory.pressure.tone))
   }
 
   var body: some View {
     let topApps = memory.apps.largest(.init(count: 3, key: \.memoryBytes))
     VStack(spacing: 0) {
       header
-      VStack(spacing: 12) {
+      VStack(spacing: 10) {
         if memory.capacity.risk > .normal { pressureAlert }
-        memoryTile
-        HStack(spacing: 12) {
-          cpuTile
-          storageTile
-        }
+        vitalsCard
+        activityCard
         if !topApps.isEmpty { topAppsList(topApps) }
-      }.padding(.horizontal, 14).padding(.bottom, 14)
+      }.padding(.horizontal, 12).padding(.bottom, 12)
       Rectangle().fill(BlitzUI.separator).frame(height: 1)
       footer
-    }.frame(width: 340).blitzTheme().blitzDropdownHost()
+    }
+    .frame(width: 340)
+    .blitzTheme().blitzDropdownHost()
   }
 
   private var header: some View {
@@ -42,8 +40,31 @@ struct BlitzTrayView: View {
       BrandMark().frame(width: 40, height: 40).scaleEffect(0.55).frame(width: 22, height: 22)
       Text(AppBrand.name).font(BlitzType.section)
       Spacer()
+      if updates.version != nil {
+        Button(updates.actionTitle) { updates.check() }
+          .blitzButton(.secondary).controlSize(.small).fixedSize()
+          .help(updates.detail)
+      }
       BlitzActionMenu(label: "BlitzClean settings", symbol: "gearshape") {
         Button("Settings…") { open(.settings) }
+        if updates.version == nil {
+          Button("Check for updates…") { updates.check() }.disabled(!updates.canCheck)
+        }
+        Divider()
+        Text("More from BlitzReels").font(BlitzType.caption).foregroundStyle(BlitzUI.tertiaryText)
+          .padding(.horizontal, 10).padding(.top, 4)
+        ForEach(AppBrand.family) { app in
+          Button {
+            NSWorkspace.shared.open(app.url)
+          } label: {
+            HStack {
+              Text(app.name)
+              Spacer()
+              Image(systemName: "arrow.up.right").font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(BlitzUI.tertiaryText)
+            }
+          }
+        }
         Divider()
         Button("Stop monitoring and quit") { AppLifetime.stopMonitoringAndQuit() }
       }
@@ -57,10 +78,10 @@ struct BlitzTrayView: View {
       navigation.review(capacity)
       openWindow.dashboard()
     } label: {
-      HStack(alignment: .top, spacing: 10) {
-        Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 12))
-          .foregroundStyle(capacity.risk.tone.color).padding(.top, 1)
-        VStack(alignment: .leading, spacing: 3) {
+      HStack(alignment: .center, spacing: 12) {
+        Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 13))
+          .foregroundStyle(capacity.risk.tone.color)
+        VStack(alignment: .leading, spacing: 2) {
           Text(capacity.title).font(BlitzType.label)
           Text(
             isDisk
@@ -71,79 +92,98 @@ struct BlitzTrayView: View {
           .fixedSize(horizontal: false, vertical: true)
         }
         Spacer(minLength: 4)
-        BlitzChevron().padding(.top, 3)
+        BlitzChevron()
       }
       .padding(12).frame(maxWidth: .infinity, alignment: .leading)
-      .blitzToneCard(capacity.risk.tone)
+      .blitzToneCard(capacity.risk.tone, radius: 14)
     }.buttonStyle(BlitzCardButtonStyle()).help(capacity.reviewTitle)
   }
 
-  private var memoryTile: some View {
-    TrayTile(title: "Memory", page: .memory, navigation: navigation) {
-      HStack(alignment: .firstTextBaseline, spacing: 6) {
-        Text(memoryDisplay.value(snapshot)).font(.system(size: 26, weight: .semibold))
-          .monospacedDigit().contentTransition(.numericText())
-        Text(memoryDisplay == .available ? "available" : "used")
-          .font(BlitzType.body).foregroundStyle(BlitzUI.secondaryText)
-        Spacer(minLength: 0)
-        if memory.pressure == .warning || memory.pressure == .critical {
-          BlitzStatusBadge(
-            title: memory.pressure == .critical ? "Critical pressure" : "High pressure",
-            tone: memory.pressure == .critical ? .critical : .warning)
+  private var vitalsCard: some View {
+    HStack(spacing: 14) {
+      BlitzVitalRings(vitals: vitals, lineWidth: 6) { EmptyView() }
+        .frame(width: 92, height: 92)
+      VStack(spacing: 2) {
+        ForEach(vitals) { vital in
+          Button {
+            open(vital.page)
+          } label: {
+            HStack(spacing: 8) {
+              Circle().fill(vital.color).frame(width: 7, height: 7)
+              Text(vital.title).font(BlitzType.caption).foregroundStyle(BlitzUI.secondaryText)
+              Spacer(minLength: 4)
+              Text(vital.compactValue).font(BlitzType.label).monospacedDigit().lineLimit(1)
+                .foregroundStyle(
+                  vital.alertColor ?? BlitzUI.primaryText
+                )
+                .contentTransition(.numericText())
+              BlitzChevron()
+            }.padding(.horizontal, 8).frame(height: 30).contentShape(Rectangle())
+          }.buttonStyle(BlitzRowButtonStyle(radius: 8)).help("Open \(vital.title)")
         }
       }
-      ResourcePlot(
-        samples: monitor.resourceSamples,
-        kind: memoryDisplay == .available ? .availableMemory : .memory,
-        color: BlitzUI.mint, seconds: 60
-      ).frame(height: 34)
-      Text(memoryDetail).font(BlitzType.caption).monospacedDigit()
-        .foregroundStyle(BlitzUI.secondaryText)
     }
+    .padding(12)
+    .blitzHeroCard()
   }
 
-  private var cpuTile: some View {
-    TrayTile(title: "CPU", page: .cpu, navigation: navigation) {
-      Text(snapshot.cpuUsage.map(PercentText.make) ?? "—")
-        .font(.system(size: 20, weight: .semibold)).monospacedDigit()
-        .contentTransition(.numericText())
-      ResourcePlot(samples: monitor.resourceSamples, kind: .cpu, color: BlitzUI.mint, seconds: 60)
-        .frame(height: 22)
-    }
+  private var activityCard: some View {
+    VStack(alignment: .leading, spacing: 6) {
+      plotRow(
+        title: "Memory", page: .memory,
+        kind: memoryDisplay == .available ? .availableMemory : .memory, color: BlitzUI.mint)
+      plotRow(title: "CPU", page: .cpu, kind: .cpu, color: CleanPage.cpu.hue)
+    }.padding(.vertical, 10).padding(.horizontal, 4).blitzTable()
   }
 
-  private var storageTile: some View {
-    TrayTile(title: "Storage", page: .storage, navigation: navigation) {
-      HStack(alignment: .firstTextBaseline, spacing: 4) {
-        Text(ByteText.compact(snapshot.diskAvailable))
-          .font(.system(size: 20, weight: .semibold)).monospacedDigit()
-        Text("free").font(BlitzType.caption).foregroundStyle(BlitzUI.secondaryText)
-      }
-      CapacityBar(
-        usedRatio: snapshot.diskUsedRatio, tone: MenuBarTones.disk(snapshot)
-      ).frame(height: 22, alignment: .bottom)
-    }
+  private func plotRow(title: String, page: CleanPage, kind: ResourceKind, color: Color)
+    -> some View
+  {
+    Button {
+      open(page)
+    } label: {
+      HStack(spacing: 10) {
+        Text(title).font(BlitzType.caption).foregroundStyle(BlitzUI.secondaryText)
+          .frame(width: 50, alignment: .leading)
+        ResourcePlot(samples: monitor.resourceSamples, kind: kind, color: color, seconds: 60)
+          .frame(height: 26)
+      }.padding(.horizontal, 8).padding(.vertical, 4).contentShape(Rectangle())
+    }.buttonStyle(BlitzRowButtonStyle(radius: 8)).help("Open \(title)")
   }
 
   private func topAppsList(_ topApps: [MemoryApp]) -> some View {
-    VStack(alignment: .leading, spacing: 4) {
-      BlitzUI.sectionLabel("Using the most memory").padding(.horizontal, 2)
-      VStack(spacing: 0) {
-        ForEach(topApps) { app in
-          Button {
-            open(.memory)
-          } label: {
-            HStack(spacing: 10) {
-              ApplicationIcon(source: .file(app.bundleURL.path), size: 20, fallback: "app")
-              Text(app.name).font(BlitzType.body).lineLimit(1).truncationMode(.tail)
-              Spacer(minLength: 8)
-              Text(ByteText.compact(app.memoryBytes)).font(BlitzType.numeric)
-                .foregroundStyle(BlitzUI.supportingText)
-            }.padding(.horizontal, 10).frame(height: 34).contentShape(Rectangle())
-          }.buttonStyle(BlitzRowButtonStyle(radius: 8)).help("Open Memory")
-        }
-      }.padding(4).blitzTable()
-    }
+    VStack(alignment: .leading, spacing: 6) {
+      BlitzUI.sectionLabel("Using the most memory").padding(.horizontal, 8)
+      ForEach(topApps) { app in
+        Button {
+          open(.memory)
+        } label: {
+          HStack(spacing: 10) {
+            ApplicationIcon(source: .file(app.bundleURL.path), size: 22, fallback: "app")
+            VStack(alignment: .leading, spacing: 5) {
+              HStack {
+                Text(app.name).font(BlitzType.body).lineLimit(1).truncationMode(.tail)
+                Spacer(minLength: 8)
+                Text(ByteText.compact(app.memoryBytes)).font(BlitzType.numeric)
+                  .foregroundStyle(BlitzUI.supportingText)
+              }
+              share(app)
+            }
+          }.padding(.horizontal, 8).frame(height: 40).contentShape(Rectangle())
+        }.buttonStyle(BlitzRowButtonStyle(radius: 8)).help("Open Memory")
+      }
+    }.padding(.vertical, 10).padding(.horizontal, 4).blitzTable()
+  }
+
+  private func share(_ app: MemoryApp) -> some View {
+    let ratio =
+      snapshot.ramTotal > 0 ? min(1, Double(app.memoryBytes) / Double(snapshot.ramTotal)) : 0
+    return GeometryReader { proxy in
+      ZStack(alignment: .leading) {
+        Capsule().fill(Color.white.opacity(0.06))
+        Capsule().fill(BlitzUI.mint.opacity(0.8)).frame(width: max(3, proxy.size.width * ratio))
+      }
+    }.frame(height: 3).accessibilityHidden(true)
   }
 
   private var footer: some View {
@@ -165,39 +205,13 @@ struct BlitzTrayView: View {
         open(.overview)
       } label: {
         Text("Open dashboard").frame(maxWidth: .infinity)
-      }.blitzButton(.emphasized).controlSize(.regular)
-    }.padding(14)
+      }.blitzButton(.accent).controlSize(.regular)
+    }.padding(12)
   }
 
   private func open(_ page: CleanPage) {
     navigation.page = page
     openWindow.dashboard()
-  }
-}
-
-private struct TrayTile<Content: View>: View {
-  let title: String
-  let page: CleanPage
-  @ObservedObject var navigation: CleanNavigation
-  @ViewBuilder let content: () -> Content
-  @Environment(\.openWindow) private var openWindow
-
-  var body: some View {
-    Button {
-      navigation.page = page
-      openWindow.dashboard()
-    } label: {
-      VStack(alignment: .leading, spacing: 8) {
-        HStack {
-          Text(title).font(BlitzType.captionEmphasis).foregroundStyle(BlitzUI.secondaryText)
-          Spacer()
-          BlitzChevron()
-        }
-        content()
-      }
-      .padding(12).frame(maxWidth: .infinity, alignment: .leading)
-      .blitzTable()
-    }.buttonStyle(BlitzCardButtonStyle()).help("Open \(title)")
   }
 }
 
@@ -207,7 +221,62 @@ struct BlitzSettingsView: View {
   @ObservedObject var storage: StorageBreakdownModel
   @ObservedObject var recovery: AppRecoveryModel
   @ObservedObject var permissions: PermissionsModel
+  @ObservedObject var updates: AppUpdateController
   @State private var roots = DeveloperLocations.additionalProjectRoots
+
+  private var familySection: some View {
+    VStack(alignment: .leading, spacing: 12) {
+      HStack(alignment: .center, spacing: 8) {
+        Text("Our other apps").font(BlitzType.section)
+        Spacer()
+        if let wordmark = AppBrand.makerWordmark {
+          Image(nsImage: wordmark).resizable().scaledToFit().frame(height: 13)
+            .accessibilityLabel("BlitzReels")
+        }
+      }
+      VStack(spacing: 0) {
+        ForEach(AppBrand.family) { app in
+          FamilyAppRow(app: app)
+          if app.id != AppBrand.family.last?.id { BlitzRowDivider(leading: 56) }
+        }
+      }.padding(4).blitzTable()
+      HStack(spacing: 6) {
+        Text(
+          "BlitzClean \(AppBrand.version) by BlitzReels. Open source under MIT; your data stays on your Mac."
+        )
+        .font(BlitzType.caption).foregroundStyle(BlitzUI.secondaryText)
+        Link("Source code", destination: AppBrand.repositoryURL).buttonStyle(.plain)
+          .font(BlitzType.caption).underline().foregroundStyle(BlitzUI.supportingText)
+          .blitzPointingHand()
+      }
+    }
+  }
+
+  private var updatesSection: some View {
+    VStack(alignment: .leading, spacing: 12) {
+      HStack(alignment: .center, spacing: 16) {
+        VStack(alignment: .leading, spacing: 4) {
+          Text("Updates").font(BlitzType.section)
+          Text(updates.detail).font(BlitzType.body).foregroundStyle(BlitzUI.secondaryText)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        Spacer()
+        HStack(spacing: 8) {
+          if updates.status == .checking || updates.isWaitingForUpdater {
+            ProgressView().controlSize(.small)
+          }
+          Button(updates.actionTitle) { updates.check() }
+            .blitzButton(updates.version == nil ? .secondary : .accent).controlSize(.small)
+            .disabled(!updates.canCheck)
+        }
+      }
+      if updates.isAvailable {
+        Toggle(
+          "Check for updates automatically",
+          isOn: Binding(get: { updates.automaticChecks }, set: { updates.setAutomaticChecks($0) }))
+      }
+    }.panelCard(padding: 16)
+  }
 
   private var projectFolders: some View {
     VStack(alignment: .leading, spacing: 12) {
@@ -261,13 +330,8 @@ struct BlitzSettingsView: View {
         .panelCard(padding: 16)
         MemoryGuardControls(model: memory)
         projectFolders
-        VStack(alignment: .leading, spacing: 8) {
-          Text("BlitzClean \(AppBrand.version) · by BlitzReels")
-            .font(BlitzType.rowTitle)
-          Text("Open source under MIT. Metrics and cleanup history stay on your Mac.")
-            .font(BlitzType.body).foregroundStyle(BlitzUI.secondaryText)
-          Link("Source code and issues", destination: AppBrand.repositoryURL)
-        }
+        updatesSection
+        familySection
       }.font(BlitzType.callout).toggleStyle(BlitzSwitchStyle())
         .frame(maxWidth: .infinity, alignment: .leading).padding(BlitzUI.pagePadding)
     }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)

@@ -106,46 +106,67 @@ struct StorageCleanupView: View {
   @State private var worktreePending: DeveloperArtifact?
 
   private var cacheDetail: String {
-    if caches.scannedAt == nil { return "Unused app and package caches" }
-    if caches.candidates.isEmpty { return "Nothing unused for at least 7 days" }
-    return "\(caches.candidates.count) unused for at least 7 days"
+    if caches.scannedAt == nil { return "Known caches and old diagnostic reports" }
+    if caches.candidates.isEmpty { return "No eligible files in the checked locations" }
+    return "\(caches.candidates.count) eligible items · review before removing"
   }
 
   var body: some View {
-    ScrollView {
-      LazyVStack(alignment: .leading, spacing: 12) {
-        CleanupScanBar(
-          storage: storage, caches: caches, docker: docker, simulators: simulators,
-          repeats: storage.repeats, worktrees: worktrees.model)
-        SimulatorDevicesView(model: simulators, history: storage.overview)
-        RemovedBeforeView(model: storage.repeats, pending: $repeatPending)
-        BlitzStorageSection(
-          title: "Caches", symbol: "archivebox",
-          detail: cacheDetail,
-          trailing: caches.scannedAt == nil || caches.candidates.isEmpty
-            ? nil : ByteText.full(caches.totalBytes),
-          showsContent: caches.scannedAt == nil || caches.isScanning
-            || !caches.candidates.isEmpty
-        ) {
-          QuickCleanView(model: caches, history: storage.overview)
-        }
-        DeveloperCleanupView(model: storage)
-        BlitzStorageSection(
-          title: "Docker", symbol: "shippingbox",
-          detail: docker.snapshot == nil
-            ? "Unused images and build cache" : "Reclaimable · containers and volumes protected",
-          trailing: docker.snapshot.map { ByteText.full($0.rebuildableBytes) },
-          showsContent: true
-        ) {
-          DockerStorageView(model: docker)
-        }
-        WorktreeCleanupView(
-          model: worktrees.model, processes: worktrees.processes,
-          workspaces: worktrees.workspaces, pending: $worktreePending)
-        RemovalLogView(history: storage.overview)
-      }.padding(BlitzUI.pagePadding)
+    ScrollViewReader { proxy in
+      ScrollView {
+        LazyVStack(alignment: .leading, spacing: 12) {
+          CleanupScanBar(
+            storage: storage, caches: caches, docker: docker, simulators: simulators,
+            repeats: storage.repeats, worktrees: worktrees.model)
+          BlitzStorageSection(
+            title: "System Data cleanup", symbol: "archivebox",
+            detail: cacheDetail,
+            trailing: caches.scannedAt == nil || caches.candidates.isEmpty
+              ? nil : ByteText.full(caches.totalBytes),
+            showsContent: true
+          ) {
+            VStack(alignment: .leading, spacing: 5) {
+              Text(
+                "Rebuildable caches unchanged for 7 days and diagnostic reports older than 30 days."
+              )
+              Text("macOS, swap, backups, app databases, and personal files stay protected.")
+              Text(
+                "This is the eligible cleanup size, not the full System Data total shown by macOS.")
+            }.font(BlitzType.caption).foregroundStyle(BlitzUI.secondaryText)
+              .frame(maxWidth: .infinity, alignment: .leading).padding(16)
+            BlitzRowDivider(leading: 0)
+            QuickCleanView(model: caches, history: storage.overview)
+          }
+          .id(StorageCleanupFocus.caches)
+          SimulatorDevicesView(model: simulators, history: storage.overview)
+            .id(StorageCleanupFocus.simulators)
+          RemovedBeforeView(model: storage.repeats, pending: $repeatPending)
+            .id(StorageCleanupFocus.regrown)
+          DeveloperCleanupView(model: storage)
+            .id(StorageCleanupFocus.projects)
+          BlitzStorageSection(
+            title: "Docker", symbol: "shippingbox",
+            detail: docker.snapshot == nil
+              ? "Unused images and build cache" : "Reclaimable · containers and volumes protected",
+            trailing: docker.snapshot.map { ByteText.full($0.rebuildableBytes) },
+            showsContent: true
+          ) {
+            DockerStorageView(model: docker)
+          }.id(StorageCleanupFocus.docker)
+          WorktreeCleanupView(
+            model: worktrees.model, processes: worktrees.processes,
+            workspaces: worktrees.workspaces, pending: $worktreePending)
+          RemovalLogView(history: storage.overview)
+        }.padding(BlitzUI.pagePadding)
+      }
+      .task(id: storage.cleanupFocus) {
+        guard let focus = storage.cleanupFocus else { return }
+        await Task.yield()
+        proxy.scrollTo(focus, anchor: .top)
+        storage.cleanupFocus = nil
+      }
     }
-    .task { storage.scanIfNeeded() }
+    .task { storage.scanCleanupIfNeeded() }
     .safeAreaInset(edge: .bottom, spacing: 0) {
       if let artifact = worktreePending {
         BlitzConfirmation(
@@ -197,6 +218,8 @@ private struct CleanupScanBar: View {
       if isScanning {
         ProgressView().controlSize(.small)
         Text("Scanning devices, caches, projects, Docker, and worktrees…")
+      } else if storage.incompleteMeasurements > 0 {
+        Text("Some project folders are unmeasured · Scan again to finish")
       } else if let date = storage.scannedAt {
         Text("Scanned \(date.formatted(date: .abbreviated, time: .shortened))")
       }
@@ -211,7 +234,7 @@ private struct CleanupScanBar: View {
   }
 
   private func scanAll() {
-    storage.scan()
+    storage.scanCleanup()
     caches.scan()
     docker.refresh()
     repeats.check(force: true)

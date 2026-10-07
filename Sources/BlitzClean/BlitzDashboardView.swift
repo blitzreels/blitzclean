@@ -105,9 +105,11 @@ struct DashboardServices {
   let docker: DockerStorageModel
   let folders: FolderExplorerModel
   let launchAtLogin: LaunchAtLoginController
+  let updates: AppUpdateController
 }
 
 struct BlitzDashboardView: View {
+  @StateObject private var audit = DashboardAuditModel()
   @ObservedObject var monitor: SystemMonitor
   @ObservedObject var memory: MemoryRescueModel
   @ObservedObject var cleanup: QuickCleanModel
@@ -162,7 +164,8 @@ struct BlitzDashboardView: View {
     case .overview:
       BlitzOverviewView(
         monitor: monitor, memory: memory, repeats: storage.repeats, processes: processes,
-        recovery: services.recovery, navigation: navigation)
+        recovery: services.recovery, navigation: navigation, cleanup: cleanup,
+        history: storage.overview, storage: storage, docker: services.docker, audit: audit)
     case .memory: MemoryControlView(monitor: monitor, model: memory, processes: processes)
     case .cpu: CPUControlView(monitor: monitor)
     case .storage:
@@ -177,7 +180,7 @@ struct BlitzDashboardView: View {
     case .settings:
       BlitzSettingsView(
         memory: memory, launchAtLogin: services.launchAtLogin, storage: storage,
-        recovery: services.recovery, permissions: services.permissions)
+        recovery: services.recovery, permissions: services.permissions, updates: services.updates)
     }
   }
 
@@ -188,11 +191,13 @@ private struct BlitzSidebar: View {
   @ObservedObject var recovery: AppRecoveryModel
   @ObservedObject var memory: MemoryRescueModel
   @ObservedObject var permissions: PermissionsModel
+  @AppStorage(PermissionSkips.key) private var skippedPermissions = ""
 
   private var missingPermissions: Int {
     PermissionState(
       notifications: memory.notificationsAllowed, accessibility: recovery.accessibilityEnabled,
-      fullDiskAccess: permissions.fullDiskAccess
+      fullDiskAccess: permissions.fullDiskAccess,
+      skipped: PermissionSkips.decode(skippedPermissions)
     ).missingCount
   }
 
@@ -226,6 +231,7 @@ private struct BlitzSidebar: View {
       HStack(spacing: 10) {
         Image(systemName: page.symbol).symbolVariant(selected ? .fill : .none)
           .font(.system(size: 14, weight: .medium)).frame(width: 20)
+          .foregroundStyle(selected ? BlitzUI.mint : BlitzUI.secondaryText)
         Text(page.rawValue).font(BlitzType.callout).lineLimit(1)
         Spacer(minLength: 4)
         if page == .recovery, recovery.attentionCount > 0 {

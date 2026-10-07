@@ -7,6 +7,7 @@ struct MemoryControlView: View {
   @ObservedObject var processes: DevProcessModel
   @AppStorage("history.memorySeconds") private var seconds = 86_400.0
   @State private var query = ""
+  @State private var listingMode = MemoryListingMode.apps
   @State private var showsAllThreads = false
   @State private var pending: MemoryAction?
   @State private var appResult: String?
@@ -38,17 +39,31 @@ struct MemoryControlView: View {
     return ScrollView {
       VStack(alignment: .leading, spacing: 24) {
         summaryCard
-        if query.isEmpty || !listing.threads.isEmpty { threadSection(listing.threads) }
-        if query.isEmpty || !listing.apps.isEmpty { appSection(listing) }
-        if !query.isEmpty && listing.apps.isEmpty && listing.threads.isEmpty {
-          Text("No matching apps or threads").font(BlitzType.body)
-            .foregroundStyle(BlitzUI.secondaryText)
+        BlitzSegmentedPicker(
+          title: "Memory breakdown", options: MemoryListingMode.allCases,
+          selection: $listingMode, label: { $0.rawValue }
+        )
+        .frame(maxWidth: 280)
+        if listingMode == .processes {
+          MemoryProcessesView(
+            processes: processes.resources, isLoading: processes.scannedAt == nil,
+            query: query, scanMessage: processes.statusMessage)
+        } else {
+          if query.isEmpty || !listing.threads.isEmpty { threadSection(listing.threads) }
+          if query.isEmpty || !listing.apps.isEmpty { appSection(listing) }
+          if !query.isEmpty && listing.apps.isEmpty && listing.threads.isEmpty {
+            Text("No matching apps or threads").font(BlitzType.body)
+              .foregroundStyle(BlitzUI.secondaryText)
+          }
         }
         pressureSection
       }.padding(BlitzUI.pagePadding)
     }
     .safeAreaInset(edge: .top, spacing: 0) {
-      PageSearchBar(title: "Search apps or AI threads", text: $query)
+      PageSearchBar(
+        title: listingMode == .processes
+          ? "Search processes, apps or PID" : "Search apps or AI threads",
+        text: $query)
     }
     .task {
       model.refresh()

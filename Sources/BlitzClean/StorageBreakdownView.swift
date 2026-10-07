@@ -254,7 +254,7 @@ private struct CleanupItemRow: View {
         .frame(width: 110, alignment: .trailing)
         .help(
           item.lastActivityAt?.formatted(date: .abbreviated, time: .shortened)
-            ?? "No recent project activity found")
+            ?? "Project activity could not be fully checked")
 
         if let processes = item.activeProcesses, !processes.isEmpty {
           BlitzStatusBadge(title: "\(processes.count) running", tone: .warning)

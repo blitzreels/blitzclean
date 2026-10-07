@@ -2,35 +2,53 @@ import CryptoKit
 import Darwin
 import Foundation
 
+enum CleanupDataKind: Sendable {
+  case cache
+  case diagnosticReport
+
+  var minimumAgeDays: Int { self == .cache ? 7 : 30 }
+}
+
 struct CacheRule: Sendable {
   let title: String
   let path: String
   let recipe: String
   let owners: Set<String>
+  let kind: CleanupDataKind
 
   static var standard: [Self] {
     let home = FileManager.default.homeDirectoryForCurrentUser.path
     return [
       .init(
         title: "npm downloads", path: home + "/.npm/_cacache",
-        recipe: "npm downloads packages again when needed.", owners: ["npm", "pnpm", "npx"]),
+        recipe: "npm downloads packages again when needed.", owners: ["npm", "pnpm", "npx"],
+        kind: .cache),
       .init(
         title: "Homebrew downloads", path: home + "/Library/Caches/Homebrew/downloads",
-        recipe: "Homebrew downloads installers again when needed.", owners: ["brew", "ruby"]),
+        recipe: "Homebrew downloads installers again when needed.", owners: ["brew", "ruby"],
+        kind: .cache),
       .init(
         title: "pip cache", path: home + "/Library/Caches/pip",
-        recipe: "pip downloads and builds packages again.", owners: ["pip", "pip3"]),
+        recipe: "pip downloads and builds packages again.", owners: ["pip", "pip3"], kind: .cache),
       .init(
         title: "pip downloads", path: home + "/.cache/pip",
-        recipe: "pip downloads and builds packages again.", owners: ["pip", "pip3"]),
+        recipe: "pip downloads and builds packages again.", owners: ["pip", "pip3"], kind: .cache),
       .init(
         title: "Yarn cache", path: home + "/Library/Caches/Yarn",
-        recipe: "Yarn downloads packages again.", owners: ["yarn"]),
+        recipe: "Yarn downloads packages again.", owners: ["yarn"], kind: .cache),
       .init(
         title: "Xcode build data", path: home + "/Library/Developer/Xcode/DerivedData",
         recipe: "Xcode rebuilds indexes and intermediates. The next build takes longer.",
-        owners: ["Xcode", "xcodebuild", "swift", "swift-frontend", "clang"]),
-    ]
+        owners: ["Xcode", "xcodebuild", "swift", "swift-frontend", "clang"], kind: .cache),
+    ] + SystemDataCatalog.rules(home: home)
+  }
+
+  func accepts(_ path: String) -> Bool {
+    guard kind == .diagnosticReport else { return true }
+    var info = stat()
+    return lstat(path, &info) == 0 && info.st_mode & S_IFMT == S_IFREG
+      && ["ips", "crash", "diag", "hang", "spin"].contains(
+        URL(fileURLWithPath: path).pathExtension.lowercased())
   }
 }
 
@@ -71,7 +89,7 @@ enum CacheCleanError: LocalizedError {
     switch self {
     case .outsideRoot: "This item is outside the supported caches or is a symbolic link."
     case .changed: "This cache changed after the scan. Scan again to review it."
-    case .recent: "This cache was used within the last seven days. It stays on your Mac."
+    case .recent: "This item is too recent for this cleanup rule. It stays on your Mac."
     case .busy: "A process is using this cache or its package manager. Close it and scan again."
     case .unverified: "Activity or disk checks could not be completed. This cache was kept."
     case .limit: "This cache exceeds the scan limit. Review it in Finder."
@@ -97,6 +115,7 @@ enum CacheCleaner {
       cursor += 1
       var info = stat()
       guard lstat(path, &info) == 0 else { throw CacheCleanError.unverified }
+      guard info.st_uid == getuid() else { throw CacheCleanError.unverified }
       let type = info.st_mode & S_IFMT
       guard type == S_IFREG || type == S_IFDIR else { throw CacheCleanError.outsideRoot }
       bytes += UInt64(max(0, info.st_blocks)) * 512
@@ -120,6 +139,7 @@ enum CacheCleaner {
     guard ReviewFile.canonicalPath(root) == root,
       ReviewFile.canonicalPath(candidate.path) == candidate.path,
       URL(fileURLWithPath: candidate.path).deletingLastPathComponent().path == root,
+      candidate.rule.accepts(candidate.path),
       CleanupVolume.read(candidate.path)?.isInternal == true
     else { throw CacheCleanError.outsideRoot }
   }
@@ -159,12 +179,16 @@ enum CacheCleaner {
       }
       for child in children.sorted() {
         let path = rule.path + "/" + child
+        guard rule.accepts(path) else { continue }
         do {
           let contents = try tree(
             .init(path: path, deadline: min(deadline, .now.addingTimeInterval(8))))
           let candidate = CacheCandidate(path: path, rule: rule, tree: contents)
           try validateLocation(candidate)
-          guard contents.newest < request.date.addingTimeInterval(-7 * 86_400), contents.bytes > 0
+          guard
+            contents.newest
+              < request.date.addingTimeInterval(-Double(rule.kind.minimumAgeDays) * 86_400),
+            contents.bytes > 0
           else { continue }
           candidates.append(candidate)
         } catch {
@@ -188,7 +212,10 @@ enum CacheCleaner {
     guard activity.status == 1, activity.output.isEmpty else { throw CacheCleanError.unverified }
     let current = try tree(.init(path: candidate.path, deadline: .now.addingTimeInterval(15)))
     guard current == candidate.tree else { throw CacheCleanError.changed }
-    guard current.newest < Date.now.addingTimeInterval(-7 * 86_400) else {
+    guard
+      current.newest
+        < Date.now.addingTimeInterval(-Double(candidate.rule.kind.minimumAgeDays) * 86_400)
+    else {
       throw CacheCleanError.recent
     }
     try validateLocation(candidate)
@@ -197,12 +224,38 @@ enum CacheCleaner {
     return .init(
       id: UUID().uuidString, date: .now, title: "Cleaned \(candidate.rule.title)",
       paths: [candidate.path],
-      before: before, after: before.flatMap { CleanupVolume.read($0.path) })
+      before: before, after: before.flatMap { CleanupVolume.read($0.path) }, bytes: current.bytes)
   }
+}
+
+protocol QuickCleanDriver: Sendable {
+  func scan() async -> CacheScanResult
+  func delete(_ candidate: CacheCandidate) async throws -> CleanupWin
+}
+
+struct NativeQuickCleanDriver: QuickCleanDriver {
+  func scan() async -> CacheScanResult {
+    await Task.detached(priority: .utility) {
+      CacheCleaner.scan(.init(rules: CacheRule.standard, date: .now))
+    }.value
+  }
+
+  func delete(_ candidate: CacheCandidate) async throws -> CleanupWin {
+    try await Task.detached(priority: .utility) { try CacheCleaner.delete(candidate) }.value
+  }
+}
+
+struct QuickCleanResult: Equatable {
+  let removedCount: Int
+  let skippedCount: Int
+  let removedBytes: UInt64
+  let availableGain: UInt64?
 }
 
 @MainActor
 final class QuickCleanModel: ObservableObject {
+  private let driver: any QuickCleanDriver
+  private var scanNotes: [String] = []
   @Published private(set) var candidates: [CacheCandidate] = []
   @Published private(set) var notes: [String] = []
   @Published private(set) var isScanning = false
@@ -210,7 +263,19 @@ final class QuickCleanModel: ObservableObject {
   @Published private(set) var scannedAt: Date?
   @Published private(set) var status: String?
   @Published private(set) var completed = 0
+  @Published private(set) var total = 0
+  @Published private(set) var activeTitle: String?
+  @Published private(set) var result: QuickCleanResult?
   @Published var selected: Set<String> = []
+
+  init(driver: any QuickCleanDriver = NativeQuickCleanDriver()) {
+    self.driver = driver
+  }
+
+  var isBusy: Bool { isScanning || isCleaning }
+  var quickCandidates: [CacheCandidate] { candidates.filter { $0.rule.kind == .cache } }
+  var quickBytes: UInt64 { quickCandidates.reduce(0) { $0 + $1.tree.bytes } }
+  var canClean: Bool { !isBusy && scannedAt != nil && result == nil && !quickCandidates.isEmpty }
 
   var selectedItems: [CacheCandidate] {
     selected.isEmpty ? [] : candidates.filter { selected.contains($0.path) }
@@ -223,11 +288,12 @@ final class QuickCleanModel: ObservableObject {
   func scan() {
     guard !isScanning, !isCleaning else { return }
     isScanning = true
+    result = nil
+    status = nil
     Task {
-      let result = await Task.detached(priority: .utility) {
-        CacheCleaner.scan(.init(rules: CacheRule.standard, date: .now))
-      }.value
+      let result = await driver.scan()
       candidates = result.candidates
+      scanNotes = result.notes
       notes = result.notes
       selected.formIntersection(candidates.map(\.path))
       scannedAt = .now
@@ -235,27 +301,39 @@ final class QuickCleanModel: ObservableObject {
     }
   }
 
+  func cleanAll(history: CleanupOverviewModel) {
+    guard canClean else { return }
+    selected = Set(quickCandidates.map(\.path))
+    clean(history: history)
+  }
+
   func clean(history: CleanupOverviewModel) {
     guard !isCleaning, !isScanning, !selectedItems.isEmpty else { return }
     let items = selectedItems
     isCleaning = true
     completed = 0
+    total = items.count
+    result = nil
+    activeTitle = nil
     status = "Checking activity before cleanup…"
     Task {
       var failures: [String] = []
       var removed: Set<String> = []
+      var removedBytes: UInt64 = 0
+      let preservedScanNotes = scanNotes
       let before = CleanupVolume.read(FileManager.default.homeDirectoryForCurrentUser.path)
       for item in items {
+        activeTitle = item.rule.title
         do {
-          let win = try await Task.detached(priority: .utility) { try CacheCleaner.delete(item) }
-            .value
+          let win = try await driver.delete(item)
           history.record(win)
           removed.insert(item.path)
+          removedBytes += item.tree.bytes
         } catch {
           failures.append("\(item.rule.title) / \(item.name): \(error.localizedDescription)")
         }
         completed += 1
-        status = "Reviewed \(completed) of \(items.count) caches"
+        status = "Reviewed \(completed) of \(items.count) items"
       }
       let after = before.flatMap { CleanupVolume.read($0.path) }
       let gain = before.flatMap { old in
@@ -263,10 +341,14 @@ final class QuickCleanModel: ObservableObject {
       }
       candidates.removeAll { removed.contains($0.path) }
       selected.subtract(removed)
-      notes = failures
+      notes = failures + preservedScanNotes
+      result = .init(
+        removedCount: removed.count, skippedCount: failures.count,
+        removedBytes: removedBytes, availableGain: gain)
       status =
-        "Cleaned \(removed.count) caches · \(gain.map(ByteText.full) ?? "unmeasured") more disk space available.\(failures.isEmpty ? "" : " \(failures.count) kept; see details.") Other disk activity affects this measurement."
+        "Cleaned \(removed.count) items · \(gain.map(ByteText.full) ?? "unmeasured") more disk space available.\(failures.isEmpty ? "" : " \(failures.count) kept; see details.") Other disk activity affects this measurement."
       isCleaning = false
+      activeTitle = nil
     }
   }
 }
