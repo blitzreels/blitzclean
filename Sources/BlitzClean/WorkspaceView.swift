@@ -6,6 +6,10 @@ struct WorkspaceProjectsView: View {
   @ObservedObject var controller: WorkspaceController
   @State private var query = ""
   @State private var editing: WorkspacePreference?
+  @State private var pending: LeftoverAction?
+  @State private var showsAllLeftovers = false
+
+  private static let leftoverLimit = 8
 
   var body: some View {
     Group {
@@ -35,9 +39,12 @@ struct WorkspaceProjectsView: View {
         }
         let running = projects.filter(\.isRunning)
         let stopped = projects.filter { !$0.isRunning }
+        let leftovers = processes.visibleLeftovers.filter { query.isEmpty || $0.matches(query) }
         if !running.isEmpty { section("Active projects", running) }
+        if !leftovers.isEmpty { leftoverSection(leftovers) }
+        if !processes.hiddenLeftoverNames.isEmpty, query.isEmpty { hiddenLeftoversLine }
         if !stopped.isEmpty { section("Saved projects", stopped) }
-        if projects.isEmpty {
+        if projects.isEmpty && leftovers.isEmpty {
           Text(
             query.isEmpty
               ? "No projects yet. Running projects appear here; use Add project to save one."
@@ -45,6 +52,16 @@ struct WorkspaceProjectsView: View {
           ).font(BlitzType.body).foregroundStyle(BlitzUI.secondaryText)
         }
       }.padding(BlitzUI.pagePadding)
+    }
+    .safeAreaInset(edge: .bottom, spacing: 0) {
+      if let action = pending {
+        BlitzConfirmation(
+          title: action.title, message: action.message, confirmTitle: action.confirmTitle,
+          onConfirm: {
+            pending = nil
+            processes.quitLeftovers(action.processes, force: action.force)
+          }, onCancel: { pending = nil })
+      }
     }
     .navigationTitle("Projects")
     .onChange(of: controller.preferences) { processes.updateProjectTargets() }
@@ -158,11 +175,148 @@ struct WorkspaceProjectsView: View {
     }.blitzRow()
   }
 
+  // MARK: Leftover processes
+
+  private func leftoverSection(_ leftovers: [LeftoverProcess]) -> some View {
+    let visible =
+      showsAllLeftovers || !query.isEmpty ? leftovers : Array(leftovers.prefix(Self.leftoverLimit))
+    let stopping = !processes.stoppingLeftovers.isEmpty
+    return VStack(alignment: .leading, spacing: 10) {
+      BlitzSectionHeader(title: "Leftover processes", count: leftovers.count) {
+        if leftovers.count > 1 {
+          Button("Quit \(leftovers.count)…") { pending = .quit(leftovers) }
+            .blitzButton(.secondary).controlSize(.small).disabled(stopping || pending != nil)
+            .help("Ask every listed process to quit")
+        }
+      }
+      if let message = processes.leftoverMessage {
+        BlitzStatusLine(text: message, tone: .working)
+      }
+      LazyVStack(spacing: 0) {
+        ForEach(visible) { process in
+          leftoverRow(process)
+          if process.id != visible.last?.id { BlitzRowDivider(leading: 56) }
+        }
+      }.blitzTable()
+      if leftovers.count > Self.leftoverLimit, query.isEmpty {
+        BlitzShowAllButton(
+          total: leftovers.count, noun: "processes", isExpanded: $showsAllLeftovers)
+      }
+    }
+  }
+
+  private func leftoverRow(_ process: LeftoverProcess) -> some View {
+    LeftoverProcessRow(
+      process: process, isBusy: processes.stoppingLeftovers.contains(process.processID),
+      onQuit: { processes.quitLeftovers([process], force: false) },
+      onForceQuit: { pending = .forceQuit(process) },
+      onHide: { processes.setLeftoverName(process.executableName, hidden: true) })
+  }
+
+  private var hiddenLeftoversLine: some View {
+    HStack(spacing: 8) {
+      Text("Hidden leftovers: \(processes.hiddenLeftoverNames.joined(separator: ", "))")
+        .font(BlitzType.caption).foregroundStyle(BlitzUI.tertiaryText).lineLimit(1)
+        .truncationMode(.tail)
+      Button("Show again") { processes.showHiddenLeftovers() }
+        .blitzButton(.quiet).controlSize(.small)
+    }
+  }
+
   private func chooseProject() {
     guard let path = Finder.chooseFolder() else { return }
     editing = WorkspacePreference(
       directory: WorkspacePreferences.canonical(path),
       name: URL(fileURLWithPath: path).lastPathComponent, keepRunning: false, startCommand: nil)
+  }
+}
+
+struct LeftoverProcessRow: View {
+  let process: LeftoverProcess
+  let isBusy: Bool
+  let onQuit: () -> Void
+  let onForceQuit: () -> Void
+  let onHide: () -> Void
+
+  var body: some View {
+    HStack(spacing: 12) {
+      ProjectIcon(
+        directory: process.workingDirectory, processName: process.executableName, size: 28,
+        fallbackSymbol: "terminal.fill")
+      VStack(alignment: .leading, spacing: 2) {
+        Text(process.title).font(BlitzType.rowTitle).lineLimit(1)
+        Text(detail).font(BlitzType.caption).foregroundStyle(BlitzUI.secondaryText)
+          .lineLimit(1).truncationMode(.middle)
+      }.frame(maxWidth: .infinity, alignment: .leading)
+        .help("Still running after the app or terminal that started it closed.")
+      BlitzTrailingValue(
+        value: process.memoryBytes.map(ByteText.full) ?? "—",
+        detail: "\(process.cpuPercent.formatted(.number.precision(.fractionLength(0))))% CPU"
+      ).frame(width: 80, alignment: .trailing)
+      BlitzProcessButton(
+        title: "Quit", label: "Quit \(process.title)", isBusy: isBusy, action: onQuit
+      )
+      .frame(width: 96, alignment: .trailing)
+      .help("Ask \(process.title) to quit.")
+      BlitzActionMenu(label: "More actions for \(process.title)") {
+        Button("Force Quit…", role: .destructive, action: onForceQuit)
+        if let directory = process.workingDirectory {
+          Button("Show folder in Finder") { Finder.reveal(directory) }
+        }
+        Button("Copy process ID") { Pasteboard.copy(String(process.processID)) }
+        Divider()
+        Button("Hide \(process.executableName)", action: onHide)
+      }.disabled(isBusy)
+    }.blitzRow()
+  }
+
+  private var detail: String {
+    let home = FileManager.default.homeDirectoryForCurrentUser.path
+    let directory = process.workingDirectory.map { path in
+      path == home || path.hasPrefix(home + "/") ? "~" + path.dropFirst(home.count) : path
+    }
+    return [
+      directory, "PID \(process.processID)",
+      "up \(MemoryControlView.uptime(since: process.startedAt))",
+    ].compactMap { $0 }.joined(separator: " · ")
+  }
+}
+
+private enum LeftoverAction {
+  case quit([LeftoverProcess])
+  case forceQuit(LeftoverProcess)
+
+  var processes: [LeftoverProcess] {
+    switch self {
+    case .quit(let processes): processes
+    case .forceQuit(let process): [process]
+    }
+  }
+
+  var force: Bool {
+    if case .forceQuit = self { return true }
+    return false
+  }
+
+  var title: String {
+    switch self {
+    case .quit(let processes): "Quit \(processes.count) leftover processes?"
+    case .forceQuit(let process): "Force quit \(process.title)?"
+    }
+  }
+
+  var message: String {
+    let memory = ByteText.full(processes.compactMap(\.memoryBytes).reduce(0, +))
+    return switch self {
+    case .quit(let processes):
+      "The app or terminal that started them already closed. Each one is asked to quit and can still save its work. \(processes.map(\.title).joined(separator: ", ")) · \(memory)."
+    case .forceQuit:
+      "It ends immediately and cannot save its work. \(memory)."
+    }
+  }
+
+  var confirmTitle: String {
+    force ? "Force Quit" : "Quit all"
   }
 }
 

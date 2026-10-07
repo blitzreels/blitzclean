@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Projects
+
+- Add Leftover processes: processes that kept running after the app or terminal that started them closed,
+  with RAM, CPU, folder, and uptime. Quit runs at once; Quit all and Force Quit ask first. Each signal checks
+  the process identity again. Launchd jobs, apps, macOS services, AI sessions, and Keep running projects
+  are never listed.
+
 ## 1.3.0 - 2026-10-07
 
 ### Updates

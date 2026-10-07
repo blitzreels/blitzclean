@@ -109,6 +109,11 @@ so it stops during a kernel stall, suspension, or app termination.
 and resolves project ancestry off the main actor. The UI reuses the resulting directory map and groups workers
 without listening ports with their project. Scans expose incomplete results instead of claiming full coverage.
 
+`LeftoverProcessFinder` reads the same snapshot for processes parented to launchd that it does not manage.
+It needs no extra process reads; it runs `launchctl list` (three-second limit) only when there are candidates,
+and shows nothing when that command fails. `LeftoverProcessStopper` checks the start identity, executable,
+owner, launchd parent, and Keep running policy again immediately before it sends SIGTERM or SIGKILL.
+
 Projects offer Pause/Resume and a per-project opt-in for automatic pausing after sustained pressure.
 Automatic actions use a recent identity-checked process snapshot, protect Keep running projects and AI/tool sessions,
 and pause at most one eligible project per 30 seconds. Pause sends SIGSTOP to the eligible project runtimes;

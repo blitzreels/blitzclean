@@ -402,14 +402,21 @@ struct DevProcessScanner: Sendable {
         else { return nil }
         return (process.processID, identity)
       })
+    let startTimes = identities.mapValues {
+      Double($0.process.startSeconds) + Double($0.process.startMicroseconds) / 1_000_000
+    }
     let threads = AIThreadGrouping.threads(
       AIThreadInput(
         records: records, directories: workingDirectories, footprints: footprints,
-        startTimes: identities.mapValues {
-          Double($0.process.startSeconds) + Double($0.process.startMicroseconds) / 1_000_000
-        },
+        startTimes: startTimes,
         home: FileManager.default.homeDirectoryForCurrentUser.path,
         stoppedIDs: Set(identities.compactMap { $0.value.process.stopped ? $0.key : nil })))
+    let leftovers = LeftoverProcessFinder.find(
+      .init(
+        records: records, executables: executables, directories: workingDirectories,
+        footprints: footprints, startTimes: startTimes, apps: .current(),
+        excludedIDs: Set(threads.flatMap(\.processIDs)),
+        keptRunningRoots: WorkspacePreferences.load().filter(\.keepRunning).map(\.directory)))
     let resources = ResourceOwnership.processes(
       .init(
         records: records, directories: workingDirectories, footprints: footprints,
@@ -424,11 +431,9 @@ struct DevProcessScanner: Sendable {
       threads: AIThreadNames.enrich(
         .init(
           threads: threads, records: records,
-          startTimes: identities.mapValues {
-            Double($0.process.startSeconds) + Double($0.process.startMicroseconds) / 1_000_000
-          }, home: FileManager.default.homeDirectoryForCurrentUser)),
-      resources: resources, workspaceRoots: roots,
-      incomplete: recordResult.status != 0 || portResult.status < 0)
+          startTimes: startTimes, home: FileManager.default.homeDirectoryForCurrentUser)),
+      resources: resources, workspaceRoots: roots, leftovers: leftovers ?? [],
+      incomplete: recordResult.status != 0 || portResult.status < 0 || leftovers == nil)
   }
 
   private func dedupeListeners(_ processes: [DevProcess]) -> [DevProcess] {
@@ -528,6 +533,11 @@ final class DevProcessModel: ObservableObject {
   @Published private(set) var actingProjects: Set<String> = []
   @Published private(set) var projectMessages: [String: String] = [:]
   @Published private(set) var scanDuration: TimeInterval = 0
+  @Published private(set) var leftovers: [LeftoverProcess] = []
+  @Published private(set) var stoppingLeftovers: Set<Int32> = []
+  @Published private(set) var leftoverMessage: String?
+  @Published private(set) var hiddenLeftoverNames =
+    UserDefaults.standard.stringArray(forKey: LeftoverProcessFinder.hiddenKey) ?? []
   private let sentinel = PressureSentinel()
   private let scanner = DevProcessScanner()
   private let prober = PortProber()
@@ -599,6 +609,7 @@ final class DevProcessModel: ObservableObject {
       resources = scanned.resources
       workspaceRoots = scanned.workspaceRoots
       threads = scanned.threads
+      leftovers = scanned.leftovers
       ResourceSnapshotCache.groups = ResourceOwnership.groups(scanned.resources)
       ResourceSnapshotCache.scannedAt = .now
       identities = scanned.identities
@@ -859,6 +870,79 @@ final class DevProcessModel: ObservableObject {
       stoppingThreads.remove(thread.id)
       refresh()
     }
+  }
+
+  /// Leftovers whose executable name the user has not hidden.
+  var visibleLeftovers: [LeftoverProcess] {
+    let hidden = Set(hiddenLeftoverNames)
+    return leftovers.filter { !hidden.contains($0.executableName) }
+  }
+
+  func setLeftoverName(_ name: String, hidden: Bool) {
+    hiddenLeftoverNames.removeAll { $0 == name }
+    if hidden { hiddenLeftoverNames.append(name) }
+    UserDefaults.standard.set(hiddenLeftoverNames, forKey: LeftoverProcessFinder.hiddenKey)
+  }
+
+  func showHiddenLeftovers() {
+    hiddenLeftoverNames = []
+    UserDefaults.standard.removeObject(forKey: LeftoverProcessFinder.hiddenKey)
+  }
+
+  /// Quit (SIGTERM) or Force Quit (SIGKILL). Each process is checked again first, and
+  /// Quit never turns into Force Quit.
+  func quitLeftovers(_ targets: [LeftoverProcess], force: Bool) {
+    let requests = targets.compactMap { process -> LeftoverStopRequest? in
+      guard !stoppingLeftovers.contains(process.processID),
+        let expected = identities[process.processID]
+      else { return nil }
+      return LeftoverStopRequest(process: process, expected: expected, force: force)
+    }
+    guard !requests.isEmpty else { return }
+    let ids = requests.map(\.process.processID)
+    stoppingLeftovers.formUnion(ids)
+    leftoverMessage = nil
+    Task { [weak self] in
+      let outcome = await Task.detached(priority: .userInitiated) {
+        () async -> (signaled: [LeftoverStopRequest], running: Int) in
+        let signaled = requests.filter { LeftoverProcessStopper.signal($0) }
+        for _ in 0..<12 {
+          if !signaled.contains(where: LeftoverProcessStopper.isCurrent) { break }
+          try? await Task.sleep(for: .milliseconds(250))
+        }
+        return (signaled, signaled.filter(LeftoverProcessStopper.isCurrent).count)
+      }.value
+      guard let self else { return }
+      leftoverMessage = Self.leftoverMessage(
+        .init(requested: requests, signaled: outcome.signaled, running: outcome.running))
+      stoppingLeftovers.subtract(ids)
+      refresh()
+    }
+  }
+
+  struct LeftoverOutcome {
+    let requested: [LeftoverStopRequest]
+    let signaled: [LeftoverStopRequest]
+    let running: Int
+  }
+
+  nonisolated static func leftoverMessage(_ outcome: LeftoverOutcome) -> String {
+    let skipped = outcome.requested.count - outcome.signaled.count
+    let ended = outcome.signaled.count - outcome.running
+    let force = outcome.requested.first?.force == true
+    guard outcome.requested.count > 1 else {
+      let title = outcome.requested.first?.process.title ?? "The process"
+      if skipped > 0 { return "\(title) already exited or changed. The list is refreshed." }
+      if outcome.running > 0 { return "\(title) is still running. Use Force Quit to end it now." }
+      let memory = outcome.requested.first?.process.memoryBytes.map {
+        " · it was using \(ByteText.full($0))"
+      }
+      return "\(title) \(force ? "force quit" : "quit")\(memory ?? "")"
+    }
+    var parts = ["Quit \(ended) of \(outcome.requested.count) leftover processes"]
+    if outcome.running > 0 { parts.append("\(outcome.running) still running") }
+    if skipped > 0 { parts.append("\(skipped) exited or changed") }
+    return parts.joined(separator: " · ")
   }
 
   func stopRequest(_ process: DevProcess) -> DevStopRequest {
