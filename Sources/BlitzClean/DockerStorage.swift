@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 struct DockerStorageCategory: Identifiable, Codable, Equatable, Sendable {
@@ -43,16 +44,26 @@ enum DockerCleanupOutcome: Sendable {
 }
 
 struct DockerStorageService: Sendable {
-  let executablePath: String?
+  private static let deadlines = DispatchQueue(label: "com.blitzreels.BlitzClean.docker-deadlines")
+  struct Configuration: Sendable {
+    let executablePath: String?
+    let queryTimeout: TimeInterval
 
-  init() {
-    executablePath = [
-      "/usr/local/bin/docker",
-      "/opt/homebrew/bin/docker",
-    ].first { path in
-      FileManager.default.isExecutableFile(atPath: path)
+    static var system: Self {
+      .init(
+        executablePath: ["/usr/local/bin/docker", "/opt/homebrew/bin/docker"].first {
+          FileManager.default.isExecutableFile(atPath: $0)
+        }, queryTimeout: 12)
     }
   }
+
+  private let configuration: Configuration
+
+  init(_ configuration: Configuration = .system) {
+    self.configuration = configuration
+  }
+
+  var executablePath: String? { configuration.executablePath }
 
   var isInstalled: Bool {
     executablePath != nil
@@ -61,7 +72,9 @@ struct DockerStorageService: Sendable {
   func load() throws -> DockerStorageSnapshot {
     let host = try localEndpoint()
     let output = try run(
-      DockerCommandRequest(arguments: ["--host", host, "system", "df", "--format", "{{json .}}"])
+      DockerCommandRequest(
+        arguments: ["--host", host, "system", "df", "--format", "{{json .}}"],
+        timeout: configuration.queryTimeout)
     )
     let categories = try DockerStorageParser.categories(output.standardOutput)
 
@@ -71,10 +84,11 @@ struct DockerStorageService: Sendable {
   func cleanRebuildable() throws -> String {
     let host = try localEndpoint()
     let imageOutput = try run(
-      DockerCommandRequest(arguments: ["--host", host, "image", "prune", "--force"])
+      DockerCommandRequest(arguments: ["--host", host, "image", "prune", "--force"], timeout: 600)
     )
     let buildOutput = try run(
-      DockerCommandRequest(arguments: ["--host", host, "builder", "prune", "--all", "--force"])
+      DockerCommandRequest(
+        arguments: ["--host", host, "builder", "prune", "--all", "--force"], timeout: 600)
     )
 
     return [imageOutput.standardOutput, buildOutput.standardOutput]
@@ -84,13 +98,13 @@ struct DockerStorageService: Sendable {
 
   private func localEndpoint() throws -> String {
     let environment = ProcessInfo.processInfo.environment
-    // Resolve the same target the CLI would use, then pin both cleanup commands to it.
     if environment["DOCKER_CONTEXT", default: ""].isEmpty,
       let host = environment["DOCKER_HOST"], !host.isEmpty
     {
       return try DockerLocalEndpoint.validate(host)
     }
-    let output = try run(.init(arguments: ["context", "inspect"]))
+    let output = try run(
+      .init(arguments: ["context", "inspect"], timeout: configuration.queryTimeout))
     return try DockerLocalEndpoint.parse(output.standardOutput)
   }
 
@@ -100,8 +114,8 @@ struct DockerStorageService: Sendable {
     }
 
     let process = Process()
-    let standardOutput = Pipe()
-    let standardError = Pipe()
+    let stdout = Pipe()
+    let stderr = Pipe()
     process.executableURL = URL(fileURLWithPath: executablePath)
     process.arguments = request.arguments
     if request.arguments.first == "--host" {
@@ -113,24 +127,45 @@ struct DockerStorageService: Sendable {
       }
       process.environment = environment
     }
-    process.standardOutput = standardOutput
-    process.standardError = standardError
-
+    process.standardInput = FileHandle.nullDevice
+    process.standardOutput = stdout
+    process.standardError = stderr
     try process.run()
+    let deadline = DispatchWorkItem {
+      if process.isRunning { kill(process.processIdentifier, SIGKILL) }
+    }
+    Self.deadlines.asyncAfter(deadline: .now() + request.timeout, execute: deadline)
+    let errors = DockerErrorOutput()
+    let readers = DispatchGroup()
+    readers.enter()
+    DispatchQueue.global(qos: .utility).async {
+      errors.read(stderr.fileHandleForReading)
+      readers.leave()
+    }
+    let data = stdout.fileHandleForReading.readDataToEndOfFile()
     process.waitUntilExit()
-
-    let outputData = standardOutput.fileHandleForReading.readDataToEndOfFile()
-    let errorData = standardError.fileHandleForReading.readDataToEndOfFile()
-    let output = String(decoding: outputData, as: UTF8.self).trimmingCharacters(
+    readers.wait()
+    deadline.cancel()
+    let output = String(decoding: data, as: UTF8.self).trimmingCharacters(
       in: .whitespacesAndNewlines)
-    let error = String(decoding: errorData, as: UTF8.self).trimmingCharacters(
-      in: .whitespacesAndNewlines)
-
-    guard process.terminationStatus == 0 else {
-      throw DockerStorageError.commandFailed(error.isEmpty ? output : error)
+    let error = errors.text.isEmpty ? output : errors.text
+    guard process.terminationReason == .exit, process.terminationStatus == 0 else {
+      throw DockerStorageError.commandFailed(
+        error.isEmpty
+          ? "Docker did not complete the request. Try again after opening Docker." : error)
     }
 
     return DockerCommandOutput(standardOutput: output)
+  }
+}
+
+private final class DockerErrorOutput: @unchecked Sendable {
+  private var data = Data()
+
+  func read(_ handle: FileHandle) { data = handle.readDataToEndOfFile() }
+
+  var text: String {
+    String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
   }
 }
 
@@ -165,13 +200,14 @@ enum DockerLocalEndpoint {
 
 struct DockerCommandRequest: Sendable {
   let arguments: [String]
+  let timeout: TimeInterval
 }
 
 struct DockerCommandOutput: Sendable {
   let standardOutput: String
 }
 
-enum DockerStorageError: LocalizedError {
+enum DockerStorageError: LocalizedError, Equatable {
   case notInstalled
   case commandFailed(String)
   case invalidOutput
@@ -305,10 +341,9 @@ final class DockerStorageModel: ObservableObject {
   }
 
   func refreshIfNeeded() {
-    guard !didStartRefresh else {
+    if didStartRefresh, let snapshot, Date.now.timeIntervalSince(snapshot.updatedAt) < 120 {
       return
     }
-
     refresh()
   }
 

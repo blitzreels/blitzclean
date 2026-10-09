@@ -337,6 +337,8 @@ final class RepeatCleanupModel: ObservableObject {
   private let home: String
   private var ledgerUpdates: AnyCancellable?
   private var checkedAt: Date?
+  private var checkScope: CheckScope?
+  private var fullCheckRequested = false
 
   static let backThreshold: UInt64 = 1_024 * 1_024
 
@@ -378,10 +380,30 @@ final class RepeatCleanupModel: ObservableObject {
 
   /// Re-measures every entry, publishing each row as its size arrives.
   func check(force: Bool = false) {
-    guard !isChecking else { return }
-    if !force, let checkedAt, Date.now.timeIntervalSince(checkedAt) < 120 { return }
+    check(.init(force: force, scope: .all, measure: FolderMeasurementSession().directoryBytes))
+  }
+
+  enum CheckScope: Sendable {
+    case all, overview
+  }
+
+  struct CheckRequest {
+    let force: Bool
+    let scope: CheckScope
+    let measure: @Sendable (String) -> UInt64?
+  }
+
+  func check(_ request: CheckRequest) {
+    guard !isChecking else {
+      if request.scope == .all, checkScope == .overview { fullCheckRequested = true }
+      return
+    }
+    if !request.force, let checkedAt, Date.now.timeIntervalSince(checkedAt) < 120 { return }
     isChecking = true
-    let targets = entries.map(\.target)
+    checkScope = request.scope
+    let targets = entries.map(\.target).filter {
+      request.scope == .all || $0.recipe != .pnpmPrune
+    }
     let home = home
     Task {
       let activity = await Task.detached(priority: .utility) { RegrowActivity.read() }.value
@@ -389,10 +411,12 @@ final class RepeatCleanupModel: ObservableObject {
         var next = 0
         func add(_ target: RegrowTarget) {
           group.addTask(priority: .utility) {
-            let bytes = RegrowCleaner.size(target.path)
+            let bytes = request.measure(target.path)
+            var info = stat()
+            let missing = lstat(target.path, &info) != 0 && (errno == ENOENT || errno == ENOTDIR)
             let blocker =
               bytes == nil
-              ? nil
+              ? (missing ? nil : "Size could not be measured. Scan again to check this folder.")
               : activity.map {
                 $0.blocker(target, projectRoot: RegrowCatalog.projectRoot(target, home: home))
               } ?? "Running processes could not be checked"
@@ -411,8 +435,13 @@ final class RepeatCleanupModel: ObservableObject {
           }
         }
       }
-      checkedAt = .now
+      if request.scope == .all { checkedAt = .now }
       isChecking = false
+      checkScope = nil
+      if fullCheckRequested {
+        fullCheckRequested = false
+        check(.init(force: true, scope: .all, measure: request.measure))
+      }
     }
   }
 

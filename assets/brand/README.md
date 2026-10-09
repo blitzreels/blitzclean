@@ -31,3 +31,8 @@ Centered, simple, thick silhouette, clear at 16px, no text or sparkles, transpar
 
 The menu bar loads the vector as a template image so it works in light and dark appearances.
 The dashboard and tray load the bundled ICNS; brand assets are cached rather than reread on each update.
+
+## BlitzReels family
+
+`family/` holds the BlitzReels wordmark (white, from the BlitzReels brand kit) and 128px icons for BlitzReels and
+BlitzRecorder. Settings shows them under Our other apps. Copy new versions from the source products; do not redraw.

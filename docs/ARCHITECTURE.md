@@ -1,6 +1,8 @@
 # Architecture
 
-BlitzClean is a SwiftPM macOS app with no external package dependencies.
+BlitzClean is a SwiftPM macOS app. Its one external package is [Sparkle](https://github.com/sparkle-project/Sparkle),
+used by `AppUpdateController` for signed updates in release builds; development builds carry no feed key and never
+update themselves.
 The `BlitzClean` target in `Sources/BlitzClean` builds the executable; tests live in `Tests/BlitzCleanTests`.
 
 ## Main experience
@@ -135,3 +137,24 @@ Recovery verifies the result within a bounded observation loop and never restart
 
 New health supersedes conflicting recovery results, and a completed attempt does not impose a retry lock.
 Crash-report discovery is throttled to at most once per 30 seconds; the per-app Force Quit path keeps its inline review.
+
+## Storage scan scopes and profiling
+
+Overview and Cleanup use the cleanup scope. The full inventory is requested by Inventory only, with its own
+freshness timestamp; an inventory request made during a cleanup scan is queued. Cleanup merges its measured
+categories into the cached inventory instead of dropping untouched inventory sections.
+`DependencyFileScan` discovers folders with native FTS traversal, prunes nested dependencies, and removes
+redundant scan roots. At most four workers collect allocated and apparent sizes together, deduplicating hard links
+within each target and never following symlinks. Unreadable targets are excluded from measured cleanup results.
+Project activity traversal skips generated trees and returns Unknown on budget exhaustion or read failure.
+`PerformanceBenchmarks` is an opt-in read-only harness; see [Performance](PERFORMANCE.md) for commands and results.
+
+## Dashboard audit
+
+`DashboardAuditModel` owns the user-triggered audit in `BlitzDashboardView`, so leaving Overview does not restart
+or lose work. It coordinates existing scanners without adding background polling when idle, publishes each
+completed check separately, and rejects overlapping audits. `AuditProgress` keeps unavailable and incomplete
+checks explicit. `AuditFindings` derives ranked, typed actions; previous-run values are gated on check completion.
+`OverviewCleanCard` renders the initial, checking, finding, quiet, and cleanup-result states from one presentation.
+`StorageCleanupFocus` routes a recommendation to its owning cleanup section. Cache removal still goes through
+`QuickCleanModel`; the dashboard retains its outcome while rechecking the Mac and refreshing disk measurements.

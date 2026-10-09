@@ -7,8 +7,8 @@ The [README](../README.md) has the overview, and [Privacy](PRIVACY.md) covers da
 
 | Page | What it does |
 | --- | --- |
-| Overview | CPU, RAM, storage, pressure guidance, and the AI threads using the most memory. |
-| Memory | Apps and AI sessions ranked by memory, with Quit, Force Quit, Pause and Resume, and pressure history. |
+| Overview | One-click cache cleanup, CPU, RAM, storage, pressure guidance, and the AI threads using the most memory. |
+| Memory | Apps and AI sessions with process controls, individual process footprints, search, and pressure history. |
 | CPU | Current usage per process. A process using several cores can exceed 100%. |
 | Storage | Browse, Inventory, and Cleanup, with no nested tab bar. |
 | Revive apps | Live app checks, Revive and Force Quit on each app, bulk recovery for stopped apps, and recent crashes. |
@@ -49,7 +49,41 @@ unsaved work.
 
 Recent crashes can be reopened or dismissed. A successful recovery never hides a later stopped state.
 
+## Memory by process
+
+Memory → Processes shows individual physical footprints from the existing live process snapshot.
+Each row has a process label, owning app when identifiable, PID, and RAM usage without child-process totals.
+Search matches names, owners, PIDs, and project paths. Rows are sorted by RAM, then PID, with unavailable
+measurements last. The first 30 rows appear initially; Show all reveals the remainder.
+The list covers accessible processes in the current user account and excludes BlitzClean itself.
+These footprints do not sum to total system RAM. The existing Apps & AI view retains process controls.
+
 ## Find and remove storage
+
+### Quick clean
+
+Overview scans known npm, Homebrew, pip, Yarn, Xcode, Safari, Chrome, and Firefox cache locations on first appearance.
+Clean permanently removes all eligible caches with one click. Candidates must be unchanged for at least
+seven days; running tools, open files, symbolic links, changed contents, and unverifiable checks block removal.
+This does not remove apps, personal files, project dependencies, or Docker data.
+The animation runs during scanning and cleanup and respects Reduce Motion. Completion reports removed cache
+bytes separately from the observed change in free disk space. Skips remain visible through Details, which opens
+the shared Storage Cleanup view. Scan again refreshes the estimate. No Mole installation is required.
+
+### System Data cleanup
+
+Storage → Cleanup starts with System Data cleanup. It lists eligible caches and user-owned diagnostic reports.
+Browser caches stay while the browser or known helpers run. Personal browser profiles, history, and passwords
+are outside the supported cache roots. Cache contents must be unchanged for at least seven days.
+Diagnostic reports must be regular `.ips`, `.crash`, `.diag`, `.hang`, or `.spin` files, directly inside the
+current user's `~/Library/Logs/DiagnosticReports`, and unchanged for at least 30 days. Reports are excluded
+from Overview's one-click Clean action; deletion requires explicit selection and inline review.
+All removals recheck location, identity, age, current ownership, and open files, and use the shared history.
+
+The eligible cleanup size is not Apple's full System Data figure. As described in
+[Apple's Storage documentation](https://support.apple.com/en-lamr/guide/mac-help/mchl3d437fbc/mac), that category
+also contains runtime resources and app support data. BlitzClean does not delete macOS, swap, backups,
+app databases, or arbitrary temporary folders through this feature.
 
 ### Browse
 
@@ -113,7 +147,9 @@ Personal files and folders go to the Trash after an inline review and a fresh id
 You can still recover them, and the space is freed when you empty the Trash in Finder.
 BlitzClean never empties the Trash for you.
 
-Cache and developer cleanup can permanently delete rebuildable data that you reviewed.
+Overview's Clean action permanently deletes the eligible known caches shown in its estimate.
+Storage's cache and developer cleanup permanently delete rebuildable data after individual selection and review.
+Old diagnostic reports are also permanently removable after individual selection and review; they cannot be recovered.
 Running tools, open files, recent changes, protected paths, or an incomplete check block the removal.
 Scans never select anything automatically.
 

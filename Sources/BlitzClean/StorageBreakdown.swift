@@ -66,15 +66,21 @@ struct SimulatorDeviceInfo: Identifiable, Equatable, Codable, Sendable {
   let bytes: UInt64
 }
 
+enum StorageCleanupFocus: Hashable {
+  case caches, simulators, regrown, projects, docker
+}
+
 @MainActor
 final class StorageBreakdownModel: ObservableObject {
+  @Published var cleanupFocus: StorageCleanupFocus?
   private static let automaticScanInterval: TimeInterval = 5 * 60
-  let overview = CleanupOverviewModel(.application)
+  let overview: CleanupOverviewModel
   lazy var repeats = RepeatCleanupModel(history: overview)
 
   @Published private(set) var categories: [StorageCategory] = []
   @Published private(set) var scannedAt: Date?
   @Published private(set) var isScanning = false
+  @Published private(set) var incompleteMeasurements = 0
   @Published private(set) var isCleaning = false
   @Published private(set) var simulatorDeviceCount = 0
   @Published private(set) var bootedSimulatorCount = 0
@@ -85,12 +91,15 @@ final class StorageBreakdownModel: ObservableObject {
   @Published private(set) var stoppingProcessPath: String?
   @Published var selectedPaths: Set<String> = []
 
-  private let scanner = StorageBreakdownScanner()
   private let cleanupService = DeveloperCleanupService()
   private let processController = ProjectProcessController()
   private var scanTask: Task<Void, Never>?
+  @Published private(set) var inventoryScannedAt: Date?
+  private var scanScope: StorageScanScope?
+  private var inventoryRequested = false
 
-  init() {
+  init(overviewConfiguration: CleanupOverviewConfiguration = .application) {
+    overview = CleanupOverviewModel(overviewConfiguration)
     guard let cachedResult = StorageScanCache.load() else {
       return
     }
@@ -103,34 +112,55 @@ final class StorageBreakdownModel: ObservableObject {
   }
 
   func scanIfNeeded() {
-    if let scannedAt,
-      Date().timeIntervalSince(scannedAt) < Self.automaticScanInterval
+    if let inventoryScannedAt,
+      Date.now.timeIntervalSince(inventoryScannedAt) < Self.automaticScanInterval
     {
       return
     }
-
     scan()
   }
 
-  func scan() {
-    guard !isScanning else {
+  func scanCleanupIfNeeded() {
+    if incompleteMeasurements == 0, let scannedAt,
+      Date.now.timeIntervalSince(scannedAt) < Self.automaticScanInterval
+    {
       return
     }
+    scanCleanup()
+  }
 
+  func scan() { startScan(.init(scope: .inventory, measurements: .init())) }
+
+  func scanCleanup(_ measurements: FolderMeasurementSession = .init()) {
+    startScan(.init(scope: .cleanup, measurements: measurements))
+  }
+
+  private struct ScanRequest {
+    let scope: StorageScanScope
+    let measurements: FolderMeasurementSession
+  }
+
+  private func startScan(_ request: ScanRequest) {
+    let scope = request.scope
+    guard !isScanning else {
+      if scope == .inventory, scanScope == .cleanup { inventoryRequested = true }
+      return
+    }
     isScanning = true
-    let scanner = scanner
-
+    scanScope = scope
+    let scanner = StorageBreakdownScanner(measure: request.measurements.footprint)
     scanTask = Task.detached(priority: .utility) { [weak self] in
-      guard let self else {
-        return
-      }
-
-      let result = scanner.scan { update in
-        Task { @MainActor in
-          self.applyScanUpdate(update)
-        }
-      }
-      await self.applyScan(result)
+      guard let self else { return }
+      let result = scanner.scan(
+        .init(
+          scope: scope,
+          onUpdate: { update in
+            Task { @MainActor in self.applyScanUpdate(update) }
+          }))
+      await self.applyScan(
+        .init(
+          result: result, scope: scope, incompleteMeasurements: request.measurements.incompleteCount
+        ))
     }
   }
 
@@ -151,20 +181,45 @@ final class StorageBreakdownModel: ObservableObject {
     }
   }
 
-  private func applyScan(_ result: StorageScanResult) {
-    categories = result.categories
+  private struct CompletedScan {
+    let result: StorageScanResult
+    let scope: StorageScanScope
+    let incompleteMeasurements: Int
+  }
+
+  private func applyScan(_ scan: CompletedScan) {
+    let result = scan.result
+    incompleteMeasurements = scan.incompleteMeasurements
+    if scan.scope == .inventory {
+      categories = result.categories
+      inventoryScannedAt = result.scannedAt
+    } else {
+      let refreshed = Set(result.categories.map(\.id))
+      categories = (categories.filter { !refreshed.contains($0.id) } + result.categories)
+        .sorted { $0.bytes > $1.bytes }
+    }
     scannedAt = result.scannedAt
     simulatorDeviceCount = result.simulatorDeviceCount
     bootedSimulatorCount = result.bootedSimulatorCount
     simulatorDevices = result.simulatorDevices
     selectedPaths.formIntersection(readyItems.map(\.path))
     isScanning = false
-    StorageScanCache.save(result)
+    StorageScanCache.save(
+      .init(
+        categories: categories, scannedAt: result.scannedAt,
+        simulatorDeviceCount: result.simulatorDeviceCount,
+        bootedSimulatorCount: result.bootedSimulatorCount,
+        simulatorDevices: result.simulatorDevices))
+    scanScope = nil
+    if inventoryRequested {
+      inventoryRequested = false
+      self.scan()
+    }
   }
 
   var readyItems: [StorageItem] {
     categories.flatMap(\.items).filter { item in
-      item.cleanupAvailability?.isReady == true && FileManager.default.fileExists(atPath: item.path)
+      item.cleanupAvailability?.isReady == true
     }
   }
 
@@ -286,7 +341,7 @@ final class StorageBreakdownModel: ObservableObject {
         cleanupMessage =
           "Stopped \(result.signaledCount); \(result.failureCount) could not be stopped."
       }
-      scan()
+      scanCleanup()
     }
   }
 
@@ -344,7 +399,8 @@ final class StorageBreakdownModel: ObservableObject {
       selectedPaths.subtract(cleanedPaths)
       isCleaning = false
       cleanupMessage = result.message
-      scan()
+      inventoryScannedAt = nil
+      scanCleanup()
     }
   }
 }
@@ -384,40 +440,71 @@ enum StorageScanCache {
   }
 }
 
+enum StorageScanScope: Sendable {
+  case cleanup, inventory
+}
+
 struct StorageBreakdownScanner: Sendable {
+  struct Timing: Sendable {
+    let stage: String
+    let seconds: TimeInterval
+  }
+
+  var timing: @Sendable (Timing) -> Void = { _ in }
+  var measure: @Sendable (String) -> DependencyFootprint? = DependencyFileScan.measure
+
+  struct Request {
+    let scope: StorageScanScope
+    let onUpdate: @Sendable (StorageScanUpdate) -> Void
+  }
   private var fileManager: FileManager {
     FileManager.default
   }
 
   func scan(_ onUpdate: @escaping @Sendable (StorageScanUpdate) -> Void) -> StorageScanResult {
+    scan(.init(scope: .inventory, onUpdate: onUpdate))
+  }
+
+  func scan(_ request: Request) -> StorageScanResult {
+    let onUpdate = request.onUpdate
     let home = fileManager.homeDirectoryForCurrentUser.path
     let simulatorState = simulatorState()
     onUpdate(.simulators(simulatorState.devices))
     var categories: [StorageCategory] = []
 
     let definitions = fixedCategories(home)
-    if let applications = definitions.first {
-      let scannedCategory = category(
-        CategoryRequest(definition: applications, simulatorState: simulatorState))
-      categories.append(scannedCategory)
-      onUpdate(.category(scannedCategory))
-    }
+    if request.scope == .inventory {
+      if let applications = definitions.first {
+        let scannedCategory = category(
+          CategoryRequest(definition: applications, simulatorState: simulatorState))
+        categories.append(scannedCategory)
+        onUpdate(.category(scannedCategory))
+      }
 
-    let largeFileRoots = existingPaths(
-      [
-        "\(home)/Desktop", "\(home)/Documents", "\(home)/Downloads", "\(home)/Movies",
-        "\(home)/Music", "\(home)/Pictures", "\(home)/Library", "\(home)/dev",
-      ] + DeveloperLocations.additionalProjectRoots)
-    let largeFiles = largeFilesCategory(largeFileRoots)
-    categories.append(largeFiles)
-    onUpdate(.category(largeFiles))
+      let largeFileRoots = existingPaths(
+        [
+          "\(home)/Desktop", "\(home)/Documents", "\(home)/Downloads", "\(home)/Movies",
+          "\(home)/Music", "\(home)/Pictures", "\(home)/Library", "\(home)/dev",
+        ] + DeveloperLocations.additionalProjectRoots)
+      let largeFiles = largeFilesCategory(largeFileRoots)
+      categories.append(largeFiles)
+      onUpdate(.category(largeFiles))
 
-    for definition in definitions.dropFirst() {
-      let scannedCategory = category(
-        CategoryRequest(definition: definition, simulatorState: simulatorState)
-      )
-      categories.append(scannedCategory)
-      onUpdate(.category(scannedCategory))
+      for definition in definitions.dropFirst() {
+        let scannedCategory = category(
+          CategoryRequest(definition: definition, simulatorState: simulatorState)
+        )
+        categories.append(scannedCategory)
+        onUpdate(.category(scannedCategory))
+      }
+    } else if let definition = definitions.first(where: { $0.id == "simulators" }) {
+      let caches = CategoryDefinition(
+        id: definition.id, name: definition.name, detail: definition.detail,
+        systemImage: definition.systemImage, safety: definition.safety,
+        paths: definition.paths.filter { $0.hasSuffix("/Caches") })
+      let scanned = category(.init(definition: caches, simulatorState: simulatorState))
+      categories.append(scanned)
+      onUpdate(.category(scanned))
     }
     let activeProcesses = ProjectProcessScanner().processes()
     let activeWorkingDirectories = Set(activeProcesses.map(\.workingDirectory))
@@ -521,8 +608,8 @@ struct StorageBreakdownScanner: Sendable {
       ),
       CategoryDefinition(
         id: "computer-system-data",
-        name: "System Data",
-        detail: "Shared libraries, package managers, and temporary data",
+        name: "System folders",
+        detail: "Shared libraries and runtime data; not the macOS System Data total",
         systemImage: "apple.logo",
         safety: .review,
         paths: [
@@ -715,15 +802,10 @@ struct StorageBreakdownScanner: Sendable {
   }
 
   private func nodeModulesCategory(_ request: NodeModulesScanRequest) -> StorageCategory {
-    let paths = Set(
-      request.roots.flatMap { root in
-        findPaths(
-          FindRequest(
-            root: root,
-            arguments: ["-type", "d", "-name", "node_modules", "-prune", "-print0"]
-          )
-        )
-      })
+    var phase = Date.now
+    let paths = DependencyFileScan.discover(request.roots)
+    timing(.init(stage: "dependencies.discover", seconds: Date.now.timeIntervalSince(phase)))
+    phase = .now
     let contexts = paths.map { path in
       NodeModulesResolver.resolve(
         NodeModulesResolutionRequest(
@@ -735,14 +817,16 @@ struct StorageBreakdownScanner: Sendable {
     let contextsByTarget = Dictionary(grouping: contexts, by: \.cleanupTargetPath)
       .compactMapValues(\.first)
     let targets = Array(contextsByTarget.keys)
-    let sizes = directorySizes(targets)
-    let contentSizes = Dictionary(
-      uniqueKeysWithValues: directoryContentSizes(targets).map { size in
-        (size.path, size.bytes)
-      }
-    )
+    timing(.init(stage: "dependencies.resolve", seconds: Date.now.timeIntervalSince(phase)))
+    phase = .now
+    let footprints = DependencyFileScan.measureAll(.init(paths: targets, measure: measure))
+    let sizes = footprints.map { PathSize(path: $0.key, bytes: $0.value.allocated) }
+    let contentSizes = footprints.mapValues(\.content)
+    timing(.init(stage: "dependencies.sizes", seconds: Date.now.timeIntervalSince(phase)))
+    phase = .now
     var activityByProject: [String: Date?] = [:]
-    let sortedItems = sizes.map { pathSize in
+    let activityDeadline = Date.now.addingTimeInterval(5)
+    let sortedItems = sizes.sorted { $0.bytes > $1.bytes }.map { pathSize in
       guard let context = contextsByTarget[pathSize.path] else {
         return StorageItem(
           name: abbreviatedPath(pathSize.path),
@@ -777,13 +861,11 @@ struct StorageBreakdownScanner: Sendable {
         if let cached = activityByProject[projectRootPath] {
           activity = cached
         } else {
-          let resolved = ProjectActivityResolver.latestChange(
-            ProjectActivityRequest(
-              rootPath: projectRootPath,
-              fileManager: fileManager
-            )
-          )
-          activityByProject[projectRootPath] = resolved
+          let resolved = ProjectActivityResolver.scan(
+            .init(
+              rootPath: projectRootPath, maximumEntries: 20_000,
+              deadline: min(activityDeadline, .now.addingTimeInterval(0.15))))
+          activityByProject[projectRootPath] = .some(resolved)
           activity = resolved
         }
       } else {
@@ -807,6 +889,8 @@ struct StorageBreakdownScanner: Sendable {
       left.bytes > right.bytes
     }
 
+    timing(
+      .init(stage: "dependencies.activity-and-safety", seconds: Date.now.timeIntervalSince(phase)))
     return StorageCategory(
       id: "node-modules",
       name: "node_modules",
@@ -877,15 +961,6 @@ struct StorageBreakdownScanner: Sendable {
     )
   }
 
-  private func directoryContentSizes(_ paths: [String]) -> [PathSize] {
-    directorySizes(
-      DirectorySizeRequest(
-        paths: paths,
-        duArguments: ["-sk", "-A"]
-      )
-    )
-  }
-
   private func directorySizes(_ request: DirectorySizeRequest) -> [PathSize] {
     let paths = request.paths
     guard !paths.isEmpty else {
@@ -938,21 +1013,6 @@ struct StorageBreakdownScanner: Sendable {
     }
 
     return sizes
-  }
-
-  private func findPaths(_ request: FindRequest) -> [String] {
-    let output = commandOutput(
-      CommandRequest(
-        (
-          executable: "/usr/bin/find",
-          arguments: [request.root] + request.arguments,
-          standardInput: nil
-        ))
-    )
-
-    return output.split(separator: 0).map { data in
-      String(decoding: data, as: UTF8.self)
-    }
   }
 
   private func spotlightPaths(_ request: SpotlightRequest) -> [String] {
@@ -1198,11 +1258,6 @@ private struct PathSize: Sendable {
 private struct DirectorySizeRequest {
   let paths: [String]
   let duArguments: [String]
-}
-
-private struct FindRequest: Sendable {
-  let root: String
-  let arguments: [String]
 }
 
 private struct SpotlightRequest: Sendable {

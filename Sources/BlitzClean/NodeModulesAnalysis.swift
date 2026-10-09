@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 enum NodeStorageOrigin: String, Codable, Sendable {
@@ -176,56 +177,64 @@ struct ProjectActivityRequest {
 }
 
 enum ProjectActivityResolver {
-  static func latestChange(_ request: ProjectActivityRequest) -> Date? {
-    let rootURL = URL(fileURLWithPath: request.rootPath)
-    let keys: [URLResourceKey] = [.isDirectoryKey, .contentModificationDateKey, .nameKey]
-    guard
-      let enumerator = request.fileManager.enumerator(
-        at: rootURL,
-        includingPropertiesForKeys: keys,
-        options: [],
-        errorHandler: { _, _ in true }
-      )
-    else {
-      return nil
-    }
-
-    var newestDate: Date?
-
-    for case let url as URL in enumerator {
-      guard let values = try? url.resourceValues(forKeys: Set(keys)) else {
-        continue
-      }
-
-      let name = values.name ?? url.lastPathComponent
-      if values.isDirectory == true, excludedDirectoryNames.contains(name) {
-        enumerator.skipDescendants()
-        continue
-      }
-
-      guard values.isDirectory != true, !name.hasPrefix("._"), name != ".DS_Store" else {
-        continue
-      }
-
-      if let date = values.contentModificationDate, date > (newestDate ?? .distantPast) {
-        newestDate = date
-      }
-    }
-
-    return newestDate
+  struct ScanRequest {
+    let rootPath: String
+    let maximumEntries: Int
+    let deadline: Date
   }
 
-  private static let excludedDirectoryNames = Set([
-    ".git",
-    ".next",
-    ".trigger",
-    ".turbo",
-    ".vercel",
-    "build",
-    "coverage",
-    "dist",
-    "node_modules",
-  ])
+  static func latestChange(_ request: ProjectActivityRequest) -> Date? {
+    scan(
+      .init(
+        rootPath: request.rootPath, maximumEntries: 20_000, deadline: .now.addingTimeInterval(0.15))
+    )
+  }
+
+  static func scan(_ request: ScanRequest) -> Date? {
+    guard request.maximumEntries > 0, Date.now < request.deadline else { return nil }
+    let paths = UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>.allocate(capacity: 2)
+    paths.initialize(to: strdup(request.rootPath))
+    paths.advanced(by: 1).initialize(to: nil)
+    defer {
+      free(paths.pointee)
+      paths.deinitialize(count: 2)
+      paths.deallocate()
+    }
+    guard let tree = fts_open(paths, FTS_PHYSICAL | FTS_NOCHDIR | FTS_XDEV, nil) else { return nil }
+    defer { fts_close(tree) }
+    var newest: Date?
+    var count = 0
+    errno = 0
+    while let entry = fts_read(tree) {
+      count += 1
+      guard count <= request.maximumEntries, Date.now < request.deadline else { return nil }
+      let info = entry.pointee
+      let name = withUnsafePointer(to: &entry.pointee.fts_name) {
+        $0.withMemoryRebound(to: CChar.self, capacity: Int(info.fts_namelen) + 1) {
+          String(cString: $0)
+        }
+      }
+      if info.fts_info == FTS_D, info.fts_level > 0, excludedDirectoryNames.contains(name) {
+        fts_set(tree, entry, FTS_SKIP)
+      } else if info.fts_info == FTS_F, !name.hasPrefix("._"), name != ".DS_Store",
+        let metadata = info.fts_statp?.pointee
+      {
+        let date = Date(
+          timeIntervalSince1970: Double(metadata.st_mtimespec.tv_sec)
+            + Double(metadata.st_mtimespec.tv_nsec) / 1_000_000_000)
+        newest = max(newest ?? .distantPast, date)
+      } else if info.fts_info == FTS_ERR || info.fts_info == FTS_DNR || info.fts_info == FTS_NS {
+        return nil
+      }
+      errno = 0
+    }
+    return errno == 0 ? newest : nil
+  }
+
+  private static let excludedDirectoryNames: Set<String> = [
+    ".git", ".next", ".trigger", ".turbo", ".vercel", "build", "coverage", "dist", "node_modules",
+    ".build", ".swiftpm", ".venv", "venv", "__pycache__", ".cache", "Pods", ".gradle",
+  ]
 }
 
 private struct GeneratedRule {

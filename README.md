@@ -29,18 +29,25 @@ and dev servers. It shows CPU, memory, and free disk space in the menu bar, tell
 bottleneck, and gives you one window to act: quit or pause what is using memory, revive frozen apps,
 and remove data that tools rebuild on their own.
 
-Nothing leaves your Mac. Every removal is reviewed first, and personal files go to the Trash.
+Nothing leaves your Mac. Overview offers one-click cleanup of eligible rebuildable caches;
+other removals are reviewed first, and personal files go to the Trash.
 
 ## What you can do
 
+- Clean old, rebuildable caches from Overview with one click, with activity checks, animated progress,
+  and a result showing removed cache bytes separately from the change in free disk space.
 - See the limiting resource at a glance. The menu bar shows live numbers, and a warning names what is short
   (memory, swap, disk reserve, or CPU) with one instruction.
 - Free memory by ranking apps and AI sessions such as Claude Code, Codex, and Cursor by RAM, then pausing,
   resuming, or quitting them. Whole projects can be stopped along with their dev servers.
+- Inspect individual process footprints in Memory → Processes, sorted by RAM and searchable by name, owner,
+  project path, or PID. Restricted measurements stay marked as unavailable.
 - Revive apps that stopped or froze, and see whether each one actually recovered.
 - Find what fills your disk by browsing every drive with folder sizes, or by ranking the largest files.
 - Review caches, `node_modules`, build output, simulators, Docker, and merged worktrees before removing them,
   and see when removed folders grow back.
+- Reduce supported System Data in Storage → Cleanup: eligible browser and developer caches, plus crash and
+  hang reports older than 30 days. Reports require explicit selection and review.
 - Filter large videos and images, find exact duplicates, and make smaller copies with FFmpeg.
 
 <table>
@@ -72,11 +79,17 @@ Nothing leaves your Mac. Every removal is reviewed first, and personal files go 
 Releases support Apple silicon and Intel Macs on macOS 14 or later.
 Each download is Developer ID signed, notarized by Apple, and published with a SHA-256 checksum.
 
+From 1.3.0, BlitzClean updates itself with [Sparkle](https://sparkle-project.org): it checks once a day,
+downloads a signed update in the background, and offers Restart to update in the menu bar panel and Settings.
+Version 1.2.0 and earlier have no updater; download 1.3.0 once by hand and later versions arrive automatically.
+
 ## Safety
 
-- Scans never select anything automatically, and nothing is removed without an inline review.
+- Scans never delete anything. Overview's Clean button explicitly removes all eligible known caches;
+  Storage offers individual selection and inline review for other removals.
 - Personal files and folders go to the Trash. BlitzClean never empties the Trash for you.
-- Only rebuildable data (caches, dependencies, build output) can be permanently deleted, after review.
+- Rebuildable data (caches, dependencies, build output) and explicitly reviewed old diagnostic reports can
+  be permanently deleted. Dependencies, build output, and reports keep their separate review flows.
 - Running tools, open files, recent changes, and protected paths block removal.
 - Process identity is checked again right before Quit, Pause, or Force Quit.
   Force Quit and bulk actions always ask first; nothing is force-quit automatically.
@@ -87,6 +100,8 @@ The full rules are in [Features → Removal and process rules](docs/FEATURES.md#
 ## Privacy
 
 BlitzClean runs entirely on your Mac: no account, cloud service, analytics, or telemetry SDK.
+The only network request is the daily update check, which fetches the release feed from GitHub and sends the
+app's version in its user agent. Turn it off in Settings > Updates.
 Charts, scan results, and the removal log stay in `~/Library/Application Support/BlitzClean`, each with a size limit.
 Saved history never includes conversation contents, window text, environment variables, or process arguments.
 See [Privacy and permissions](docs/PRIVACY.md) for exactly what is read and stored.

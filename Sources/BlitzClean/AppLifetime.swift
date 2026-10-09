@@ -29,6 +29,11 @@ enum AppLifetime {
     NSApp.terminate(nil)
   }
 
+  /// Sparkle quits the app to install an update and relaunches it afterwards.
+  static func allowRelaunchForUpdate() {
+    explicitStop = true
+  }
+
   static func closeDashboard(_ app: NSApplication) {
     for window in app.windows where window.styleMask.contains(.titled) {
       window.close()

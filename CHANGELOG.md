@@ -1,5 +1,42 @@
 # Changelog
 
+## 1.3.0 - 2026-10-07
+
+### Updates
+
+- Add automatic updates with Sparkle. Release builds check GitHub once a day, download signed updates in the
+  background, and show Restart to update in the menu bar panel and in Settings > Updates.
+  Automatic checks can be turned off there. Versions 1.2.0 and earlier must download this release by hand once.
+
+### Overview
+
+- Check my Mac runs five checks in parallel: memory and CPU, caches, project data and regrown folders, Docker,
+  and app responsiveness. Findings are ranked as Next moves, each with one action. Only Clean removes anything
+  from Overview; other findings open the page and section that owns them.
+- Show memory, CPU, and storage load as rings beside the check, with the busiest resource in the center.
+  Warnings color the value in the legend. A successful cache cleanup shows the space removed.
+- Opening Overview no longer starts storage scans. A short line shows the last cleanup and space recovered.
+
+### Menu bar panel
+
+- Rebuild the panel around the same rings, last-minute memory and CPU charts, and the three apps using the most
+  memory with their share of RAM. The gear menu adds Check for updates and links to other BlitzReels apps.
+
+### Memory and Storage
+
+- Add Memory > Processes with each process's own RAM footprint, owner, and PID, searchable by name or PID.
+- Start Storage Cleanup with System Data cleanup: eligible browser and developer caches, plus diagnostic reports
+  older than 30 days after explicit review. Overview's Clean never removes reports.
+- Make cleanup scans faster: Overview and Cleanup measure only cleanup locations; the full inventory runs when
+  Inventory is opened. Project age checks are time-bounded and report Unknown instead of an old date.
+
+### Settings and design
+
+- Add Not needed to each Finish setup permission. Skipped permissions leave the list and the sidebar badge;
+  Ask again brings them back.
+- Add Our other apps with links to BlitzRecorder and BlitzReels.
+- Remove gradients and glows, keep one accent color per view, and raise faint text to meet AA contrast.
+
 ## 1.2.0 - 2026-10-06
 
 ### Menu bar panel

@@ -74,7 +74,8 @@ struct QuickCleanTests {
 
   private func rule(_ root: URL) -> CacheRule {
     .init(
-      title: "Fixture cache", path: root.path, recipe: "A disposable test download.", owners: [])
+      title: "Fixture cache", path: root.path, recipe: "A disposable test download.", owners: [],
+      kind: .cache)
   }
 
   private func age(_ url: URL) throws {
