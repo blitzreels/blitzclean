@@ -4,6 +4,64 @@ import Testing
 @testable import BlitzClean
 
 struct CleanupRepeatTests {
+  @Test func repeatReviewPreservesRecentFilesAndSymlinks() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "repeat-safety-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let folder = root.appendingPathComponent(".next")
+    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    let file = folder.appendingPathComponent("data")
+    try Data("keep".utf8).write(to: file)
+    let target = RegrowTarget(path: folder.path, title: "Build", recipe: .folder, owners: [])
+    #expect(throws: CacheCleanError.self) { try RegrowCleaner.reviewedTree(target) }
+    #expect(try String(contentsOf: file, encoding: .utf8) == "keep")
+    try FileManager.default.createSymbolicLink(
+      at: folder.appendingPathComponent("link"), withDestinationURL: file)
+    #expect(throws: CacheCleanError.self) { try RegrowCleaner.reviewedTree(target) }
+  }
+
+  @Test func repeatReviewPreservesTrackedFilesEvenWhenOld() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "repeat-git-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    #expect(DeveloperCommand.git(.init(directory: root.path, arguments: ["init"])).status == 0)
+    let folder = root.appendingPathComponent(".next")
+    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    let file = folder.appendingPathComponent("source")
+    try Data("keep".utf8).write(to: file)
+    #expect(
+      DeveloperCommand.git(.init(directory: root.path, arguments: ["add", ".next/source"])).status
+        == 0)
+    for url in [file, folder] {
+      try FileManager.default.setAttributes(
+        [.modificationDate: Date.now.addingTimeInterval(-10 * 86_400)], ofItemAtPath: url.path)
+    }
+    let target = RegrowTarget(path: folder.path, title: "Build", recipe: .folder, owners: [])
+    #expect(throws: RegrowCleanError.self) { try RegrowCleaner.reviewedTree(target) }
+    #expect(try String(contentsOf: file, encoding: .utf8) == "keep")
+  }
+
+  @Test func repeatReviewAcceptsOldUnusedCacheButRejectsOpenFiles() throws {
+    let root = FileManager.default.temporaryDirectory.resolvingSymlinksInPath()
+      .appendingPathComponent("repeat-open-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let file = root.appendingPathComponent("cache")
+    try Data("keep".utf8).write(to: file)
+    for url in [file, root] {
+      try FileManager.default.setAttributes(
+        [.modificationDate: Date.now.addingTimeInterval(-10 * 86_400)], ofItemAtPath: url.path)
+    }
+    let target = RegrowTarget(path: root.path, title: "Cache", recipe: .folder, owners: [])
+    #expect(try RegrowCleaner.reviewedTree(target).bytes > 0)
+    let handle = try FileHandle(forReadingFrom: file)
+    defer { try? handle.close() }
+    #expect(throws: RegrowCleanError.self) { try RegrowCleaner.reviewedTree(target) }
+    #expect(try String(contentsOf: file, encoding: .utf8) == "keep")
+  }
+
   private let home = "/Users/me"
 
   @MainActor @Test func unavailableSizeIsDistinctFromAFolderThatDidNotGrowBack() async throws {

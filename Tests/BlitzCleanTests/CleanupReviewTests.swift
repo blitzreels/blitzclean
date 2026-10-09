@@ -4,6 +4,56 @@ import Testing
 @testable import BlitzClean
 
 struct CleanupReviewTests {
+  @Test func incompleteAndUnrelatedWarningsKeepActivityUnverified() {
+    for output in [
+      "lsof: WARNING: can't stat() apfs file system /Volumes/Other\n      Output information may be incomplete.\n",
+      "lsof: WARNING: can't stat() apfs file system /Volumes/com.apple.TimeMachine.localsnapshots/test\n",
+      "lsof: WARNING: can't stat() apfs file system /Volumes/com.apple.TimeMachine.localsnapshots/test\n      Output information may be incomplete.\nlsof: permission denied\n",
+    ] {
+      #expect(!CleanupActivity.acceptsDiagnostics(output))
+    }
+  }
+
+  @Test func snapshotWarningsDoNotBecomeOpenFileRecords() {
+    let result = CleanupActivity.runCommand(
+      .init(
+        executable: "/bin/sh",
+        arguments: [
+          "-c",
+          """
+          printf '%s\\n' "lsof: WARNING: can't stat() apfs file system /Volumes/com.apple.TimeMachine.localsnapshots/Backups.backupdb/test/snapshot/Data" '      Output information may be incomplete.' >&2
+          exit 1
+          """,
+        ], timeout: 1))
+    #expect(result.status == 1)
+    #expect(result.output.isEmpty)
+  }
+
+  @Test func failedActivityChecksStayUnverified() {
+    let result = CleanupActivity.runCommand(
+      .init(
+        executable: "/bin/sh", arguments: ["-c", "printf 'lsof: permission denied' >&2; exit 1"],
+        timeout: 1))
+    #expect(result.status == -1)
+    #expect(result.output.isEmpty)
+  }
+
+  @Test func snapshotWarningsDoNotHideOpenFiles() {
+    let result = CleanupActivity.runCommand(
+      .init(
+        executable: "/bin/sh",
+        arguments: [
+          "-c",
+          """
+          printf '%s\\n' 'p123' 'ctest' 'n/disposable/open-file'
+          printf '%s\\n' "lsof: WARNING: can't stat() apfs file system /Volumes/com.apple.TimeMachine.localsnapshots/Backups.backupdb/test/snapshot/Data" '      Output information may be incomplete.' >&2
+          exit 0
+          """,
+        ], timeout: 1))
+    #expect(result.status == 0)
+    #expect(result.output == "p123\nctest\nn/disposable/open-file\n")
+  }
+
   @Test func temporaryDirectoryAliasesAllowDeletingScannedFiles() throws {
     let root = try fixture()
     defer { try? FileManager.default.removeItem(at: root) }

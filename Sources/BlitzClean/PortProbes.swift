@@ -136,6 +136,25 @@ enum HTMLMetadataParser {
   }
 }
 
+enum LoopbackProbePolicy {
+  static func allows(_ url: URL) -> Bool {
+    guard ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
+      url.user == nil, url.password == nil
+    else { return false }
+    return ["127.0.0.1", "::1", "[::1]"].contains(url.host?.lowercased() ?? "")
+  }
+}
+
+final class LoopbackRedirectDelegate: NSObject, URLSessionTaskDelegate {
+  func urlSession(
+    _ session: URLSession, task: URLSessionTask,
+    willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest,
+    completionHandler: @escaping (URLRequest?) -> Void
+  ) {
+    completionHandler(request.url.map(LoopbackProbePolicy.allows) == true ? request : nil)
+  }
+}
+
 struct PortProber: Sendable {
   private let session: URLSession
 
@@ -145,22 +164,34 @@ struct PortProber: Sendable {
     configuration.timeoutIntervalForResource = 4
     configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
     configuration.httpAdditionalHeaders = ["Accept": "text/html,application/json;q=0.9,*/*;q=0.5"]
-    session = URLSession(configuration: configuration)
+    configuration.connectionProxyDictionary = [:]
+    session = URLSession(
+      configuration: configuration, delegate: LoopbackRedirectDelegate(), delegateQueue: nil)
   }
 
   func probe(port: Int) async -> PortProbe {
-    guard let url = URL(string: "http://localhost:\(port)/") else {
-      return silent(port)
+    for host in ["127.0.0.1", "[::1]"] {
+      guard let url = URL(string: "http://\(host):\(port)/"),
+        let (data, response) = try? await session.data(from: url),
+        let http = response as? HTTPURLResponse
+      else { continue }
+      return await classify(.init(port: port, url: url, data: data, response: http))
     }
+    return silent(port)
+  }
 
-    guard let (data, response) = try? await session.data(from: url),
-      let http = response as? HTTPURLResponse
-    else {
-      return silent(port)
-    }
+  private struct Response {
+    let port: Int
+    let url: URL
+    let data: Data
+    let response: HTTPURLResponse
+  }
 
+  private func classify(_ input: Response) async -> PortProbe {
+    let port = input.port
+    let http = input.response
     let contentType = (http.value(forHTTPHeaderField: "Content-Type") ?? "").lowercased()
-    let body = String(decoding: data.prefix(256_000), as: UTF8.self)
+    let body = String(decoding: input.data.prefix(256_000), as: UTF8.self)
     let finalURL = http.url?.absoluteString
 
     if contentType.contains("json") {
@@ -170,7 +201,7 @@ struct PortProber: Sendable {
 
     if contentType.contains("html") || body.range(of: "<html", options: .caseInsensitive) != nil {
       let title = HTMLMetadataParser.title(body)
-      let favicon = await favicon(base: http.url ?? url, html: body)
+      let favicon = await favicon(.init(base: http.url ?? input.url, html: body))
       return PortProbe(
         port: port, kind: .web, title: title, faviconData: favicon, finalURL: finalURL,
         probedAt: .now)
@@ -189,7 +220,14 @@ struct PortProber: Sendable {
     )
   }
 
-  private func favicon(base: URL, html: String) async -> Data? {
+  private struct IconRequest {
+    let base: URL
+    let html: String
+  }
+
+  private func favicon(_ input: IconRequest) async -> Data? {
+    let base = input.base
+    let html = input.html
     var candidates: [URL] = []
     if let href = HTMLMetadataParser.iconHref(html) {
       if href.hasPrefix("data:") {
@@ -205,7 +243,7 @@ struct PortProber: Sendable {
       candidates.append(root)
     }
 
-    for candidate in candidates {
+    for candidate in candidates where LoopbackProbePolicy.allows(candidate) {
       guard let (data, response) = try? await session.data(from: candidate),
         let http = response as? HTTPURLResponse, http.statusCode == 200,
         data.count > 16, data.count < 2_000_000,
