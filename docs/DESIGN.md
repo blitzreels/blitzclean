@@ -342,6 +342,9 @@ More from BlitzReels. Links open in the browser; there is no in-app promotion el
 
 ## October 7 leftover processes
 
+Confirmations retain the process identity from the selected row even when the list refreshes.
+Each signal rechecks the current folder and protections. Action feedback stays visible after the last row exits.
+
 Projects adds Leftover processes between Active and Saved projects, shown only when there is one.
 The section owns processes whose parent exited, without a project or AI session to own them;
 it does not repeat AI sessions, which Memory owns, or projects marked Keep running. Each row has Quit as its

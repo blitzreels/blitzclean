@@ -414,7 +414,7 @@ struct DevProcessScanner: Sendable {
     let leftovers = LeftoverProcessFinder.find(
       .init(
         records: records, executables: executables, directories: workingDirectories,
-        footprints: footprints, startTimes: startTimes, apps: .current(),
+        footprints: footprints, identities: identities, apps: .current(),
         excludedIDs: Set(threads.flatMap(\.processIDs)),
         keptRunningRoots: WorkspacePreferences.load().filter(\.keepRunning).map(\.directory)))
     let resources = ResourceOwnership.processes(
@@ -872,15 +872,20 @@ final class DevProcessModel: ObservableObject {
     }
   }
 
-  /// Leftovers whose executable name the user has not hidden.
   var visibleLeftovers: [LeftoverProcess] {
     let hidden = Set(hiddenLeftoverNames)
     return leftovers.filter { !hidden.contains($0.executableName) }
   }
 
-  func setLeftoverName(_ name: String, hidden: Bool) {
+  struct LeftoverVisibility {
+    let name: String
+    let hidden: Bool
+  }
+
+  func setLeftoverName(_ input: LeftoverVisibility) {
+    let name = input.name
     hiddenLeftoverNames.removeAll { $0 == name }
-    if hidden { hiddenLeftoverNames.append(name) }
+    if input.hidden { hiddenLeftoverNames.append(name) }
     UserDefaults.standard.set(hiddenLeftoverNames, forKey: LeftoverProcessFinder.hiddenKey)
   }
 
@@ -889,14 +894,15 @@ final class DevProcessModel: ObservableObject {
     UserDefaults.standard.removeObject(forKey: LeftoverProcessFinder.hiddenKey)
   }
 
-  /// Quit (SIGTERM) or Force Quit (SIGKILL). Each process is checked again first, and
-  /// Quit never turns into Force Quit.
-  func quitLeftovers(_ targets: [LeftoverProcess], force: Bool) {
-    let requests = targets.compactMap { process -> LeftoverStopRequest? in
-      guard !stoppingLeftovers.contains(process.processID),
-        let expected = identities[process.processID]
-      else { return nil }
-      return LeftoverStopRequest(process: process, expected: expected, force: force)
+  struct LeftoverQuit {
+    let targets: [LeftoverProcess]
+    let force: Bool
+  }
+
+  func quitLeftovers(_ input: LeftoverQuit) {
+    let requests = input.targets.compactMap { process -> LeftoverStopRequest? in
+      guard !stoppingLeftovers.contains(process.processID) else { return nil }
+      return LeftoverStopRequest(process: process, force: input.force)
     }
     guard !requests.isEmpty else { return }
     let ids = requests.map(\.process.processID)
@@ -905,7 +911,7 @@ final class DevProcessModel: ObservableObject {
     Task { [weak self] in
       let outcome = await Task.detached(priority: .userInitiated) {
         () async -> (signaled: [LeftoverStopRequest], running: Int) in
-        let signaled = requests.filter { LeftoverProcessStopper.signal($0) }
+        let signaled = LeftoverProcessStopper.signals(requests)
         for _ in 0..<12 {
           if !signaled.contains(where: LeftoverProcessStopper.isCurrent) { break }
           try? await Task.sleep(for: .milliseconds(250))
@@ -932,7 +938,9 @@ final class DevProcessModel: ObservableObject {
     let force = outcome.requested.first?.force == true
     guard outcome.requested.count > 1 else {
       let title = outcome.requested.first?.process.title ?? "The process"
-      if skipped > 0 { return "\(title) already exited or changed. The list is refreshed." }
+      if skipped > 0 {
+        return "\(title) was not quit: it exited, changed, or is protected. The list is refreshed."
+      }
       if outcome.running > 0 { return "\(title) is still running. Use Force Quit to end it now." }
       let memory = outcome.requested.first?.process.memoryBytes.map {
         " · it was using \(ByteText.full($0))"
@@ -941,7 +949,7 @@ final class DevProcessModel: ObservableObject {
     }
     var parts = ["Quit \(ended) of \(outcome.requested.count) leftover processes"]
     if outcome.running > 0 { parts.append("\(outcome.running) still running") }
-    if skipped > 0 { parts.append("\(skipped) exited or changed") }
+    if skipped > 0 { parts.append("\(skipped) exited, changed, or protected") }
     return parts.joined(separator: " · ")
   }
 

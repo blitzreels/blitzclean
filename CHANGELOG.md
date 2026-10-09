@@ -2,11 +2,18 @@
 
 ## Unreleased
 
+### Cleanup safety
+
+- Keep Docker inspection and cleanup on a local Unix socket, preserving tagged images and protecting
+  changed, active, recent, tracked, and symlinked folders during repeat removal.
+- Keep HTTP probes and icons on literal IPv4 or IPv6 loopback addresses, including redirects.
+- Separate known Time Machine snapshot warnings from open-file records without ignoring other activity errors.
+
 ### Projects
 
 - Add Leftover processes: processes that kept running after the app or terminal that started them closed,
   with RAM, CPU, folder, and uptime. Quit runs at once; Quit all and Force Quit ask first. Each signal checks
-  the process identity again. Launchd jobs, apps, macOS services, AI sessions, and Keep running projects
+  the selected process identity, current folder, and protection rules again. Launchd jobs, apps, macOS services, AI sessions, and Keep running projects
   are never listed.
 
 ## 1.3.0 - 2026-10-07

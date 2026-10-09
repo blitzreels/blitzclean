@@ -35,6 +35,9 @@ Its feature direction draws from these projects.
 
 ## OrphanBar
 
+The original MIT notice is preserved in [licenses/OrphanBar-LICENSE.txt](licenses/OrphanBar-LICENSE.txt)
+and included in packaged apps.
+
 - Source: <https://github.com/scr2em/orphan-bar>
 - License: MIT (same author as the BlitzClean change that adapted it)
 - Adopt: leftover-process rules (launchd parent, not a launchd job, app, XPC service, or system component,

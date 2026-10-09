@@ -41,6 +41,9 @@ struct WorkspaceProjectsView: View {
         let stopped = projects.filter { !$0.isRunning }
         let leftovers = processes.visibleLeftovers.filter { query.isEmpty || $0.matches(query) }
         if !running.isEmpty { section("Active projects", running) }
+        if let message = processes.leftoverMessage {
+          BlitzStatusLine(text: message, tone: .working)
+        }
         if !leftovers.isEmpty { leftoverSection(leftovers) }
         if !processes.hiddenLeftoverNames.isEmpty, query.isEmpty { hiddenLeftoversLine }
         if !stopped.isEmpty { section("Saved projects", stopped) }
@@ -59,7 +62,7 @@ struct WorkspaceProjectsView: View {
           title: action.title, message: action.message, confirmTitle: action.confirmTitle,
           onConfirm: {
             pending = nil
-            processes.quitLeftovers(action.processes, force: action.force)
+            processes.quitLeftovers(.init(targets: action.processes, force: action.force))
           }, onCancel: { pending = nil })
       }
     }
@@ -175,8 +178,6 @@ struct WorkspaceProjectsView: View {
     }.blitzRow()
   }
 
-  // MARK: Leftover processes
-
   private func leftoverSection(_ leftovers: [LeftoverProcess]) -> some View {
     let visible =
       showsAllLeftovers || !query.isEmpty ? leftovers : Array(leftovers.prefix(Self.leftoverLimit))
@@ -188,9 +189,6 @@ struct WorkspaceProjectsView: View {
             .blitzButton(.secondary).controlSize(.small).disabled(stopping || pending != nil)
             .help("Ask every listed process to quit")
         }
-      }
-      if let message = processes.leftoverMessage {
-        BlitzStatusLine(text: message, tone: .working)
       }
       LazyVStack(spacing: 0) {
         ForEach(visible) { process in
@@ -208,9 +206,9 @@ struct WorkspaceProjectsView: View {
   private func leftoverRow(_ process: LeftoverProcess) -> some View {
     LeftoverProcessRow(
       process: process, isBusy: processes.stoppingLeftovers.contains(process.processID),
-      onQuit: { processes.quitLeftovers([process], force: false) },
+      onQuit: { processes.quitLeftovers(.init(targets: [process], force: false)) },
       onForceQuit: { pending = .forceQuit(process) },
-      onHide: { processes.setLeftoverName(process.executableName, hidden: true) })
+      onHide: { processes.setLeftoverName(.init(name: process.executableName, hidden: true)) })
   }
 
   private var hiddenLeftoversLine: some View {

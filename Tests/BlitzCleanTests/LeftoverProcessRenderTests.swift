@@ -1,12 +1,26 @@
 import AppKit
+import Darwin
 import SwiftUI
 import Testing
 
 @testable import BlitzClean
 
-/// Writes Leftover processes rows with synthetic data when `BLITZ_LEFTOVER_RENDER_DIR` is set.
 @MainActor
 struct LeftoverProcessRenderTests {
+  private struct IdentityInput {
+    let processID: Int32
+    let name: String
+    let age: TimeInterval
+  }
+
+  private func identity(_ input: IdentityInput) -> DevProcessIdentity {
+    .init(
+      process: .init(
+        processID: input.processID, owner: getuid(),
+        startSeconds: UInt64(Date.now.addingTimeInterval(-input.age).timeIntervalSince1970),
+        startMicroseconds: 0, state: 0), executable: "/fixture/" + input.name)
+  }
+
   @Test func rendersLeftoverRowsWhenRequested() async throws {
     guard let output = ProcessInfo.processInfo.environment["BLITZ_LEFTOVER_RENDER_DIR"] else {
       return
@@ -15,17 +29,19 @@ struct LeftoverProcessRenderTests {
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     let leftovers = [
       LeftoverProcess(
-        processID: 48_213, executableName: "node", title: "node vite.js",
+        identity: identity(.init(processID: 48213, name: "node", age: 15000)),
+        executableName: "node", title: "node vite.js",
         workingDirectory: "/Users/test/dev/storefront-with-a-very-long-folder-name/apps/web",
-        memoryBytes: 1_870_000_000, cpuPercent: 96, startedAt: .now.addingTimeInterval(-15_000)),
+        memoryBytes: 1_870_000_000, cpuPercent: 96),
       LeftoverProcess(
-        processID: 51_007, executableName: "java", title: "java GradleDaemon",
+        identity: identity(.init(processID: 51007, name: "java", age: 190000)),
+        executableName: "java", title: "java GradleDaemon",
         workingDirectory: "/Users/test/dev/android-app", memoryBytes: 742_000_000,
-        cpuPercent: 0, startedAt: .now.addingTimeInterval(-190_000)),
+        cpuPercent: 0),
       LeftoverProcess(
-        processID: 3_388, executableName: "python3.12", title: "python http.server",
-        workingDirectory: nil, memoryBytes: nil, cpuPercent: 0,
-        startedAt: .now.addingTimeInterval(-600)),
+        identity: identity(.init(processID: 3388, name: "python3.12", age: 600)),
+        executableName: "python3.12", title: "python http.server",
+        workingDirectory: nil, memoryBytes: nil, cpuPercent: 0),
     ]
     for width in [CGFloat(708), CGFloat(868)] {
       let view = VStack(alignment: .leading, spacing: 10) {
