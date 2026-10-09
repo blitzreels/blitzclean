@@ -296,7 +296,7 @@ struct AppRecoveryTests {
         )))
   }
 
-  @Test func safetyRejectsSystemAppsAndSelf() {
+  @Test func safetyRejectsCoreServicesAndSelf() {
     #expect(
       RecoverySafety.refusal(
         .init(
@@ -304,7 +304,7 @@ struct AppRecoveryTests {
           ownUserID: 501)) != nil)
     let system = MemoryApp(
       processID: 42, name: "System", bundleIdentifier: "com.apple.system",
-      bundleURL: URL(fileURLWithPath: "/System/Applications/System.app"), memoryBytes: 100,
+      bundleURL: URL(fileURLWithPath: "/System/Library/CoreServices/System.app"), memoryBytes: 100,
       protectionReason: nil, isActive: false, launchDate: app.launchDate, childProcessCount: 0)
     #expect(
       RecoverySafety.refusal(

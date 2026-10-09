@@ -5,6 +5,19 @@ import Testing
 @testable import BlitzClean
 
 struct AppForceQuitTests {
+  @Test func builtInAppsRemainProtectedWhenTheyBecomeVisibleInRecovery() async {
+    let mail = MemoryApp(
+      processID: 42, name: "Mail", bundleIdentifier: "com.apple.mail",
+      bundleURL: URL(fileURLWithPath: "/System/Applications/Mail.app"), memoryBytes: 100,
+      protectionReason: "macOS system app", isActive: false,
+      launchDate: Date(timeIntervalSince1970: 100), childProcessCount: 0)
+    let driver = ForceQuitTestDriver(.init(exitsAfter: 0, forceError: false, resolveError: false))
+    let report = await ForceQuitEngine(driver: driver).run(mail)
+    #expect(report.outcome == .failed)
+    #expect(!report.requestSent)
+    #expect(await driver.forceCalls == 0)
+  }
+
   private let app = MemoryApp(
     processID: 42, name: "Fixture", bundleIdentifier: "com.example.fixture",
     bundleURL: URL(fileURLWithPath: "/Applications/Fixture.app"), memoryBytes: 100,

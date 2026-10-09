@@ -18,7 +18,7 @@ enum MemoryQuitSafety {
       let launchDate = current.launchDate, launchDate == input.expected.launchDate
     else { return "App changed since the scan; refresh before quitting" }
     if input.explicit {
-      return input.expected.isRecoveryEligible
+      return input.expected.isTerminationEligible
         ? nil : "macOS system apps and \(AppBrand.name) stay open"
     }
     if let reason = current.protectionReason { return reason }
