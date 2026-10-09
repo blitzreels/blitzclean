@@ -12,7 +12,7 @@ The [README](../README.md) has the overview, and [Privacy](PRIVACY.md) covers da
 | CPU | Current usage per process. A process using several cores can exceed 100%. |
 | Storage | Browse, Inventory, and Cleanup, with no nested tab bar. |
 | Revive apps | Live app checks, Revive and Force Quit on each app, bulk recovery for stopped apps, and recent crashes. |
-| Projects | Servers and background workers grouped by project, with memory, CPU, Stop, Pause and Resume, and Keep running. |
+| Projects | Servers and background workers grouped by project, with memory, CPU, Stop, Pause and Resume, and Keep running. Leftover processes whose app or terminal closed. |
 | Settings | Permission setup, menu bar values, notifications, launch at login, and project locations. |
 
 ## Menu bar
@@ -57,6 +57,24 @@ Search matches names, owners, PIDs, and project paths. Rows are sorted by RAM, t
 measurements last. The first 30 rows appear initially; Show all reveals the remainder.
 The list covers accessible processes in the current user account and excludes BlitzClean itself.
 These footprints do not sum to total system RAM. The existing Apps & AI view retains process controls.
+
+## Leftover processes
+
+Projects lists processes that kept running after the app or terminal that started them closed:
+a dev server from a closed terminal tab, a Gradle daemon, or a helper of an app that quit.
+Each row shows what it runs (`python http.server`, `java GradleDaemon`), its folder, PID, uptime, RAM, and CPU.
+
+A leftover is a process you own whose parent is launchd and that launchd does not manage. BlitzClean skips
+launchd jobs (`launchctl list`, which includes Homebrew services), apps, app extensions, XPC services, macOS
+components, and helpers of apps that are still running. AI sessions stay in Memory, where detached ones are
+marked. Processes in a Keep running project are not listed. If the launchd job list cannot be read, no
+leftovers are shown. `ssh-agent`, `gpg-agent`, `keyboxd`, and `dirmngr` are always skipped.
+
+Quit sends SIGTERM to one process at once. Quit all and Force Quit (SIGKILL) ask first. Before each signal,
+BlitzClean checks again that the PID has the same start time and executable, that you own it, that launchd is
+still its parent, and that it is not in a Keep running project. Quit never turns into Force Quit; a process that
+is still running after three seconds gets a message that points to Force Quit. Hide removes an executable name
+from the list until Show again. Hidden names are the only saved data.
 
 ## Find and remove storage
 
@@ -156,7 +174,7 @@ Scans never select anything automatically.
 A folder's size is an estimate of the space you get back. APFS shared blocks and files written in the
 meantime change the real result.
 
-Quit and Stop on a single item run immediately and keep the app's own save dialogs.
+Quit and Stop on a single item, including a leftover process, run immediately and keep the app's own save dialogs.
 Force Quit and bulk actions ask for confirmation first. Stop never turns into Force Quit on its own.
 
 AI sessions have Pause and Resume buttons in Overview and at the top of Memory.

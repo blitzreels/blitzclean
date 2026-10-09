@@ -27,6 +27,7 @@ mkdir -p "$CONTENTS_DIR/MacOS" "$CONTENTS_DIR/Resources" "$CONTENTS_DIR/Framewor
 cp "$BIN_DIR/BlitzClean" "$CONTENTS_DIR/MacOS/BlitzClean"
 ditto "$BIN_DIR/Sparkle.framework" "$CONTENTS_DIR/Frameworks/Sparkle.framework"
 cp "$ROOT_DIR/.build/artifacts/sparkle/Sparkle/LICENSE" "$CONTENTS_DIR/Resources/Sparkle-LICENSE.txt"
+cp "$ROOT_DIR/licenses/OrphanBar-LICENSE.txt" "$CONTENTS_DIR/Resources/OrphanBar-LICENSE.txt"
 if ! otool -l "$CONTENTS_DIR/MacOS/BlitzClean" | grep -q '@executable_path/../Frameworks'; then
     install_name_tool -add_rpath "@executable_path/../Frameworks" "$CONTENTS_DIR/MacOS/BlitzClean"
 fi

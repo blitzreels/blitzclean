@@ -130,6 +130,7 @@ struct DevProcessSnapshot: Sendable {
   let threads: [AIThread]
   let resources: [ResourceProcess]
   var workspaceRoots: [Int32: String] = [:]
+  var leftovers: [LeftoverProcess] = []
   var incomplete = false
 }
 

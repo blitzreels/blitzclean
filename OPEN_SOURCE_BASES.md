@@ -33,6 +33,18 @@ Its feature direction draws from these projects.
 - Adopt later: actor-based scanning, progress reporting, scan snapshots, exclusions, and incremental rescans.
 - Keep different: no treemap in the tray utility unless the simple category view stops being sufficient.
 
+## OrphanBar
+
+The original MIT notice is preserved in [licenses/OrphanBar-LICENSE.txt](licenses/OrphanBar-LICENSE.txt)
+and included in packaged apps.
+
+- Source: <https://github.com/scr2em/orphan-bar>
+- License: MIT (same author as the BlitzClean change that adapted it)
+- Adopt: leftover-process rules (launchd parent, not a launchd job, app, XPC service, or system component,
+  and not a helper of a running app) and interpreter titles such as `python http.server`.
+- Keep different: BlitzClean reuses its own process snapshot, identity checks, and Projects page instead of
+  a second menu bar item and polling loop.
+
 ## License policy
 
 - Preserve copyright and MIT license notices for copied or substantially adapted source.

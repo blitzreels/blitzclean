@@ -340,6 +340,19 @@ Settings ends with Our other apps: the BlitzReels wordmark beside the heading, t
 license, and source link follow as one caption line. The tray gear menu lists the same products under
 More from BlitzReels. Links open in the browser; there is no in-app promotion elsewhere.
 
+## October 7 leftover processes
+
+Confirmations retain the process identity from the selected row even when the list refreshes.
+Each signal rechecks the current folder and protections. Action feedback stays visible after the last row exits.
+
+Projects adds Leftover processes between Active and Saved projects, shown only when there is one.
+The section owns processes whose parent exited, without a project or AI session to own them;
+it does not repeat AI sessions, which Memory owns, or projects marked Keep running. Each row has Quit as its
+primary action. Force Quit, Show folder in Finder, Copy process ID, and Hide are in its menu.
+Quit runs at once, like single-project Stop; Force Quit and the header's Quit all use `BlitzConfirmation`.
+Hidden names collapse to one caption line with Show again, following the skipped-permissions pattern.
+No badge is added: a leftover is not an exception on a normal row, it is the reason the row exists.
+
 ## October 7 skippable permissions
 
 The user asked why the Settings badge kept counting a permission they did not want. Each Finish setup row now
