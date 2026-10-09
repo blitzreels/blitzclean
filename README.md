@@ -43,6 +43,8 @@ other removals are reviewed first, and personal files go to the Trash.
 - Inspect individual process footprints in Memory → Processes, sorted by RAM and searchable by name, owner,
   project path, or PID. Restricted measurements stay marked as unavailable.
 - Revive apps that stopped or froze, and see whether each one actually recovered.
+- Find leftover processes in Projects, with their RAM, CPU, folder, and uptime. Quit one directly;
+  Force Quit and Quit all ask first. AI sessions and protected projects keep their existing controls.
 - Find what fills your disk by browsing every drive with folder sizes, or by ranking the largest files.
 - Review caches, `node_modules`, build output, simulators, Docker, and merged worktrees before removing them,
   and see when removed folders grow back.

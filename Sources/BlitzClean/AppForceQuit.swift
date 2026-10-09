@@ -34,6 +34,12 @@ struct ForceQuitEngine: Sendable {
   let driver: any ForceQuitDriver
 
   func run(_ app: MemoryApp) async -> ForceQuitReport {
+    guard app.isTerminationEligible else {
+      return ForceQuitReport(
+        app: app, outcome: .failed,
+        detail: "macOS system apps and \(AppBrand.name) are protected from Force Quit.",
+        requestSent: false)
+    }
     var requestSent = false
     do {
       try Task.checkCancellation()
@@ -71,12 +77,18 @@ struct ForceQuitEngine: Sendable {
 
 struct NativeForceQuitDriver: ForceQuitDriver {
   func resolve(_ app: MemoryApp) async throws -> RecoveryTarget {
-    try await NativeAppRecoveryDriver().resolve(app)
+    guard app.isTerminationEligible else {
+      throw RecoveryFailure(message: "This app is protected from Force Quit.")
+    }
+    return try await NativeAppRecoveryDriver().resolve(app)
   }
 
   func forceQuit(_ target: RecoveryTarget) async throws {
     try await MainActor.run {
       try Task.checkCancellation()
+      guard target.app.isTerminationEligible else {
+        throw RecoveryFailure(message: "This app is protected from Force Quit.")
+      }
       _ = try NativeAppRecoveryDriver().validate(target)
       guard let running = NSRunningApplication(processIdentifier: target.app.processID),
         !running.isTerminated, running.launchDate == target.app.launchDate,

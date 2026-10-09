@@ -138,6 +138,8 @@ Health checks expire after two seconds, with at most eight concurrent window pro
 Each Accessibility message times out after 0.5 seconds; two failed observations are required for an unresponsive result.
 
 Native identity validation uses the PID, owner, launch identity, and bundle before sending SIGCONT.
+Resume and termination use separate eligibility rules. Built-in user apps are available for resume; their
+existing Quit and Force Quit protections remain intact, and core macOS services stay excluded.
 Recovery verifies the result within a bounded observation loop and never restarts a responsive app.
 
 New health supersedes conflicting recovery results, and a completed attempt does not impose a retry lock.

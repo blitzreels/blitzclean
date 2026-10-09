@@ -243,7 +243,7 @@ struct MemoryControlView: View {
       BlitzTrailingValue(value: ByteText.full(app.memoryBytes), detail: nil)
         .frame(width: 80, alignment: .trailing)
       Group {
-        if app.isRecoveryEligible {
+        if app.isTerminationEligible {
           BlitzProcessButton(title: "Quit", label: "Quit \(app.name)", isBusy: busy) { quit(app) }
             .disabled(model.actionProcessID != nil || forceQuit.activeApp != nil)
             .help("Ask \(app.name) to quit. Its save dialog can still appear.")
@@ -253,7 +253,7 @@ struct MemoryControlView: View {
         }
       }.frame(width: 96, alignment: .trailing)
       BlitzActionMenu(label: "More actions for \(app.name)") {
-        if app.isRecoveryEligible {
+        if app.isTerminationEligible {
           Button("Force Quit…", role: .destructive) { pending = .forceQuitApp(app) }
             .disabled(forceQuit.activeApp != nil)
         }

@@ -112,6 +112,31 @@ struct RecoveryFailure: LocalizedError {
 
 struct RecoveryExit: Error {}
 
+enum RecoveryAppPolicy {
+  struct Input {
+    let bundleIdentifier: String?
+    let bundleURL: URL
+  }
+
+  static func permitsResume(_ input: Input) -> Bool {
+    guard !isOwnAppOrFinder(input) else { return false }
+    let path = input.bundleURL.resolvingSymlinksInPath().path
+    return !path.hasPrefix("/System/")
+      || path.hasPrefix("/System/Applications/")
+      || path.hasPrefix("/System/Volumes/Preboot/Cryptexes/App/System/Applications/")
+  }
+
+  static func permitsTermination(_ input: Input) -> Bool {
+    !isOwnAppOrFinder(input)
+      && !input.bundleURL.resolvingSymlinksInPath().path.hasPrefix("/System/")
+  }
+
+  private static func isOwnAppOrFinder(_ input: Input) -> Bool {
+    input.bundleIdentifier == AppBrand.bundleIdentifier
+      || input.bundleIdentifier == "com.apple.finder"
+  }
+}
+
 enum RecoverySafety {
   struct Input {
     let expected: MemoryApp
@@ -137,10 +162,10 @@ enum RecoverySafety {
     guard process.owner == input.ownUserID else {
       return "Only apps owned by your macOS user can be revived."
     }
-    guard current.bundleIdentifier != AppBrand.bundleIdentifier,
-      current.bundleIdentifier != "com.apple.finder",
-      !current.bundleURL.resolvingSymlinksInPath().path.hasPrefix("/System/")
-    else { return "macOS system apps and \(AppBrand.name) cannot be revived." }
+    guard
+      RecoveryAppPolicy.permitsResume(
+        .init(bundleIdentifier: current.bundleIdentifier, bundleURL: current.bundleURL))
+    else { return "macOS core services and \(AppBrand.name) cannot be revived." }
     return nil
   }
 }
@@ -232,7 +257,9 @@ struct AppRecoveryEngine: Sendable {
       }
       return report(
         .notResponding,
-        "The window still isn't responding. Force Quit is available if it stays frozen."
+        app.isTerminationEligible
+          ? "The window still isn't responding. Force Quit is available if it stays frozen."
+          : "The window still isn't responding. Use the macOS Force Quit window to quit and reopen this app."
       )
     } catch is RecoveryExit {
       let since = resumeSent ? started.addingTimeInterval(-2) : started.addingTimeInterval(-600)

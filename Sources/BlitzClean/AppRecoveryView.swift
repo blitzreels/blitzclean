@@ -172,7 +172,14 @@ struct AppRecoveryView: View {
       }.disabled(forceQuit.activeApp?.id == app.id || memory.isActing(on: app))
       Button("Force Quit…", role: .destructive) { forceQuitCandidate = app }
         .blitzButton(.quiet)
-        .disabled(row.isReviving || forceQuit.activeApp != nil || memory.isActing(on: app))
+        .disabled(
+          !app.isTerminationEligible || row.isReviving || forceQuit.activeApp != nil
+            || memory.isActing(on: app)
+        )
+        .help(
+          app.isTerminationEligible
+            ? "Unsaved changes will be lost." : "This app is protected from Force Quit."
+        )
         .accessibilityLabel("Force Quit \(app.name)")
     }.blitzRow()
   }
@@ -219,7 +226,10 @@ struct AppRecoveryView: View {
 
   private func revive(_ app: MemoryApp) {
     Task {
-      if let report = await model.revive(app) { memory.recordRecovery(report) }
+      if let report = await model.revive(app) {
+        memory.recordRecovery(report)
+        if report.outcome == .revived || report.outcome == .alreadyRunning { model.showApp(app) }
+      }
     }
   }
 

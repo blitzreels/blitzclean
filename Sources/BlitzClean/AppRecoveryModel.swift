@@ -44,9 +44,14 @@ enum RecoveryAppRoster {
 extension MemoryApp {
   var isRecoveryEligible: Bool {
     processID != ProcessInfo.processInfo.processIdentifier
-      && bundleIdentifier != AppBrand.bundleIdentifier
-      && bundleIdentifier != "com.apple.finder"
-      && !bundleURL.resolvingSymlinksInPath().path.hasPrefix("/System/")
+      && RecoveryAppPolicy.permitsResume(
+        .init(bundleIdentifier: bundleIdentifier, bundleURL: bundleURL))
+  }
+
+  var isTerminationEligible: Bool {
+    processID != ProcessInfo.processInfo.processIdentifier
+      && RecoveryAppPolicy.permitsTermination(
+        .init(bundleIdentifier: bundleIdentifier, bundleURL: bundleURL))
   }
 }
 

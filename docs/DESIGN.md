@@ -70,6 +70,9 @@ apps and the bulk Revive action appear before window checks finish. A revive rep
 Not responding, Still stopped, Quit, or Crashed (confirmed by a macOS crash
 report written after the attempt). Recent app crashes from DiagnosticReports stay listed with Reopen until dismissed.
 Revive remains available for every eligible running app, including apps with no health result yet.
+Built-in user apps such as Mail, Terminal, and Safari are included. Resume eligibility is separate from Quit
+eligibility: protected built-in apps have Revive, while Force Quit stays disabled. Core macOS services remain hidden.
+A successful single-app Revive brings that app to the front; bulk revive keeps the dashboard visible.
 Each row has direct Revive and Force Quit actions; there is no action dropdown. Normal Quit stays in Memory.
 A responsive window returns an explicit result instead of silently removing the Revive action.
 The sidebar badge counts stopped and unresponsive apps from background process-state reads.
@@ -195,6 +198,10 @@ The dashboard and monitoring have separate close actions, per the user's request
 The red window button, Command-W, Command-Q, and Dock Quit close the dashboard while the monitor stays resident.
 The app menu calls Command-Q Close dashboard. Only the tray gear menu offers Stop monitoring and quit.
 System logout, restart, and shutdown remain normal termination paths; no relaunch loop or quit confirmation is added.
+
+The October 7 request makes Dock and app-switcher presence follow the dashboard lifecycle.
+Launch starts as a menu-bar accessory. Opening the dashboard switches to a regular app; closing it restores
+accessory mode. Opening the tray alone never adds a Dock entry. A minimized dashboard remains open.
 
 Settings uses direct segments for the RAM value: Available GB, Used GB, or Used %.
 Available memory is the default, labeled free in the menu bar; used bytes are explicitly labeled used.
