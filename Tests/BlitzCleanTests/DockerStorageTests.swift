@@ -4,6 +4,50 @@ import Testing
 @testable import BlitzClean
 
 struct DockerStorageTests {
+  @Test func rejectsRemoteAndMalformedDockerEndpoints() throws {
+    #expect(
+      try DockerLocalEndpoint.validate("unix:///var/run/docker.sock")
+        == "unix:///var/run/docker.sock")
+    for host in [
+      "ssh://production", "tcp://127.0.0.1:2375", "https://docker.example.com",
+      "unix://remote/socket", "unix:///", "unix:///socket?other=host",
+    ] {
+      #expect(throws: (any Error).self) { try DockerLocalEndpoint.validate(host) }
+    }
+    #expect(throws: (any Error).self) { try DockerLocalEndpoint.parse("[]") }
+    #expect(throws: (any Error).self) { try DockerLocalEndpoint.parse("not JSON") }
+    #expect(
+      try DockerLocalEndpoint.parse(
+        "[{\"Endpoints\":{\"docker\":{\"Host\":\"unix:///var/run/docker.sock\"}}}]")
+        == "unix:///var/run/docker.sock")
+    #expect(throws: (any Error).self) {
+      try DockerLocalEndpoint.parse(
+        "[{\"Endpoints\":{\"docker\":{\"Host\":\"ssh://production\"}}}]")
+    }
+  }
+
+  @Test func cleanupPinsBothCommandsAndPreservesTaggedImages() throws {
+    let log = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "docker-commands-\(UUID())")
+    defer { try? FileManager.default.removeItem(at: log) }
+    let script = try executable(
+      """
+      for key in DOCKER_CONTEXT DOCKER_HOST DOCKER_TLS DOCKER_TLS_VERIFY DOCKER_CERT_PATH; do
+        eval "value=\\${$key-}"
+        [ -z "$value" ] || exit 9
+      done
+      printf '%s\\n' "$*" >> '\(log.path)'
+      """)
+    defer { try? FileManager.default.removeItem(at: script) }
+    _ = try DockerStorageService(.init(executablePath: script.path, queryTimeout: 3))
+      .cleanRebuildable()
+    #expect(
+      try String(contentsOf: log, encoding: .utf8).split(separator: "\n").map(String.init) == [
+        "--host unix:///var/run/docker.sock image prune --force",
+        "--host unix:///var/run/docker.sock builder prune --all --force",
+      ])
+  }
+
   @Test func stalledDockerQueryEndsWithoutBlockingTheAudit() throws {
     let script = try executable("exec /bin/sleep 30")
     defer { try? FileManager.default.removeItem(at: script) }
@@ -52,7 +96,13 @@ struct DockerStorageTests {
 
   private func executable(_ body: String) throws -> URL {
     let url = FileManager.default.temporaryDirectory.appendingPathComponent("docker-test-\(UUID())")
-    try Data(("#!/bin/sh\n" + body + "\n").utf8).write(to: url)
+    let context = """
+      if [ "$1" = context ]; then
+        printf '%s\\n' '[{"Endpoints":{"docker":{"Host":"unix:///var/run/docker.sock"}}}]'
+        exit 0
+      fi
+      """
+    try Data(("#!/bin/sh\n" + context + "\n" + body + "\n").utf8).write(to: url)
     try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: url.path)
     return url
   }

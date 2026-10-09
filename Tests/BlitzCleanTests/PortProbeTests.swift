@@ -1,9 +1,39 @@
 import Foundation
+import Network
 import Testing
 
 @testable import BlitzClean
 
 struct PortProbeTests {
+  @Test func probesIPv6OnlyLoopbackServers() async throws {
+    let parameters = NWParameters.tcp
+    parameters.requiredLocalEndpoint = .hostPort(host: "::1", port: .any)
+    let listener = try NWListener(using: parameters)
+    let queue = DispatchQueue(label: "blitzclean.tests.ipv6")
+    let states = AsyncStream<NWListener.State> { continuation in
+      listener.stateUpdateHandler = { continuation.yield($0) }
+    }
+    listener.newConnectionHandler = { connection in
+      connection.start(queue: queue)
+      connection.receive(minimumIncompleteLength: 1, maximumLength: 16_384) { _, _, _, _ in
+        let reply =
+          "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 11\r\nConnection: close\r\n\r\n{\"ok\":true}"
+        connection.send(
+          content: Data(reply.utf8), completion: .contentProcessed { _ in connection.cancel() })
+      }
+    }
+    listener.start(queue: queue)
+    defer { listener.cancel() }
+    for await state in states {
+      if case .failed(let error) = state { throw error }
+      if case .ready = state { break }
+    }
+    let port = try #require(listener.port)
+    let result = await PortProber().probe(port: Int(port.rawValue))
+    #expect(result.kind == .api)
+    #expect(result.finalURL?.contains("[::1]") == true)
+  }
+
   @Test func restrictsProbeAndIconDestinationsToLiteralLoopback() throws {
     for value in ["http://127.0.0.1:3000/", "https://[::1]:443/icon.png"] {
       #expect(LoopbackProbePolicy.allows(try #require(URL(string: value))))

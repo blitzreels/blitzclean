@@ -181,4 +181,7 @@ open files, symbolic links, incomplete checks, and trees that change during vali
 This can keep dependency folders containing symlinks; review those with their package manager instead.
 
 Automatic HTTP probes use literal loopback addresses only. External redirects and external favicon
-URLs are rejected, and probes do not use configured HTTP proxies.
+URLs are rejected, and probes do not use configured HTTP proxies. IPv4 and IPv6 loopback servers are supported.
+
+Known warnings about inaccessible Time Machine snapshot mounts stay separate from open-file records.
+Other activity-check errors and incomplete warning messages still block removal.

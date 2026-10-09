@@ -185,10 +185,11 @@ enum CleanupActivity {
   static func runCommand(_ request: CleanupCommandRequest) -> CleanupCommandResult {
     let process = Process()
     let pipe = Pipe()
+    let errors = Pipe()
     process.executableURL = URL(fileURLWithPath: request.executable)
     process.arguments = request.arguments
     process.standardOutput = pipe
-    process.standardError = pipe
+    process.standardError = errors
     do { try process.run() } catch { return CleanupCommandResult(status: -1, output: "") }
     let timeout = DispatchWorkItem {
       if process.isRunning { process.terminate() }
@@ -198,13 +199,41 @@ enum CleanupActivity {
     }
     deadlines.asyncAfter(deadline: .now() + request.timeout, execute: timeout)
     deadlines.asyncAfter(deadline: .now() + request.timeout + 1, execute: deadline)
+    let diagnostics = CleanupDiagnosticOutput()
+    let readers = DispatchGroup()
+    readers.enter()
+    DispatchQueue.global(qos: .utility).async {
+      diagnostics.read(errors.fileHandleForReading)
+      readers.leave()
+    }
     let data = pipe.fileHandleForReading.readDataToEndOfFile()
     process.waitUntilExit()
+    readers.wait()
     timeout.cancel()
     deadline.cancel()
     return CleanupCommandResult(
-      status: process.terminationReason == .exit ? process.terminationStatus : -1,
+      status: process.terminationReason == .exit && acceptsDiagnostics(diagnostics.text)
+        ? process.terminationStatus : -1,
       output: String(decoding: data, as: UTF8.self))
+  }
+
+  static func acceptsDiagnostics(_ output: String) -> Bool {
+    var expectsDetail = false
+    for line in output.split(separator: "\n") {
+      if line.hasPrefix(
+        "lsof: WARNING: can't stat() apfs file system /Volumes/com.apple.TimeMachine.localsnapshots/"
+      ) {
+        guard !expectsDetail else { return false }
+        expectsDetail = true
+      } else if expectsDetail,
+        line.trimmingCharacters(in: .whitespaces) == "Output information may be incomplete."
+      {
+        expectsDetail = false
+      } else {
+        return false
+      }
+    }
+    return !expectsDetail
   }
 
   static func workingDirectories() -> Set<String>? {
@@ -270,6 +299,14 @@ struct CleanupCommandRequest: Sendable {
   let executable: String
   let arguments: [String]
   let timeout: TimeInterval
+}
+
+private final class CleanupDiagnosticOutput: @unchecked Sendable {
+  private var data = Data()
+
+  func read(_ handle: FileHandle) { data = handle.readDataToEndOfFile() }
+
+  var text: String { String(decoding: data, as: UTF8.self) }
 }
 
 private struct BootedSimulatorList: Decodable {

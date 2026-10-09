@@ -136,7 +136,6 @@ enum HTMLMetadataParser {
   }
 }
 
-/// Probes must stay on the literal loopback interface, including redirects and icons.
 enum LoopbackProbePolicy {
   static func allows(_ url: URL) -> Bool {
     guard ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
@@ -171,18 +170,28 @@ struct PortProber: Sendable {
   }
 
   func probe(port: Int) async -> PortProbe {
-    guard let url = URL(string: "http://127.0.0.1:\(port)/") else {
-      return silent(port)
+    for host in ["127.0.0.1", "[::1]"] {
+      guard let url = URL(string: "http://\(host):\(port)/"),
+        let (data, response) = try? await session.data(from: url),
+        let http = response as? HTTPURLResponse
+      else { continue }
+      return await classify(.init(port: port, url: url, data: data, response: http))
     }
+    return silent(port)
+  }
 
-    guard let (data, response) = try? await session.data(from: url),
-      let http = response as? HTTPURLResponse
-    else {
-      return silent(port)
-    }
+  private struct Response {
+    let port: Int
+    let url: URL
+    let data: Data
+    let response: HTTPURLResponse
+  }
 
+  private func classify(_ input: Response) async -> PortProbe {
+    let port = input.port
+    let http = input.response
     let contentType = (http.value(forHTTPHeaderField: "Content-Type") ?? "").lowercased()
-    let body = String(decoding: data.prefix(256_000), as: UTF8.self)
+    let body = String(decoding: input.data.prefix(256_000), as: UTF8.self)
     let finalURL = http.url?.absoluteString
 
     if contentType.contains("json") {
@@ -192,7 +201,7 @@ struct PortProber: Sendable {
 
     if contentType.contains("html") || body.range(of: "<html", options: .caseInsensitive) != nil {
       let title = HTMLMetadataParser.title(body)
-      let favicon = await favicon(base: http.url ?? url, html: body)
+      let favicon = await favicon(.init(base: http.url ?? input.url, html: body))
       return PortProbe(
         port: port, kind: .web, title: title, faviconData: favicon, finalURL: finalURL,
         probedAt: .now)
@@ -211,7 +220,14 @@ struct PortProber: Sendable {
     )
   }
 
-  private func favicon(base: URL, html: String) async -> Data? {
+  private struct IconRequest {
+    let base: URL
+    let html: String
+  }
+
+  private func favicon(_ input: IconRequest) async -> Data? {
+    let base = input.base
+    let html = input.html
     var candidates: [URL] = []
     if let href = HTMLMetadataParser.iconHref(html) {
       if href.hasPrefix("data:") {

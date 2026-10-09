@@ -200,7 +200,6 @@ enum RegrowCleaner {
     return kilobytes * 1_024
   }
 
-  /// Repeat removal must not bypass the cache review's freshness and identity checks.
   static func reviewedTree(_ target: RegrowTarget) throws -> CacheTree {
     let tree = try CacheCleaner.tree(
       .init(path: target.path, deadline: .now.addingTimeInterval(15)))
@@ -217,7 +216,6 @@ enum RegrowCleaner {
         throw RegrowCleanError.busy("Folder contains tracked files or Git could not verify them")
       }
     } else {
-      // A failed Git check is only safe outside a repository, not inside a broken one.
       var ancestor = URL(fileURLWithPath: directory)
       while ancestor.path != "/" {
         if FileManager.default.fileExists(atPath: ancestor.appendingPathComponent(".git").path) {
