@@ -1,5 +1,6 @@
 import AppKit
 import Carbon
+import SwiftUI
 
 enum AppQuitPolicy {
   struct Request {
@@ -38,6 +39,29 @@ enum AppLifetime {
     for window in app.windows where window.styleMask.contains(.titled) {
       window.close()
     }
-    app.hide(nil)
+    app.setActivationPolicy(.accessory)
+  }
+}
+
+struct DashboardWindowLifecycle: NSViewRepresentable {
+  func makeNSView(context: Context) -> DashboardLifecycleView {
+    DashboardLifecycleView()
+  }
+
+  func updateNSView(_ nsView: DashboardLifecycleView, context: Context) {}
+}
+
+final class DashboardLifecycleView: NSView {
+  override func viewDidMoveToWindow() {
+    super.viewDidMoveToWindow()
+    NotificationCenter.default.removeObserver(self)
+    guard let window else { return }
+    NotificationCenter.default.addObserver(
+      self, selector: #selector(dashboardWillClose), name: NSWindow.willCloseNotification,
+      object: window)
+  }
+
+  @objc private func dashboardWillClose(_ notification: Notification) {
+    NSApp.setActivationPolicy(.accessory)
   }
 }

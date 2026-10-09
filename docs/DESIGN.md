@@ -199,6 +199,10 @@ The red window button, Command-W, Command-Q, and Dock Quit close the dashboard w
 The app menu calls Command-Q Close dashboard. Only the tray gear menu offers Stop monitoring and quit.
 System logout, restart, and shutdown remain normal termination paths; no relaunch loop or quit confirmation is added.
 
+The October 7 request makes Dock and app-switcher presence follow the dashboard lifecycle.
+Launch starts as a menu-bar accessory. Opening the dashboard switches to a regular app; closing it restores
+accessory mode. Opening the tray alone never adds a Dock entry. A minimized dashboard remains open.
+
 Settings uses direct segments for the RAM value: Available GB, Used GB, or Used %.
 Available memory is the default, labeled free in the menu bar; used bytes are explicitly labeled used.
 The tray card follows the same saved choice, and unavailable readings use a dash.

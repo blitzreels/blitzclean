@@ -63,6 +63,7 @@ enum CleanStoragePage: String, CaseIterable {
 @MainActor
 extension OpenWindowAction {
   @MainActor func dashboard() {
+    NSApp.setActivationPolicy(.regular)
     callAsFunction(id: "dashboard")
     NSApp.activate(ignoringOtherApps: true)
   }

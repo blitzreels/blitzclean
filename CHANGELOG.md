@@ -1,6 +1,17 @@
 # Changelog
 
-## Unreleased
+## 1.4.0 - 2026-10-09
+
+### Revive apps
+
+- Include built-in user apps such as Mail, Terminal, and Safari in the recovery list, with separate rules
+  for safe resume and destructive Quit. Core macOS services stay excluded; existing Quit protections remain.
+- Bring a responding or resumed app to the front after a single Revive action.
+
+### Dashboard lifecycle
+
+- Keep BlitzClean in the menu bar after the dashboard closes, with no Dock or app-switcher entry.
+  Opening the dashboard brings back the Dock entry; opening the tray alone does not.
 
 ### Cleanup safety
 
@@ -13,8 +24,8 @@
 
 - Add Leftover processes: processes that kept running after the app or terminal that started them closed,
   with RAM, CPU, folder, and uptime. Quit runs at once; Quit all and Force Quit ask first. Each signal checks
-  the selected process identity, current folder, and protection rules again. Launchd jobs, apps, macOS services, AI sessions, and Keep running projects
-  are never listed.
+  the selected process identity, current folder, and protection rules again. Launchd jobs, apps, macOS services,
+  AI sessions, and Keep running projects are never listed.
 
 ## 1.3.0 - 2026-10-07
 

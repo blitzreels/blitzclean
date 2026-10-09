@@ -39,7 +39,9 @@ struct BlitzCleanApp: App {
         services: .init(
           recovery: appRecovery, permissions: permissions, docker: dockerStorage,
           folders: folderExplorer,
-          launchAtLogin: launchAtLogin, updates: appDelegate.updates))
+          launchAtLogin: launchAtLogin, updates: appDelegate.updates)
+      )
+      .background(DashboardWindowLifecycle())
     }
     .windowStyle(.hiddenTitleBar)
     .defaultSize(width: 1080, height: 820)
@@ -105,7 +107,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     NSApp.appearance = NSAppearance(named: .darkAqua)
-    NSApp.setActivationPolicy(.regular)
     updates.start()
   }
 }
