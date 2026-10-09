@@ -223,6 +223,7 @@ struct BlitzSettingsView: View {
   @ObservedObject var permissions: PermissionsModel
   @ObservedObject var updates: AppUpdateController
   @State private var roots = DeveloperLocations.additionalProjectRoots
+  @AppStorage(DockIconPreference.key) private var showsDockIcon = DockIconPreference.defaultValue
 
   private var familySection: some View {
     VStack(alignment: .leading, spacing: 12) {
@@ -323,11 +324,20 @@ struct BlitzSettingsView: View {
           )
           .font(BlitzType.caption).foregroundStyle(BlitzUI.secondaryText)
         }.panelCard(padding: 16)
-        Toggle(
-          "Launch at login",
-          isOn: Binding(get: { launchAtLogin.enabled }, set: { launchAtLogin.setEnabled($0) })
-        )
-        .panelCard(padding: 16)
+        VStack(alignment: .leading, spacing: 12) {
+          Toggle(
+            "Launch at login",
+            isOn: Binding(get: { launchAtLogin.enabled }, set: { launchAtLogin.setEnabled($0) }))
+          BlitzRowDivider(leading: 0)
+          VStack(alignment: .leading, spacing: 4) {
+            Toggle("Show Dock icon", isOn: $showsDockIcon)
+              .onChange(of: showsDockIcon) { _, _ in
+                NSApp.setActivationPolicy(DockIconPreference.policy())
+              }
+            Text("Only while the window is open. The menu bar icon stays.")
+              .font(BlitzType.caption).foregroundStyle(BlitzUI.secondaryText)
+          }
+        }.panelCard(padding: 16)
         MemoryGuardControls(model: memory)
         projectFolders
         updatesSection

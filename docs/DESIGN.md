@@ -202,6 +202,8 @@ System logout, restart, and shutdown remain normal termination paths; no relaunc
 The October 7 request makes Dock and app-switcher presence follow the dashboard lifecycle.
 Launch starts as a menu-bar accessory. Opening the dashboard switches to a regular app; closing it restores
 accessory mode. Opening the tray alone never adds a Dock entry. A minimized dashboard remains open.
+Settings has "Show Dock icon" (`app.showsDockIcon`, on by default), grouped with Launch at login in one card.
+When off, the dashboard opens in accessory mode and the app stays menu-bar only.
 
 Settings uses direct segments for the RAM value: Available GB, Used GB, or Used %.
 Available memory is the default, labeled free in the menu bar; used bytes are explicitly labeled used.

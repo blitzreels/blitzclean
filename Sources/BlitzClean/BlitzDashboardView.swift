@@ -60,10 +60,21 @@ enum CleanStoragePage: String, CaseIterable {
   }
 }
 
+enum DockIconPreference {
+  static let key = "app.showsDockIcon"
+
+  static let defaultValue = true
+
+  static func policy(_ defaults: UserDefaults = .standard) -> NSApplication.ActivationPolicy {
+    let shows = defaults.object(forKey: key) as? Bool ?? defaultValue
+    return shows ? .regular : .accessory
+  }
+}
+
 @MainActor
 extension OpenWindowAction {
   @MainActor func dashboard() {
-    NSApp.setActivationPolicy(.regular)
+    NSApp.setActivationPolicy(DockIconPreference.policy())
     callAsFunction(id: "dashboard")
     NSApp.activate(ignoringOtherApps: true)
   }
