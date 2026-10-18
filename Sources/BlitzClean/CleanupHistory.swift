@@ -64,6 +64,23 @@ struct CleanupHistoryStore: Sendable {
     Self(url: AppData.file("cleanup-history.json"))
   }
 
+  struct Stamp: Equatable {
+    let modified: Date
+    let size: Int
+    let inode: UInt64
+  }
+
+  /// Changes whenever another window, agent report or process rewrites the history file.
+  func stamp() -> Stamp? {
+    var info = stat()
+    guard stat(url.path, &info) == 0 else { return nil }
+    return Stamp(
+      modified: Date(
+        timeIntervalSince1970: TimeInterval(info.st_mtimespec.tv_sec) + TimeInterval(
+          info.st_mtimespec.tv_nsec) / 1_000_000_000),
+      size: Int(info.st_size), inode: info.st_ino)
+  }
+
   func load() throws -> CleanupLedger {
     guard FileManager.default.fileExists(atPath: url.path) else { return CleanupLedger() }
     let decoder = JSONDecoder()

@@ -32,6 +32,11 @@ if ! otool -l "$CONTENTS_DIR/MacOS/BlitzClean" | grep -q '@executable_path/../Fr
     install_name_tool -add_rpath "@executable_path/../Frameworks" "$CONTENTS_DIR/MacOS/BlitzClean"
 fi
 cp "$ROOT_DIR/support/Info.plist" "$CONTENTS_DIR/Info.plist"
+RESCUE_APP="$CONTENTS_DIR/Helpers/BlitzClean Emergency.app"
+mkdir -p "$RESCUE_APP/Contents/MacOS"
+cp "$CONTENTS_DIR/MacOS/BlitzClean" "$RESCUE_APP/Contents/MacOS/BlitzRescue"
+install_name_tool -add_rpath "@executable_path/../../../../Frameworks" "$RESCUE_APP/Contents/MacOS/BlitzRescue"
+cp "$ROOT_DIR/support/Emergency-Info.plist" "$RESCUE_APP/Contents/Info.plist"
 # Only release packaging passes the key; development builds never update themselves.
 if [[ -n "${BLITZCLEAN_SPARKLE_PUBLIC_KEY:-}" ]]; then
     PLIST="$CONTENTS_DIR/Info.plist"
@@ -59,6 +64,7 @@ codesign --force "${SIGNING_FLAGS[@]}" --preserve-metadata=entitlements --sign "
 codesign --force "${SIGNING_FLAGS[@]}" --sign "$SIGNING_IDENTITY" "$SPARKLE/Autoupdate"
 codesign --force "${SIGNING_FLAGS[@]}" --sign "$SIGNING_IDENTITY" "$SPARKLE/Updater.app"
 codesign --force "${SIGNING_FLAGS[@]}" --sign "$SIGNING_IDENTITY" "$CONTENTS_DIR/Frameworks/Sparkle.framework"
+codesign --force "${SIGNING_FLAGS[@]}" --sign "$SIGNING_IDENTITY" "$RESCUE_APP"
 codesign --force "${SIGNING_FLAGS[@]}" --entitlements "$ROOT_DIR/support/BlitzClean.entitlements" --sign "$SIGNING_IDENTITY" "$APP_DIR"
 codesign --verify --deep --strict "$APP_DIR"
 echo "$APP_DIR"

@@ -57,7 +57,7 @@ folder without overwriting existing ones, and cleanup reports are still imported
 Navigation and selected storage tab use UserDefaults. File review is an atomic JSON snapshot
 beside the cleanup ledger (8 MiB / 5,000 files maximum), with filters saved separately.
 The chart store keeps two-second samples for 15 minutes and five-minute points for seven days.
-It is capped at 512 KiB, and the week-long chart is reduced to about 450 visible points.
+It is capped at 1 MiB, and the week-long chart is reduced to about 450 visible points.
 Export history keeps at most 100 entries / 512 KiB. Incident history retains at most 1,440 events
 from the last 24 hours; cleanup history keeps 1,000 records. JSON files use owner-only permissions.
 No local incident log, preference export, build artifact, or machine screenshot belongs in Git.
@@ -125,9 +125,28 @@ with owner-only permissions and no process arguments or credentials. This local 
 becoming busy; it cannot prove which process caused a kernel panic. macOS crash reports remain the authority.
 
 Individual Quit/Stop actions run without a BlitzClean confirmation. Native application save dialogs still appear.
-Manual project Stop validates PID, owner, start identity, executable, snapshot age, and Keep running protection;
+Manual project Stop validates PID, owner, start identity, executable, and Keep running protection;
 it sends SIGTERM and resumes stopped workers to deliver that signal. It never escalates to SIGKILL automatically.
 Auto-pause remains opt-in and never invokes Stop.
+
+`WorkloadControl` expands validated process identities through a native `proc_listallpids` parent tree.
+It signals supervisors before descendants, discovers newly created children, and verifies the observed result.
+Manual controls include project runtimes launched by agents; automatic suspension still excludes AI-owned PIDs.
+Project shutdown checks a fresh project snapshot for surviving or respawned workers.
+
+`--emergency-controls` enters an AppKit-only process before constructing any SwiftUI models.
+Packaged builds embed a separately signed `BlitzClean Emergency.app` with its own bundle identity,
+using the same binary as `BlitzRescue` and the parent's Sparkle framework.
+The installed app starts it before dashboard initialization; it exits if the parent identity changes or exits.
+Its Carbon hotkey and UI use their own event loop. Inventory sampling and control actions run off that loop.
+The inventory uses native identities, memory footprints, and working directories; it spawns no inspection commands.
+Shared-host worker groups remain heuristic; distinct known directories cannot enter the same launch-time cluster.
+The explicitly labeled shared Codex app target is separate and requires confirmation.
+
+`DockerProjectService` pins a validated local Unix endpoint and rechecks full container IDs, creation time and labels.
+Stop uses an unlimited Docker grace period with a bounded client wait, preserving containers and database volumes.
+Labels and explicit assignments merge containers into Projects; missing ownership stays separate.
+Dashboard scans back off to twelve seconds under pressure, and unchanged process arrays are not republished.
 
 ## Live app recovery
 

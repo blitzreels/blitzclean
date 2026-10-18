@@ -91,6 +91,64 @@ enum DeveloperArtifactCleanup {
       win: win)
   }
 
+  /// Blockers that only protect files inside the folder; a forced removal keeps the branch and its commits.
+  static let forceableWorktreeBlockers: Set<String> = [
+    "Has ignored files. Review them first.", "Uncommitted or untracked files",
+    "No verified merge into the base branch",
+  ]
+
+  static func canForce(_ artifact: DeveloperArtifact) -> Bool {
+    artifact.kind == .worktree && artifact.internalVolume
+      && artifact.blocker.map(forceableWorktreeBlockers.contains) == true
+  }
+
+  /// Removes a worktree whose only blockers are local files, after re-checking identity, use and open files.
+  static func forceRemoveWorktree(_ artifact: DeveloperArtifact) -> DeveloperCleanupOutcome {
+    func failed(_ reason: String) -> DeveloperCleanupOutcome {
+      .init(path: artifact.path, removed: false, message: reason, win: nil)
+    }
+    guard canForce(artifact), let expected = artifact.worktree,
+      CleanupVolume.read(artifact.path)?.isInternal == true
+    else { return failed(artifact.blocker ?? "This worktree is protected") }
+    guard let identity = artifact.identity, DirectoryIdentity.read(artifact.path) == identity,
+      let current = GitWorktrees.list(expected.repository)?.first(where: {
+        $0.path == expected.record.path
+      }), current == expected.record
+    else { return failed("Worktree changed. Refresh and review it again.") }
+    let assessment = GitWorktrees.inspect(
+      .init(
+        repository: expected.repository, record: current,
+        base: GitWorktrees.base(expected.repository),
+        activeDirectories: CleanupActivity.workingDirectories(),
+        keptDirectories: WorkspacePreferences.load().filter(\.keepRunning).map(\.directory)))
+    if let reason = assessment.blocker, !forceableWorktreeBlockers.contains(reason) {
+      return failed(reason)
+    }
+    let handles = CleanupActivity.command(["-nP", "-Fpcn", "+D", artifact.path])
+    guard handles.status == 1, handles.output.isEmpty else {
+      return failed("Files are open in an app. Close the project and try again.")
+    }
+    let before = CleanupVolume.read(artifact.path)
+    let result = DeveloperCommand.run(
+      .init(
+        executable: "/usr/bin/git",
+        arguments: [
+          "-C", expected.repository, "worktree", "remove", "--force", "--", artifact.path,
+        ],
+        timeout: 180, maximumBytes: 65_536))
+    guard result.status == 0, !FileManager.default.fileExists(atPath: artifact.path) else {
+      return failed("Git could not remove this worktree. Refresh to check it.")
+    }
+    let win = CleanupWin(
+      id: UUID().uuidString, date: .now, title: "Removed worktree · \(artifact.name)",
+      paths: [artifact.path], before: before, after: before.flatMap { CleanupVolume.read($0.path) })
+    return .init(
+      path: artifact.path, removed: true,
+      message: win.title + " · branch kept"
+        + (win.measuredGain.map { " · " + ByteText.full($0) + " freed" } ?? ""),
+      win: win)
+  }
+
   struct DependencyValidation {
     let artifact: DeveloperArtifact
     let active: Set<String>?

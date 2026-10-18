@@ -338,6 +338,7 @@ final class SystemMonitor: NSObject, ObservableObject {
   private var previousCounters: [CPUCounter] = []
   private var previousCounterTime: TimeInterval?
   private var samplingProcesses = false
+  private var backgroundTicks = 0
   private var timer: Timer?
   private var lastHistorySave = Date.distantPast
   private var historyLoadFailed = false
@@ -413,12 +414,12 @@ final class SystemMonitor: NSObject, ObservableObject {
       }.value
       guard let self else { return }
       if let previousCounterTime, let scale = CPUProcessReader.nanosecondsPerTick {
-        topCPUProcesses = Array(
-          CPUProcessReader.usage(
-            .init(
-              previous: previousCounters, current: result.0,
-              seconds: result.1 - previousCounterTime, nanosecondsPerTick: scale)
-          ).prefix(30))
+        let interval = CPUInterval(
+          previous: previousCounters, current: result.0,
+          seconds: result.1 - previousCounterTime, nanosecondsPerTick: scale)
+        topCPUProcesses = Array(CPUProcessReader.usage(interval).prefix(30))
+        history.attribute(CPUProcessReader.leads(interval))
+        resourceSamples = history.samples
       }
       previousCounters = result.0
       previousCounterTime = result.1
@@ -426,7 +427,15 @@ final class SystemMonitor: NSObject, ObservableObject {
     }
   }
 
+  /// Every published reading redraws the open window and menu bar, so the app updates every
+  /// 6 seconds while another app is in front. Pressure protection keeps its own 2-second timer.
   @objc private func refreshFromTimer() {
+    if NSApp?.isActive == true {
+      backgroundTicks = 0
+    } else {
+      backgroundTicks += 1
+      guard backgroundTicks % 3 == 0 else { return }
+    }
     refresh()
   }
 }

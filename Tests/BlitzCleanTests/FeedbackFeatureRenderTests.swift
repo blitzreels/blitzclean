@@ -15,16 +15,18 @@ struct FeedbackFeatureRenderTests {
     let resources: [ResourceProcess] = [
       .init(
         processID: 99901, parentProcessID: 1, name: "Browser Helper (Renderer)", owner: "Browser",
-        directory: nil, memoryBytes: 3_600_000_000, cpuPercent: 0, isTool: false),
+        directory: nil, memoryBytes: 3_600_000_000, cpuPercent: 0, isTool: false,
+        executable: "/usr/local/bin/node"),
       .init(
         processID: 99902, parentProcessID: 1,
         name: "A long background process name with a long owner",
         owner: "An application with a long name", directory: "/dev/project",
-        memoryBytes: 128_000_000, cpuPercent: 0, isTool: false),
+        memoryBytes: 128_000_000, cpuPercent: 0, isTool: false, executable: "/usr/local/bin/node"),
       .init(
         processID: 99903, parentProcessID: 1, name: "Restricted helper",
         owner: "Background service",
-        directory: nil, memoryBytes: nil, cpuPercent: 0, isTool: false),
+        directory: nil, memoryBytes: nil, cpuPercent: 0, isTool: false,
+        executable: "/usr/local/bin/node"),
     ]
     for query in ["", "no-results"] {
       try write(

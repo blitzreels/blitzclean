@@ -8,6 +8,7 @@ struct WorkspaceProjectsView: View {
   @State private var editing: WorkspacePreference?
   @State private var pending: LeftoverAction?
   @State private var showsAllLeftovers = false
+  @StateObject private var docker = DockerProjectsModel()
 
   private static let leftoverLimit = 8
 
@@ -25,14 +26,18 @@ struct WorkspaceProjectsView: View {
   private var projectList: some View {
     ScrollView {
       LazyVStack(alignment: .leading, spacing: 20) {
-        PressureBanner(assessment: processes.pressure, review: nil)
         if let action = processes.projectAction {
           BlitzStatusLine(text: action, tone: .working)
         }
         if let status = controller.status ?? processes.statusMessage {
           BlitzStatusLine(text: status, tone: .working)
         }
-        let projects = processes.projects(controller.preferences).filter { project in
+        if let message = docker.message { BlitzStatusLine(text: message, tone: .working) }
+        let projects = WorkspaceCatalog.includingDocker(
+          .init(
+            projects: processes.projects(controller.preferences),
+            containers: docker.snapshot?.containers ?? [])
+        ).filter { project in
           query.isEmpty || project.preference.name.localizedCaseInsensitiveContains(query)
             || project.directory.localizedCaseInsensitiveContains(query)
             || project.servers.flatMap(\.listeningPorts).contains { String($0).contains(query) }
@@ -67,6 +72,12 @@ struct WorkspaceProjectsView: View {
       }
     }
     .navigationTitle("Projects")
+    .task {
+      while !Task.isCancelled {
+        docker.refresh()
+        try? await Task.sleep(for: .seconds(20))
+      }
+    }
     .onChange(of: controller.preferences) { processes.updateProjectTargets() }
     .safeAreaInset(edge: .top, spacing: 0) {
       HStack(spacing: 8) {
@@ -93,6 +104,7 @@ struct WorkspaceProjectsView: View {
   private func projectRow(_ project: WorkspaceProject) -> some View {
     let busy =
       processes.actingProjects.contains(project.directory)
+      || docker.acting.contains(project.directory)
       || project.servers.contains { processes.stoppingIDs.contains($0.id) }
     return HStack(spacing: 14) {
       ProjectIcon(
@@ -109,14 +121,40 @@ struct WorkspaceProjectsView: View {
               .foregroundStyle(BlitzUI.secondaryText).help("This project is kept running")
           }
         }
-        Text(project.directory).font(BlitzType.caption).foregroundStyle(BlitzUI.secondaryText)
-          .lineLimit(1).truncationMode(.middle)
-        if !project.servers.isEmpty {
-          Text(
-            project.servers.map {
-              "\($0.name) \($0.listeningPorts.map { ":\($0)" }.joined(separator: ", "))"
-            }.joined(separator: " · ")
-          ).font(BlitzType.caption).foregroundStyle(BlitzUI.secondaryText).lineLimit(1)
+        Text(
+          project.directory.hasPrefix("docker:")
+            ? "Docker · project not assigned"
+            : project.directory.replacingOccurrences(
+              of: FileManager.default.homeDirectoryForCurrentUser.path, with: "~")
+        )
+        .font(BlitzType.caption).foregroundStyle(BlitzUI.secondaryText)
+        .lineLimit(1).truncationMode(.middle)
+        let ports = project.servers.flatMap { server in
+          server.listeningPorts.map { (name: server.name, port: $0) }
+        }
+        if !ports.isEmpty {
+          HStack(spacing: 6) {
+            ForEach(ports.prefix(4), id: \.port) { item in
+              Button {
+                if let url = URL(string: "http://localhost:\(item.port)") {
+                  NSWorkspace.shared.open(url)
+                }
+              } label: {
+                HStack(spacing: 4) {
+                  Image(systemName: "globe").font(.system(size: 9, weight: .semibold))
+                  Text("localhost:\(String(item.port))").monospacedDigit()
+                }
+                .font(BlitzType.caption).foregroundStyle(BlitzUI.supportingText)
+                .padding(.horizontal, 7).padding(.vertical, 2)
+                .background(Color.white.opacity(0.06), in: .capsule)
+              }.buttonStyle(.plain).blitzPointingHand()
+                .help("Open \(item.name) at http://localhost:\(String(item.port))")
+            }
+          }
+        }
+        if project.isRunning, let impact = stopImpact(project) {
+          Text(impact).font(BlitzType.caption).foregroundStyle(BlitzUI.tertiaryText)
+            .lineLimit(2).fixedSize(horizontal: false, vertical: true)
         }
         if let message = processes.projectMessages[project.directory] {
           Text(message).font(BlitzType.caption).foregroundStyle(BlitzUI.supportingText)
@@ -125,23 +163,41 @@ struct WorkspaceProjectsView: View {
       }
       Spacer(minLength: 16)
       BlitzTrailingValue(
-        value: ByteText.full(project.memoryBytes),
-        detail: "\(project.resources.count) processes · \(Int(project.cpuPercent))% CPU"
+        value: project.resources.isEmpty && !project.containers.isEmpty
+          ? "—" : ByteText.full(project.memoryBytes),
+        detail: project.resources.isEmpty && !project.containers.isEmpty
+          ? "Container RAM unavailable"
+          : "\(project.resources.count) processes in this folder · \(Int(project.cpuPercent))% CPU"
       ).fixedSize()
+        .help(
+          "Memory measures local host processes. Container memory belongs to Docker's virtual machine."
+        )
       ZStack(alignment: .trailing) {
         Color.clear
-        if let target = processes.projectTargets[project.directory] {
+        if processes.projectTargets[project.directory] != nil
+          || project.containers.contains(where: \.running)
+        {
           BlitzProcessButton(
             title: "Stop", label: "Stop \(project.preference.name)", isBusy: busy
-          ) { processes.stopProjectWorkers(target) }
+          ) { stopWorkspace(project) }
           .disabled(project.preference.keepRunning)
-          .help("Stop \(target.identities.count) development processes. AI sessions stay open.")
+          .help(
+            "Stop development workers and associated containers. Database volumes are preserved.")
         } else if !project.servers.isEmpty {
           BlitzProcessButton(
             title: "Stop", label: "Stop \(project.preference.name)", isBusy: busy
           ) { processes.stopProject(project.servers.map { processes.stopRequest($0) }) }
           .disabled(project.preference.keepRunning)
           .help("Stop this project's local servers.")
+        } else if !project.containers.isEmpty {
+          BlitzProcessButton(
+            title: "Start", label: "Start \(project.preference.name)", isBusy: busy
+          ) {
+            Task {
+              _ = await docker.apply(
+                .init(directory: project.directory, containers: project.containers, start: true))
+            }
+          }
         } else if project.preference.startCommand != nil {
           BlitzProcessButton(
             title: "Start", label: "Start \(project.preference.name)",
@@ -155,8 +211,10 @@ struct WorkspaceProjectsView: View {
       }.frame(width: 96, height: 34)
       BlitzActionMenu(label: "Options for \(project.preference.name)") {
         if let target = processes.projectTargets[project.directory] {
-          Button(target.isPaused ? "Resume" : "Pause") { processes.pauseProject(target) }
-            .disabled(project.preference.keepRunning && !target.isPaused)
+          Button(target.isPaused ? "Resume workers" : "Suspend workers — keeps memory") {
+            processes.pauseProject(target)
+          }
+          .disabled(project.preference.keepRunning && !target.isPaused)
           Divider()
         }
         let autoPause = processes.autoPauseDirectories.contains(project.directory)
@@ -167,15 +225,64 @@ struct WorkspaceProjectsView: View {
         }
         .disabled(
           project.preference.keepRunning || processes.projectTargets[project.directory] == nil)
-        Button("Configure project…") { editing = project.preference }
-        Button {
-          controller.keep(
-            .init(preference: project.preference, keep: !project.preference.keepRunning))
-        } label: {
-          MenuCheckLabel(title: "Keep running", isOn: project.preference.keepRunning)
+        if !project.containers.isEmpty {
+          Button("Assign containers to project…") {
+            let panel = NSOpenPanel()
+            panel.canChooseFiles = false
+            panel.canChooseDirectories = true
+            panel.allowsMultipleSelection = false
+            if panel.runModal() == .OK, let url = panel.url {
+              docker.assign(.init(containers: project.containers, directory: url.path))
+            }
+          }
+        }
+        if !project.directory.hasPrefix("docker:") {
+          Button("Configure project…") { editing = project.preference }
+          Button {
+            controller.keep(
+              .init(preference: project.preference, keep: !project.preference.keepRunning))
+          } label: {
+            MenuCheckLabel(title: "Keep running", isOn: project.preference.keepRunning)
+          }
         }
       }.disabled(busy)
     }.blitzRow()
+  }
+
+  /// Plain account of what Stop ends and what it leaves alone.
+  private func stopImpact(_ project: WorkspaceProject) -> String? {
+    let processCount =
+      processes.projectTargets[project.directory]?.identities.count ?? project.servers.count
+    let containers = project.containers.filter(\.running).count
+    guard processCount > 0 || containers > 0 else { return nil }
+    var ends: [String] = []
+    if processCount > 0 {
+      ends.append(processCount == 1 ? "1 dev process" : "\(processCount) dev processes")
+    }
+    if containers > 0 {
+      ends.append(containers == 1 ? "1 Docker container" : "\(containers) Docker containers")
+    }
+    let stopped = min(
+      project.memoryBytes,
+      processes.projectTargets[project.directory]?.memoryBytes
+        ?? project.servers.reduce(0) { $0 + $1.memoryBytes })
+    let frees = stopped > 0 ? " and frees about \(ByteText.compact(stopped))" : ""
+    return
+      "Stop ends \(ends.joined(separator: " and "))\(frees). Code, files and database volumes stay."
+  }
+
+  private func stopWorkspace(_ project: WorkspaceProject) {
+    if let target = processes.projectTargets[project.directory] {
+      processes.stopProjectWorkers(target)
+    } else if !project.servers.isEmpty {
+      processes.stopProject(project.servers.map { processes.stopRequest($0) })
+    }
+    if !project.containers.isEmpty {
+      Task {
+        _ = await docker.apply(
+          .init(directory: project.directory, containers: project.containers, start: false))
+      }
+    }
   }
 
   private func leftoverSection(_ leftovers: [LeftoverProcess]) -> some View {

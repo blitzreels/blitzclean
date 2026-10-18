@@ -17,6 +17,7 @@ struct DockerStorageCategory: Identifiable, Codable, Equatable, Sendable {
 struct DockerStorageSnapshot: Codable, Equatable, Sendable {
   let categories: [DockerStorageCategory]
   let updatedAt: Date
+  var eligibleImageBytes: UInt64? = nil
 
   var totalBytes: UInt64 {
     categories.reduce(0) { result, category in
@@ -26,10 +27,10 @@ struct DockerStorageSnapshot: Codable, Equatable, Sendable {
 
   var rebuildableBytes: UInt64 {
     categories.filter { category in
-      category.id == "images" || category.id == "build-cache"
+      category.id == "build-cache"
     }.reduce(0) { result, category in
       result + category.reclaimableBytes
-    }
+    } + (eligibleImageBytes ?? 0)
   }
 }
 
@@ -78,7 +79,18 @@ struct DockerStorageService: Sendable {
     )
     let categories = try DockerStorageParser.categories(output.standardOutput)
 
-    return DockerStorageSnapshot(categories: categories, updatedAt: .now)
+    let images = try? run(
+      .init(
+        arguments: [
+          "--host", host, "image", "ls", "--filter", "dangling=true",
+          "--format", "{{json .}}",
+        ], timeout: configuration.queryTimeout))
+    let eligible = images.map { DockerStorageParser.danglingBytes($0.standardOutput) }
+    return DockerStorageSnapshot(
+      categories: categories, updatedAt: .now,
+      eligibleImageBytes: eligible.map {
+        min($0, categories.first { $0.id == "images" }?.reclaimableBytes ?? 0)
+      })
   }
 
   func cleanRebuildable() throws -> String {
@@ -96,7 +108,7 @@ struct DockerStorageService: Sendable {
       .joined(separator: "\n")
   }
 
-  private func localEndpoint() throws -> String {
+  func localEndpoint() throws -> String {
     let environment = ProcessInfo.processInfo.environment
     if environment["DOCKER_CONTEXT", default: ""].isEmpty,
       let host = environment["DOCKER_HOST"], !host.isEmpty
@@ -108,7 +120,7 @@ struct DockerStorageService: Sendable {
     return try DockerLocalEndpoint.parse(output.standardOutput)
   }
 
-  private func run(_ request: DockerCommandRequest) throws -> DockerCommandOutput {
+  func run(_ request: DockerCommandRequest) throws -> DockerCommandOutput {
     guard let executablePath else {
       throw DockerStorageError.notInstalled
     }
@@ -225,6 +237,16 @@ enum DockerStorageError: LocalizedError, Equatable {
 }
 
 enum DockerStorageParser {
+  static func danglingBytes(_ output: String) -> UInt64 {
+    var seen: Set<String> = []
+    return output.split(separator: "\n").reduce(0) { total, line in
+      guard let object = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
+        let id = object["ID"] as? String, seen.insert(id).inserted,
+        let size = object["Size"] as? String
+      else { return total }
+      return total + DockerByteParser.bytes(size)
+    }
+  }
   static func categories(_ output: String) throws -> [DockerStorageCategory] {
     let rows = output.split(whereSeparator: \Character.isNewline)
     let categories = try rows.map { row in
@@ -406,9 +428,16 @@ final class DockerStorageModel: ObservableObject {
 
       isCleaning = false
       switch outcome {
-      case .success:
+      case .success(let output):
+        let reclaimed = output.components(separatedBy: "\n").filter {
+          $0.hasPrefix("Total reclaimed space:")
+        }
+        .map {
+          DockerByteParser.bytes($0.replacingOccurrences(of: "Total reclaimed space:", with: ""))
+        }
+        .reduce(0, +)
         cleanupMessage =
-          "Removed unused images and build cache. Containers and volumes were protected."
+          "Docker reported \(ByteText.full(reclaimed)) reclaimed. Containers and volumes were preserved."
         refresh()
       case .failure(let message):
         errorMessage = message

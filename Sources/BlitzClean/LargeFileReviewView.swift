@@ -4,6 +4,7 @@ import SwiftUI
 struct LargeFileReviewView: View {
   @ObservedObject var model: CleanupOverviewModel
   @ObservedObject var monitor: SystemMonitor
+  let onCleanup: (StorageCleanupRoute) -> Void
   let onBrowseFolders: () -> Void
   @StateObject private var media = MediaLibraryModel.application
   @State private var duplicateOnly = false
@@ -336,6 +337,7 @@ struct LargeFileReviewView: View {
 
   private func fileRow(_ input: (file: ReviewFile, isDuplicate: Bool)) -> some View {
     let file = input.file
+    let guidance = StorageGuidance.read(file.path)
     return VStack(spacing: 0) {
       HStack(spacing: 12) {
         Toggle(
@@ -351,12 +353,14 @@ struct LargeFileReviewView: View {
         .help(
           ReviewFileDeletion.canTrashPath(file.path)
             ? "Select file" : "System or app file · view only")
-        ApplicationIcon(source: .file(file.path), size: 30, fallback: "doc")
+        ApplicationIcon(source: .storage(file.path), size: 30, fallback: "doc")
         VStack(alignment: .leading, spacing: 4) {
           Text(file.name).font(.system(size: 12, weight: .medium)).lineLimit(1).truncationMode(
             .middle)
           Text(file.path).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
             .truncationMode(.middle)
+          Text(guidance.caption(file.path))
+            .font(BlitzType.caption).foregroundStyle(BlitzUI.supportingText).lineLimit(2)
           if input.isDuplicate {
             Text("Exact duplicate").font(.system(size: 10)).foregroundStyle(BlitzUI.lavender)
           }
@@ -367,10 +371,14 @@ struct LargeFileReviewView: View {
           Text(file.modifiedAt, format: .dateTime.month().day().year()).font(.system(size: 10))
             .foregroundStyle(.secondary)
         }.frame(minWidth: 80)
-        Button("Show in Finder") {
-          Finder.reveal(file.path)
+        if let focus = guidance.cleanup {
+          Button("Review cleanup") { onCleanup(.init(focus: focus, path: file.path)) }.blitzButton(
+            .secondary
+          ).controlSize(.small)
+        } else {
+          Button("Show in Finder") { Finder.reveal(file.path) }.blitzButton(.secondary).controlSize(
+            .small)
         }
-        .controlSize(.small)
       }.blitzRow()
       BlitzRowDivider(leading: 76)
     }

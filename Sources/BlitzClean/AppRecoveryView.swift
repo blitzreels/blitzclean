@@ -160,8 +160,18 @@ struct AppRecoveryView: View {
 
   private func appRow(_ row: ReviveRow) -> some View {
     let app = row.app
+    let origin = ProcessOrigin.read(app.processID).flatMap {
+      $0.tool != nil || $0.orphaned || app.bundleIdentifier == nil ? $0 : nil
+    }
     return HStack(spacing: 12) {
-      AppRowIdentity(app: app, detail: row.detail, warning: memory.quitMessages[app.id])
+      AppRowIdentity(
+        app: app, detail: row.detail ?? origin?.summary, warning: memory.quitMessages[app.id]
+      )
+      .help(
+        origin.map {
+          "PID \(app.processID) · " + $0.chain.joined(separator: " ← ")
+            + ($0.orphaned ? " ← launchd (launcher exited)" : "")
+        } ?? app.bundleURL.path)
       BlitzTrailingValue(
         value: app.memoryBytes == 0 ? "—" : ByteText.full(app.memoryBytes), detail: nil
       ).frame(width: 80, alignment: .trailing)

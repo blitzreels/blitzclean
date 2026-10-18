@@ -17,7 +17,9 @@ struct ReviewFile: Codable, Equatable, Identifiable, Sendable {
     let ext = URL(fileURLWithPath: path).pathExtension.lowercased()
     if ["mov", "mp4", "m4v", "mkv", "webm"].contains(ext) { return "Video" }
     if ["png", "jpg", "jpeg", "heic", "webp", "gif", "tiff"].contains(ext) { return "Image" }
-    if ["zip", "tgz", "gz", "dmg", "pkg", "iso", "tar"].contains(ext) {
+    if ["zip", "tgz", "gz", "dmg", "pkg", "iso", "tar", "rar", "7z", "xip", "apk", "ipa", "wpress"]
+      .contains(ext)
+    {
       return "Archive / installer"
     }
     return "Large file"
@@ -339,7 +341,23 @@ struct ReviewDeleteRequest: Sendable {
 }
 
 enum ReviewFileDeletion {
+  /// Wider than `canTrashPath`: items the user picks in Browse may include app-managed data,
+  /// but never macOS, Git history, credentials, app bundles or a top-level Library folder.
+  static func canDeleteWhenChosen(_ path: String) -> Bool {
+    let guidance = StorageGuidance.read(path)
+    guard guidance.kind != .protected, !SimulatorDeviceService.isDevicePath(path) else {
+      return false
+    }
+    let visible = StorageGuidance.visiblePath(path)
+    let library = NSHomeDirectory() + "/Library"
+    guard visible != library,
+      URL(fileURLWithPath: visible).deletingLastPathComponent().path != library
+    else { return false }
+    return visible.hasPrefix("/Users/") || visible.hasPrefix("/Volumes/")
+  }
+
   static func canTrashPath(_ path: String) -> Bool {
+    guard StorageGuidance.read(path).allowsDirectTrash else { return false }
     guard !SimulatorDeviceService.isDevicePath(path) else { return false }
     let dataPrefix = "/System/Volumes/Data"
     let visible = path.hasPrefix(dataPrefix + "/") ? String(path.dropFirst(dataPrefix.count)) : path
@@ -446,6 +464,7 @@ final class CleanupOverviewModel: ObservableObject {
   @Published private(set) var driveProgress: DriveScanProgress?
   private var synchronizationTask: Task<Void, Never>?
   private var hasUnsavedHistory = false
+  private var loadedLedgerStamp: CleanupHistoryStore.Stamp?
   private var importedReports: [String: Date?] = [:]
   private var fileValidationTask: Task<[ReviewFile], Never>?
   private var lastFileValidation = Date.distantPast
@@ -519,6 +538,11 @@ final class CleanupOverviewModel: ObservableObject {
         fileValidationTask = nil
       }
     }
+    let stamp = store.stamp()
+    guard hasUnsavedHistory || stamp == nil || stamp != loadedLedgerStamp else {
+      importReports()
+      return
+    }
     do {
       var latest = try store.load()
       for win in ledger.wins { latest.record(win) }
@@ -527,6 +551,7 @@ final class CleanupOverviewModel: ObservableObject {
         hasUnsavedHistory = false
       }
       if latest != ledger { ledger = latest }
+      loadedLedgerStamp = hasUnsavedHistory ? nil : store.stamp()
       historyError = nil
     } catch {
       historyError = "Cleanup history could not be read. Existing history is preserved."

@@ -21,7 +21,7 @@ enum AITool: String, Equatable, Sendable {
   var appName: String? {
     switch self {
     case .claudeCode: "Claude"
-    case .codexCLI, .codexDesktop: "ChatGPT"
+    case .codexCLI, .codexDesktop: "Codex"
     case .cursorAgent: "Cursor"
     case .otherAgent: nil
     }
@@ -245,16 +245,24 @@ enum AIThreadGrouping {
       case .desktopHost:
         guard !claimed(processID) else { continue }
         let kids = children[processID, default: []].compactMap { records[$0] }.sorted {
-          (input.startTimes[$0.processID] ?? 0) < (input.startTimes[$1.processID] ?? 0)
+          let left = input.startTimes[$0.processID] ?? 0
+          let right = input.startTimes[$1.processID] ?? 0
+          return left == right ? $0.processID < $1.processID : left < right
         }
         var clusters: [[RawProcessRecord]] = []
         var last: TimeInterval?
+        var clusterDirectory: String?
         for kid in kids {
           let time = input.startTimes[kid.processID] ?? 0
-          if let last, time - last <= clusterGap, !clusters.isEmpty {
+          let childDirectory = directory(subtree(kid.processID))
+          let sameDirectory =
+            clusterDirectory == nil || childDirectory == nil || clusterDirectory == childDirectory
+          if let last, time - last <= clusterGap, !clusters.isEmpty, sameDirectory {
             clusters[clusters.count - 1].append(kid)
+            clusterDirectory = clusterDirectory ?? childDirectory
           } else {
             clusters.append([kid])
+            clusterDirectory = childDirectory
           }
           last = time
         }

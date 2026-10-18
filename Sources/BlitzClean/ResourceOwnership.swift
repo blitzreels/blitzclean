@@ -10,7 +10,19 @@ struct ResourceProcess: Identifiable, Equatable, Sendable {
   let memoryBytes: UInt64?
   let cpuPercent: Double
   let isTool: Bool
+  /// Absolute path of the process's own executable.
+  let executable: String
   var id: Int32 { processID }
+
+  /// The app bundle this process ships inside, such as a browser helper; nil for tools started from a terminal.
+  var bundleApp: String? { ResourceOwnership.appName(executable) }
+
+  /// A macOS daemon; commands in /usr/bin such as `python3` or `yes` count as the user's own work.
+  var isSystem: Bool {
+    bundleApp == nil
+      && ["/System/", "/usr/libexec/", "/usr/sbin/", "/sbin/", "/Library/Apple/"]
+        .contains { executable.hasPrefix($0) }
+  }
 }
 
 struct ResourceGroup: Identifiable, Codable, Equatable, Sendable {
@@ -59,7 +71,7 @@ enum ResourceOwnership {
         }
         current = parent
       }
-      let name = URL(fileURLWithPath: executable).lastPathComponent
+      let name = ResourceOwnership.label(executable)
       let arguments = record.arguments.lowercased()
       let runtime =
         ["node", "bun", "deno", "java", "uv", "npx"].contains(name)
@@ -87,7 +99,7 @@ enum ResourceOwnership {
         processID: record.processID, parentProcessID: record.parentProcessID,
         name: label, owner: owner ?? "Background service", directory: directory,
         memoryBytes: input.footprints[record.processID], cpuPercent: record.cpuPercent,
-        isTool: isTool)
+        isTool: isTool, executable: executable)
     }
   }
 
@@ -109,7 +121,16 @@ enum ResourceOwnership {
     return SHA256.hash(data: Data(key.utf8)).map { String(format: "%02x", $0) }.joined()
   }
 
-  private static func appName(_ path: String) -> String? {
+  /// The executable's name, except tools installed under a version folder, such as Claude Code's `versions/2.1.302`.
+  static func label(_ executable: String) -> String {
+    let url = URL(fileURLWithPath: executable)
+    let name = url.lastPathComponent
+    let parent = url.deletingLastPathComponent()
+    guard parent.lastPathComponent == "versions", name.first?.isNumber == true else { return name }
+    return parent.deletingLastPathComponent().lastPathComponent
+  }
+
+  static func appName(_ path: String) -> String? {
     guard let range = path.range(of: ".app/") else { return nil }
     return URL(fileURLWithPath: String(path[..<range.lowerBound])).lastPathComponent
   }

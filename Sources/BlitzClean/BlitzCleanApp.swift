@@ -22,7 +22,7 @@ struct BlitzCleanApp: App {
     MenuBarExtra {
       BlitzTrayView(
         monitor: monitor, memory: memoryRescue, recovery: appRecovery,
-        navigation: cleanNavigation, updates: appDelegate.updates)
+        navigation: cleanNavigation, updates: appDelegate.updates, processes: devProcesses)
     } label: {
       MenuBarHealthLabel(
         snapshot: monitor.snapshot, risk: max(memoryRescue.risk, memoryRescue.capacity.risk)
@@ -63,6 +63,8 @@ struct BlitzCleanApp: App {
         }.keyboardShortcut(",")
       }
       CommandMenu("Tools") {
+        Button("Emergency controls…") { EmergencyControlsLauncher.open() }
+          .keyboardShortcut("r", modifiers: [.control, .option, .command])
         Button("Revive frozen app…") {
           NotificationCenter.default.post(name: .openAppRecovery, object: nil)
         }.keyboardShortcut("r", modifiers: [.command, .shift])
@@ -108,6 +110,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   func applicationDidFinishLaunching(_ notification: Notification) {
     NSApp.appearance = NSAppearance(named: .darkAqua)
     updates.start()
+    EmergencyControlsLauncher.start()
   }
 }
 

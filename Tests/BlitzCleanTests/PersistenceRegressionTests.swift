@@ -5,9 +5,9 @@ import Testing
 
 @MainActor
 struct PersistenceRegressionTests {
-  @Test func storageDefaultsToBrowseWithoutASeparateFilesTab() throws {
-    #expect(CleanStoragePage.restored(nil) == .browse)
-    #expect(CleanStoragePage.allCases.first == .browse)
+  @Test func storageDefaultsToDriveWithoutASeparateFilesTab() throws {
+    #expect(CleanStoragePage.restored(nil) == .drive)
+    #expect(CleanStoragePage.allCases.first == .drive)
     #expect(!CleanStoragePage.allCases.contains { $0.rawValue == "Files" })
   }
 
@@ -44,7 +44,7 @@ struct PersistenceRegressionTests {
     let defaults = try #require(UserDefaults(suiteName: suite))
     defer { defaults.removePersistentDomain(forName: suite) }
     let choices: [String: CleanStoragePage] = [
-      "Mac": .mac, "Caches": .cleanup, "Dependencies": .cleanup,
+      "Mac": .drive, "Inventory": .drive, "Caches": .cleanup, "Dependencies": .cleanup,
       "Files & media": .browse, "Files": .browse,
     ]
     for (saved, expected) in choices {

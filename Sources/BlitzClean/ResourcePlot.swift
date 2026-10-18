@@ -56,9 +56,15 @@ struct ResourcePlot: View {
     Chart(visibleSamples) { sample in
       if let value = kind.value(sample) {
         AreaMark(x: .value("Time", sample.date), y: .value(kind.label, value))
-          .foregroundStyle(color.opacity(0.06))
+          .foregroundStyle(
+            LinearGradient(
+              colors: [color.opacity(0.28), color.opacity(0)], startPoint: .top,
+              endPoint: .bottom)
+          )
+          .interpolationMethod(.monotone)
         LineMark(x: .value("Time", sample.date), y: .value(kind.label, value))
-          .foregroundStyle(color).lineStyle(StrokeStyle(lineWidth: 1.5))
+          .foregroundStyle(color).lineStyle(StrokeStyle(lineWidth: 1.5, lineJoin: .round))
+          .interpolationMethod(.monotone)
       }
     }
     .chartYScale(domain: 0...1)

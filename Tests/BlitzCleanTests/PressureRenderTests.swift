@@ -6,7 +6,7 @@ import Testing
 
 @MainActor
 struct PressureRenderTests {
-  @Test func rendersPressureAndProjectScreensWhenRequested() async throws {
+  @Test func rendersProjectScreensWhenRequested() async throws {
     guard let output = ProcessInfo.processInfo.environment["BLITZ_PRESSURE_RENDER_DIR"] else {
       return
     }
@@ -17,20 +17,8 @@ struct PressureRenderTests {
       try await Task.sleep(for: .milliseconds(100))
     }
     let controller = WorkspaceController()
-    let assessment = PressureAssessment(
-      risk: .critical, limit: .memory, title: "Memory and disk under pressure",
-      detail:
-        "Swap is competing with a low disk reserve. 3 GB RAM available · 29 GB swap · 9 GB disk free",
-      action: "Avoid starting new threads or builds. Pause slows work; Quit releases RAM.",
-      date: .now)
     for width in [CGFloat(708), CGFloat(868)] {
-      let view = VStack(spacing: 0) {
-        PressureBanner(
-          assessment: assessment, review: .init(title: "Review projects", action: {})
-        )
-        .padding(20)
-        WorkspaceProjectsView(processes: processes, controller: controller)
-      }.blitzTheme()
+      let view = WorkspaceProjectsView(processes: processes, controller: controller).blitzTheme()
       let host = NSHostingView(rootView: view.frame(width: width, height: 780))
       host.frame = NSRect(x: 0, y: 0, width: width, height: 780)
       let window = NSWindow(

@@ -6,10 +6,23 @@ enum ApplicationIconSource: Hashable {
   case process(Int32)
   case name(String)
   case file(String)
+  case storage(String)
 }
 
 @MainActor
-private enum ApplicationIconResolver {
+enum ApplicationIconResolver {
+  private static var installed: [String: URL] = [:]
+  private static var checked: Set<String> = []
+
+  private static func application(_ name: String) -> URL? {
+    if checked.contains(name) { return installed[name] }
+    checked.insert(name)
+    let ids = StorageOwner.named(name)?.bundleIDs ?? [name]
+    let url = ids.lazy.compactMap { NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) }
+      .first
+    if let url { installed[name] = url }
+    return url
+  }
   static let cache: NSCache<NSString, NSImage> = {
     let cache = NSCache<NSString, NSImage>()
     cache.countLimit = 128
@@ -29,16 +42,23 @@ private enum ApplicationIconResolver {
       guard let range = executable.range(of: ".app/") else { return nil }
       path = String(executable[..<range.lowerBound]) + ".app"
     case .name(let name):
-      guard
-        let app = NSWorkspace.shared.runningApplications.first(where: {
-          $0.localizedName?.localizedCaseInsensitiveCompare(name) == .orderedSame
-            || $0.bundleIdentifier == name
-        })
-      else { return nil }
-      return app.icon
+      if let app = NSWorkspace.shared.runningApplications.first(where: {
+        $0.localizedName?.localizedCaseInsensitiveCompare(name) == .orderedSame
+          || $0.bundleIdentifier == name
+      }), let image = app.icon {
+        return image
+      }
+      guard let url = application(name) else { return nil }
+      path = url.path
     case .file(let value):
       let name = URL(fileURLWithPath: value).lastPathComponent
       path = NSWorkspace.shared.urlForApplication(withBundleIdentifier: name)?.path ?? value
+    case .storage(let value):
+      if let owner = StorageOwner.forPath(value), let url = application(owner.rawValue) {
+        path = url.path
+      } else {
+        path = value
+      }
     }
     if let cached = cache.object(forKey: path as NSString) { return cached }
     let image = NSWorkspace.shared.icon(forFile: path)

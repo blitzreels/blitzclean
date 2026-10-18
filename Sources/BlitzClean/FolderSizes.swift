@@ -398,12 +398,19 @@ final class FolderExplorerModel: ObservableObject {
       URL(fileURLWithPath: entry.path).deletingLastPathComponent().path != "/Volumes",
       entry.inode != nil, entry.device != nil
     else { return false }
-    return ReviewFileDeletion.canTrashPath(entry.path)
+    return ReviewFileDeletion.canDeleteWhenChosen(entry.path)
   }
 
-  func trash(_ items: [FolderEntry]) {
+  struct Removal {
+    let items: [FolderEntry]
+    /// Deletes immediately instead of moving to the Trash, so the space is free at once.
+    let permanently: Bool
+  }
+
+  func remove(_ removal: Removal) {
     guard !isTrashing else { return }
-    let allowed = items.filter(canTrash)
+    let permanently = removal.permanently
+    let allowed = removal.items.filter(canTrash)
     guard !allowed.isEmpty else { return }
     cancelScan()
     isTrashing = true
@@ -418,8 +425,12 @@ final class FolderExplorerModel: ObservableObject {
                 URL(fileURLWithPath: entry.path).deletingLastPathComponent().path)
                 == URL(fileURLWithPath: entry.path).deletingLastPathComponent().path
             else { return (entry.path, "\(entry.name) changed. Scan again before removing it.") }
-            try FileManager.default.trashItem(
-              at: URL(fileURLWithPath: entry.path), resultingItemURL: nil)
+            if permanently {
+              try FileManager.default.removeItem(atPath: entry.path)
+            } else {
+              try FileManager.default.trashItem(
+                at: URL(fileURLWithPath: entry.path), resultingItemURL: nil)
+            }
             return (entry.path, nil)
           } catch { return (entry.path, "\(entry.name): \(error.localizedDescription)") }
         }
@@ -430,8 +441,10 @@ final class FolderExplorerModel: ObservableObject {
       for path in removed { invalidateAncestors(of: path) }
       if !removed.isEmpty { scannedAt = .distantPast }
       let errors = results.compactMap(\.1)
+      let noun = removed.count == 1 ? "item" : "items"
       statusMessage =
-        "Moved \(removed.count) \(removed.count == 1 ? "item" : "items") to Trash."
+        (permanently
+          ? "Deleted \(removed.count) \(noun)." : "Moved \(removed.count) \(noun) to Trash.")
         + (errors.isEmpty ? "" : " " + errors.prefix(3).joined(separator: " "))
       isTrashing = false
     }

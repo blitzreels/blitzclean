@@ -64,6 +64,10 @@ final class MemoryRescueModel: NSObject, ObservableObject {
   private var lastRecordedAt = Date.distantPast
   private var isSaving = false
   private var needsSave = false
+  private var hasUnsavedHistory = false
+  private var lastSavedAt = Date.distantPast
+  /// Rewriting the history costs a full JSON encode, so routine samples batch into one write a minute.
+  private static let saveInterval: TimeInterval = 60
   private var isSendingAlert = false
   private var lastPermissionCheck = Date.distantPast
   private var diskEvaluator = DiskRiskEvaluator()
@@ -82,6 +86,9 @@ final class MemoryRescueModel: NSObject, ObservableObject {
       policies = saved
     }
     super.init()
+    NotificationCenter.default.addObserver(
+      self, selector: #selector(persistHistoryNow),
+      name: NSApplication.willTerminateNotification, object: nil)
     Task { [weak self] in await self?.start() }
   }
 
@@ -114,7 +121,11 @@ final class MemoryRescueModel: NSObject, ObservableObject {
       Task { @MainActor in
         guard let self else { return }
         self.sampleMemory(event: nil)
-        if self.scannedAt.map({ Date.now.timeIntervalSince($0) >= 15 }) ?? true { self.refresh() }
+        self.persistHistoryIfDue(urgent: false)
+        let interval: TimeInterval = NSApp.isActive ? 15 : 30
+        if self.scannedAt.map({ Date.now.timeIntervalSince($0) >= interval }) ?? true {
+          self.refresh()
+        }
       }
     }
     if let timer { RunLoop.main.add(timer, forMode: .common) }
@@ -382,11 +393,27 @@ final class MemoryRescueModel: NSObject, ObservableObject {
     history.append(event)
     incidents = history.events.reversed().filter { $0.kind != "sample" }
     lastRecordedAt = event.date
+    hasUnsavedHistory = true
+    persistHistoryIfDue(urgent: input.kind == "pressure" && risk >= .critical)
+  }
+
+  private func persistHistoryIfDue(urgent: Bool) {
+    guard hasUnsavedHistory,
+      urgent || Date.now.timeIntervalSince(lastSavedAt) >= Self.saveInterval
+    else { return }
     persistHistory()
+  }
+
+  @objc private func persistHistoryNow() {
+    guard persists, hasUnsavedHistory else { return }
+    hasUnsavedHistory = false
+    try? MemoryIncidentStore.write(.init(history: history, url: historyURL))
   }
 
   private func persistHistory() {
     guard persists else { return }
+    hasUnsavedHistory = false
+    lastSavedAt = .now
     needsSave = true
     guard !isSaving else { return }
     isSaving = true

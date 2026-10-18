@@ -7,6 +7,46 @@ struct DependencyFootprint: Equatable, Sendable {
 }
 
 enum DependencyFileScan {
+  struct DiscoveryRequest {
+    let root: String
+    let deadline: Date
+    let maximumEntries: Int
+  }
+
+  struct Discovery {
+    let paths: [String]
+    let complete: Bool
+  }
+
+  static func discoverWithin(_ request: DiscoveryRequest) -> Discovery {
+    guard let tree = DependencyTree(.init(path: request.root, needsMetadata: false)) else {
+      return .init(paths: [], complete: false)
+    }
+    var paths: [String] = []
+    var visited = 0
+    var complete = true
+    while let entry = tree.next() {
+      visited += 1
+      guard visited <= request.maximumEntries, Date.now < request.deadline else {
+        complete = false
+        break
+      }
+      if [FTS_ERR, FTS_DNR, FTS_NS].contains(Int32(entry.pointee.fts_info)) { complete = false }
+      guard entry.pointee.fts_info == FTS_D else { continue }
+      let name = tree.name(entry)
+      if name == "node_modules" {
+        paths.append(String(cString: entry.pointee.fts_path))
+        tree.skip(entry)
+      } else if entry.pointee.fts_level > 0,
+        generatedDirectories.contains(name)
+          || [".Trashes", ".Spotlight-V100", ".fseventsd", "Backups.backupdb"].contains(name)
+      {
+        tree.skip(entry)
+      }
+    }
+    return .init(paths: paths, complete: complete)
+  }
+
   static func discover(_ roots: [String]) -> [String] {
     var uniqueRoots: [String] = []
     for root in Set(roots.map { URL(fileURLWithPath: $0).standardizedFileURL.path }).sorted() {
@@ -172,7 +212,7 @@ private final class DependencyTree {
     paths = .allocate(capacity: 2)
     paths.initialize(to: strdup(input.path))
     paths.advanced(by: 1).initialize(to: nil)
-    let options = FTS_PHYSICAL | FTS_NOCHDIR | (input.needsMetadata ? 0 : FTS_NOSTAT)
+    let options = FTS_PHYSICAL | FTS_NOCHDIR | FTS_XDEV | (input.needsMetadata ? 0 : FTS_NOSTAT)
     guard let tree = fts_open(paths, options, nil) else {
       free(paths.pointee)
       paths.deinitialize(count: 2)

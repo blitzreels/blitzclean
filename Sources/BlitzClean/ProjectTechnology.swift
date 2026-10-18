@@ -88,10 +88,18 @@ struct ProjectIcon: View {
   let size: CGFloat
   let fallbackSymbol: String
   @State private var technology: ProjectTechnology = .unknown
+  @State private var logo: NSImage?
 
   var body: some View {
     Group {
-      if technology == .unknown {
+      if let logo {
+        Image(nsImage: logo).resizable().interpolation(.high).scaledToFit()
+          .frame(width: size, height: size)
+          .clipShape(RoundedRectangle(cornerRadius: size * 0.24, style: .continuous))
+          .overlay(
+            RoundedRectangle(cornerRadius: size * 0.24, style: .continuous)
+              .strokeBorder(Color.white.opacity(0.08), lineWidth: 0.5))
+      } else if technology == .unknown {
         Image(systemName: fallbackSymbol).font(.system(size: size * 0.6))
           .foregroundStyle(AppBrand.accent).frame(width: size, height: size)
       } else {
@@ -99,6 +107,12 @@ struct ProjectIcon: View {
       }
     }
     .task(id: (directory ?? "") + "\n" + processName) {
+      if let directory, directory.hasPrefix("/"),
+        let source = await ProjectLogoCache.shared.source(directory)
+      {
+        if !Task.isCancelled { logo = source.image }
+        if logo != nil { return }
+      }
       let value = await ProjectTechnologyCache.shared.value(
         .init(directory: directory, processName: processName))
       if !Task.isCancelled { technology = value }

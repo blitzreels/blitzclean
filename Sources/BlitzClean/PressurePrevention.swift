@@ -16,6 +16,18 @@ struct PressureAssessment: Equatable, Sendable {
 
   var reviewTitle: String { limit == .disk ? "Free up space" : "Review projects" }
 
+  struct PublishInput {
+    let next: PressureAssessment
+    let active: Bool
+  }
+
+  /// Each published reading redraws every open view, so in the background only a changed
+  /// verdict or a 6-second-old reading is shown. Protection itself still samples every 2 seconds.
+  func publishes(_ input: PublishInput) -> Bool {
+    input.active || input.next.risk != risk || input.next.limit != limit
+      || input.next.title != title || input.next.date.timeIntervalSince(date) >= 6
+  }
+
   static let checking = Self(
     risk: .normal, limit: .none, title: "Checking capacity",
     detail: "Reading memory, swap, CPU and disk reserve",
@@ -92,7 +104,7 @@ struct ProjectPauseTarget: Sendable {
   let name: String
   let cpuPercent: Double
   let memoryBytes: UInt64
-  let identities: [DevProcessIdentity]
+  var identities: [DevProcessIdentity]
   let capturedAt: Date
   var keepRunning = false
 
@@ -112,7 +124,11 @@ enum ProjectPausePolicy {
   static func target(_ input: Input) -> ProjectPauseTarget? {
     let allowed = input.project.resources.filter {
       !$0.isTool && !input.excludedIDs.contains($0.id)
-        && ["node", "bun", "deno", "npm", "pnpm", "yarn", "next-server", "tsx", "ffmpeg"].contains(
+        && [
+          "node", "bun", "deno", "npm", "pnpm", "pnpm-native", "yarn", "next-server", "tsx",
+          "ffmpeg", "tsc", "tsgo", "workerd", "esbuild", "python", "python3", "ruby", "java",
+          "go", "cargo", "rustc", "swift", "swift-frontend", "clang", "clang++",
+        ].contains(
           $0.name)
     }
     let identities = allowed.compactMap { input.identities[$0.id] }.filter {
@@ -275,7 +291,7 @@ final class PressureSentinel: @unchecked Sendable {
         UNUserNotificationCenter.current().add(
           UNNotificationRequest(identifier: "capacity-guard", content: content, trigger: nil))
       }
-      if action != nil || memory.date.timeIntervalSince(lastSaved) >= 15 {
+      if action != nil || memory.date.timeIntervalSince(lastSaved) >= 60 {
         lastSaved = memory.date
         events.append([
           "at": ISO8601DateFormatter().string(from: memory.date), "risk": assessment.title,

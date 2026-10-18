@@ -47,13 +47,41 @@ struct WorkspaceProject: Identifiable, Sendable {
   let preference: WorkspacePreference
   let resources: [ResourceProcess]
   let servers: [DevProcess]
+  var containers: [DockerProjectContainer] = []
   var id: String { directory }
-  var isRunning: Bool { !resources.isEmpty || !servers.isEmpty }
+  var isRunning: Bool {
+    !resources.isEmpty || !servers.isEmpty || containers.contains(where: \.running)
+  }
   var memoryBytes: UInt64 { resources.compactMap(\.memoryBytes).reduce(0, +) }
   var cpuPercent: Double { resources.reduce(0) { $0 + $1.cpuPercent } }
 }
 
 enum WorkspaceCatalog {
+  struct DockerInput {
+    let projects: [WorkspaceProject]
+    let containers: [DockerProjectContainer]
+  }
+
+  static func includingDocker(_ input: DockerInput) -> [WorkspaceProject] {
+    var projects = Dictionary(
+      input.projects.map { ($0.directory, $0) }, uniquingKeysWith: { a, _ in a })
+    for container in input.containers {
+      let root = container.directory ?? "docker:\(container.id)"
+      if projects[root] == nil {
+        projects[root] = WorkspaceProject(
+          directory: root,
+          preference: .init(
+            directory: root, name: container.projectName, keepRunning: false, startCommand: nil),
+          resources: [], servers: [])
+      }
+      projects[root]?.containers.append(container)
+    }
+    return projects.values.sorted {
+      if $0.isRunning != $1.isRunning { return $0.isRunning }
+      if $0.memoryBytes != $1.memoryBytes { return $0.memoryBytes > $1.memoryBytes }
+      return $0.preference.name.localizedStandardCompare($1.preference.name) == .orderedAscending
+    }
+  }
   struct Input {
     let resources: [ResourceProcess]
     let processes: [DevProcess]

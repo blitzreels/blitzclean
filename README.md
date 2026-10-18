@@ -38,8 +38,10 @@ other removals are reviewed first, and personal files go to the Trash.
   and a result showing removed cache bytes separately from the change in free disk space.
 - See the limiting resource at a glance. The menu bar shows live numbers, and a warning names what is short
   (memory, swap, disk reserve, or CPU) with one instruction.
-- Free memory by ranking apps and AI sessions such as Claude Code, Codex, and Cursor by RAM, then pausing,
-  resuming, or quitting them. Whole projects can be stopped along with their dev servers.
+- Free memory by stopping apps, AI workers, and project services. Suspend/Resume keeps worker memory allocated.
+- Open independent emergency controls with Control–Option–Command–R, even while the dashboard is busy.
+  Select local workers or the shared Codex app, then Stop; Force Stop requires confirmation.
+- Stop project dev servers and associated Docker containers together, preserving database volumes.
 - Inspect individual process footprints in Memory → Processes, sorted by RAM and searchable by name, owner,
   project path, or PID. Restricted measurements stay marked as unavailable.
 - Revive apps that stopped or froze, and see whether each one actually recovered.

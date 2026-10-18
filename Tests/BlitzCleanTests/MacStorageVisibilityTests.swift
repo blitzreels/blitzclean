@@ -4,8 +4,9 @@ import Testing
 @testable import BlitzClean
 
 struct MacStorageVisibilityTests {
-  @Test func storageNavigationIncludesMacInventory() {
-    #expect(CleanStoragePage.allCases.contains { $0 == .mac })
+  @Test func storageOpensOnTheDriveBreakdown() {
+    #expect(CleanStoragePage.allCases.first == .drive)
+    #expect(CleanStoragePage.restored(nil) == .drive)
   }
 
   @Test func installedAppInventoryFindsVendorFolders() throws {

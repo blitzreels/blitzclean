@@ -6,6 +6,7 @@ TARGET_APP="$HOME/Applications/BlitzClean.app"
 "$ROOT_DIR/scripts/build-app.sh"
 mkdir -p "$HOME/Applications"
 pkill -x BlitzClean 2>/dev/null || true
+pkill -x BlitzRescue 2>/dev/null || true
 for attempt in {1..50}; do
     if ! pgrep -x BlitzClean >/dev/null; then
         break

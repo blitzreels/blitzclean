@@ -3,6 +3,7 @@ import Foundation
 enum AuditCheck: String, CaseIterable, Sendable {
   case resources = "Memory & CPU"
   case caches = "Caches"
+  case oldFiles = "Personal files"
   case projects = "Project data"
   case docker = "Docker"
   case apps = "App responsiveness"
@@ -73,6 +74,7 @@ struct AuditFindings {
   let detachedCount: Int
   let detachedBytes: UInt64
   let recoveryCount: Int
+  let personalFiles: PersonalFileFindings
 
   var recommendations: [AuditRecommendation] {
     guard progress.startedAt != nil else { return [] }
@@ -131,6 +133,28 @@ struct AuditFindings {
             priority: 70, reward: bytes))
       }
     }
+    let oldFileCount = personalFiles.oldCount
+    let oldFileBytes = personalFiles.oldBytes
+    let oldFileAge = personalFiles.oldAge
+    if progress.results[.oldFiles] != nil, personalFiles.largeBytes > 0 {
+      result.append(
+        .init(
+          id: "large-files",
+          title: "\(ByteText.full(personalFiles.largeBytes)) in large personal files",
+          detail:
+            "\(personalFiles.largeCount.formatted()) videos, images, archives and folders. Pick what goes to the Trash.",
+          symbol: "film.stack", actionTitle: "Review files", action: .cleanup(.largeFiles),
+          priority: 27, reward: personalFiles.largeBytes))
+    }
+    if progress.results[.oldFiles] != nil, oldFileCount > 0, oldFileBytes > 0 {
+      result.append(
+        .init(
+          id: "old-files", title: "\(ByteText.full(oldFileBytes)) of old downloads and screenshots",
+          detail:
+            "\(oldFileCount.formatted()) \(oldFileCount == 1 ? "item" : "items") unused for \(oldFileAge). They go to the Trash, with Undo.",
+          symbol: "clock.arrow.circlepath", actionTitle: "Review old files",
+          action: .cleanup(.oldFiles), priority: 25, reward: oldFileBytes))
+    }
     if progress.results[.docker] != nil, !cleanup.dockerUnavailable,
       let bytes = cleanup.bytesBySource[.docker], bytes > 0
     {
@@ -170,6 +194,16 @@ struct AuditFindings {
     }
     return result.sorted { $0.priority == $1.priority ? $0.id < $1.id : $0.priority < $1.priority }
   }
+}
+
+struct PersonalFileFindings {
+  let oldCount: Int
+  let oldBytes: UInt64
+  let oldAge: String
+  let largeCount: Int
+  let largeBytes: UInt64
+
+  static let none = Self(oldCount: 0, oldBytes: 0, oldAge: "", largeCount: 0, largeBytes: 0)
 }
 
 struct AuditCleanupResult: Equatable {
@@ -230,7 +264,8 @@ final class DashboardAuditModel: ObservableObject {
 
     var isMutating: Bool {
       caches.isCleaning || storage.isCleaning || docker.isCleaning
-        || !storage.repeats.removing.isEmpty || recovery.isReviving
+        || !storage.repeats.removing.isEmpty || recovery.isReviving || storage.oldFiles.isTrashing
+        || !storage.largeFiles.moving.isEmpty
     }
   }
 
@@ -258,6 +293,22 @@ final class DashboardAuditModel: ObservableObject {
           models.caches.scan()
           await Self.wait { models.caches.isScanning }
           return models.caches.notes
+        },
+        .oldFiles: {
+          models.storage.oldFiles.scan()
+          models.storage.largeFiles.scan()
+          await models.storage.oldFiles.waitForScan()
+          await models.storage.largeFiles.waitForScan()
+          var warnings: [String] = []
+          let unmeasured = models.storage.oldFiles.unmeasured
+          if unmeasured > 0 {
+            warnings.append(
+              "\(unmeasured) large download folders were not fully checked and are left out.")
+          }
+          if models.storage.largeFiles.limited {
+            warnings.append("Some personal folders were too large to read fully.")
+          }
+          return warnings
         },
         .projects: {
           let measurements = FolderMeasurementSession(deadline: .now.addingTimeInterval(20))

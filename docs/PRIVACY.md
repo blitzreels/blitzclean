@@ -22,14 +22,18 @@ replacing anything, and cleanup reports dropped in that old `reports` folder are
 | Cleanup ledger | At most 1,000 records, including reviewed paths and measured space changes. |
 | Memory incidents | At most 1,440 events from the last 24 hours, including app/tool and project names. |
 | Pressure trace | Up to 240 recent samples/actions and top project summaries. |
-| CPU/RAM charts | Two-second detail for 15 minutes and five-minute points for seven days; at most 512 KiB on disk. |
+| CPU/RAM charts | Two-second detail for 15 minutes and five-minute points for seven days; including the top app or process group by CPU and RAM; at most 1 MiB on disk. |
 | File review | At most 5,000 entries / 8 MiB, including paths, sizes, identity metadata, and scan time. |
+| Old-file choices | The chosen age and the paths you marked Keep, in app preferences. |
 | Media exports | At most 100 completed records / 512 KiB, including input/output paths and results. |
 
 Persisted JSON files have owner-only permissions.
 File filters, navigation, dismissed crash reports, project choices, and selected scan roots also survive relaunch.
 
 The `com.blitzreels.BlitzClean` preference domain stores notification choices, project settings, and start commands.
+It also stores explicit container-to-project assignments by container ID and folder path.
+The emergency helper retains its process inventory only in memory and registers one global shortcut.
+It does not record keystrokes, read conversation bodies, or require Accessibility to register that shortcut.
 Selected preferences are copied once from the older `fr.algomax.FreeSpace` domain, which is left unchanged.
 
 Do not put secrets directly in saved commands; use the project's environment setup instead.

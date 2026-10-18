@@ -72,7 +72,8 @@ struct WorkspaceControlTests {
     let resources = ["/dev/one/app", "/dev/two/app"].enumerated().map { index, directory in
       ResourceProcess(
         processID: Int32(index + 10), parentProcessID: 1, name: "Node tools",
-        owner: "Codex", directory: directory, memoryBytes: 100, cpuPercent: 0, isTool: true)
+        owner: "Codex", directory: directory, memoryBytes: 100, cpuPercent: 0, isTool: true,
+        executable: "/usr/local/bin/node")
     }
     let groups = ResourceOwnership.groups(resources)
     #expect(groups.count == 2)

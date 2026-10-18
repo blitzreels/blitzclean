@@ -4,6 +4,18 @@ import Testing
 @testable import BlitzClean
 
 struct AIThreadsTests {
+  @Test func simultaneousDesktopWorkersInDifferentProjectsAreNotOneGroup() {
+    let threads = AIThreadGrouping.threads(
+      .init(
+        records: [
+          record(40, 1, "codex app-server"), record(41, 40, "node_repl"),
+          record(42, 40, "node_repl"),
+        ], directories: [41: "/Users/me/dev/one", 42: "/Users/me/dev/two"], footprints: [:],
+        startTimes: [41: 100, 42: 101], home: "/Users/me"))
+    #expect(threads.count == 2)
+    #expect(threads.allSatisfy { $0.processIDs.count == 1 })
+  }
+
   private func record(_ pid: Int32, _ ppid: Int32, _ args: String, tty: String? = nil)
     -> RawProcessRecord
   {

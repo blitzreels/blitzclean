@@ -519,6 +519,12 @@ final class DevProcessModel: ObservableObject {
   @Published private(set) var stoppingThreads: Set<String> = []
   @Published private(set) var threadMessage: String?
   @Published private(set) var stoppingIDs: Set<Int32> = []
+  @Published private(set) var consumers: [ResourceConsumer] = []
+  @Published private(set) var activity = ConsumerActivity.load()
+  /// Consumers the user moved to background priority in this session.
+  @Published private(set) var backgrounded: Set<String> = []
+  @Published private(set) var actingConsumers: Set<String> = []
+  @Published private(set) var consumerMessage: String?
   private var identities: [Int32: DevProcessIdentity] = [:]
   @Published private(set) var isRefreshing = false
   @Published private(set) var scannedAt: Date?
@@ -548,11 +554,15 @@ final class DevProcessModel: ObservableObject {
   init() {
     sentinel.start { [weak self] update in
       Task { @MainActor [weak self] in
-        self?.pressure = update.assessment
+        guard let self else { return }
+        if self.pressure.publishes(.init(next: update.assessment, active: NSApp?.isActive == true))
+        {
+          self.pressure = update.assessment
+        }
         ResourceSnapshotCache.pressure = update.assessment
         if let action = update.action {
-          self?.projectAction = action
-          self?.refresh()
+          self.projectAction = action
+          self.refresh()
         }
       }
     }
@@ -569,9 +579,9 @@ final class DevProcessModel: ObservableObject {
       return
     }
 
-    let timer = Timer(timeInterval: 2, repeats: true) { [weak self] _ in
+    let timer = Timer(timeInterval: 3, repeats: true) { [weak self] _ in
       Task { @MainActor in
-        if NSApp?.isActive == true { self?.refresh() } else { self?.refreshIfStale() }
+        self?.refreshIfStale()
       }
     }
     RunLoop.main.add(timer, forMode: .common)
@@ -579,7 +589,8 @@ final class DevProcessModel: ObservableObject {
   }
 
   func refreshIfStale() {
-    if let scannedAt, Date().timeIntervalSince(scannedAt) < (NSApp?.isActive == true ? 2 : 8) {
+    let interval: TimeInterval = pressure.risk >= .warning ? 12 : NSApp?.isActive == true ? 5 : 15
+    if let scannedAt, Date().timeIntervalSince(scannedAt) < interval {
       return
     }
 
@@ -604,15 +615,26 @@ final class DevProcessModel: ObservableObject {
         return
       }
 
-      processes = scanned.processes
-      cpuProcesses = scanned.cpuProcesses
-      resources = scanned.resources
-      workspaceRoots = scanned.workspaceRoots
-      threads = scanned.threads
-      leftovers = scanned.leftovers
+      if processes != scanned.processes { processes = scanned.processes }
+      if cpuProcesses != scanned.cpuProcesses { cpuProcesses = scanned.cpuProcesses }
+      if resources != scanned.resources { resources = scanned.resources }
+      if workspaceRoots != scanned.workspaceRoots { workspaceRoots = scanned.workspaceRoots }
+      if threads != scanned.threads { threads = scanned.threads }
+      if leftovers != scanned.leftovers { leftovers = scanned.leftovers }
       ResourceSnapshotCache.groups = ResourceOwnership.groups(scanned.resources)
       ResourceSnapshotCache.scannedAt = .now
       identities = scanned.identities
+      let stopped = Set(
+        scanned.identities.values.filter(\.process.stopped).map(\.process.processID))
+      let built = ResourceConsumers.build(
+        .init(threads: scanned.threads, resources: scanned.resources, stopped: stopped))
+      if consumers != built { consumers = built }
+      var next = activity
+      next.record(.init(consumers: built, date: .now))
+      if next != activity {
+        activity = next
+        next.save()
+      }
       scannedAt = .now
       isRefreshing = false
       scanDuration = Date.now.timeIntervalSince(started)
@@ -649,17 +671,27 @@ final class DevProcessModel: ObservableObject {
         input: .init(
           resources: resources, processes: processes, preferences: WorkspacePreferences.load()),
         roots: workspaceRoots))
-    let excluded = Set(threads.flatMap(\.processIDs))
     projectTargets = Dictionary(
       uniqueKeysWithValues: projects.compactMap { project in
         ProjectPausePolicy.target(
           .init(
-            project: project, identities: identities, excludedIDs: excluded,
+            project: project, identities: identities, excludedIDs: [],
             date: scannedAt ?? .distantPast)
         )
         .map { (project.directory, $0) }
       })
-    sentinel.update(projectTargets.values.filter { !actingProjects.contains($0.directory) })
+    updateSentinelTargets()
+  }
+
+  private func updateSentinelTargets() {
+    let excluded = Set(threads.flatMap(\.processIDs))
+    sentinel.update(
+      projectTargets.values.compactMap { target in
+        guard !actingProjects.contains(target.directory) else { return nil }
+        var value = target
+        value.identities = target.identities.filter { !excluded.contains($0.process.processID) }
+        return value.identities.isEmpty ? nil : value
+      })
   }
 
   struct AutoPauseRequest {
@@ -680,16 +712,21 @@ final class DevProcessModel: ObservableObject {
   func pauseProject(_ target: ProjectPauseTarget) {
     guard actingProjects.insert(target.directory).inserted else { return }
     projectMessages[target.directory] = nil
-    sentinel.update(projectTargets.values.filter { !actingProjects.contains($0.directory) })
-    let request = ProjectPausePolicy.SignalRequest(target: target, resume: target.isPaused)
+    updateSentinelTargets()
     Task { [weak self] in
-      let count = await Task.detached(priority: .userInitiated) {
-        ProjectPausePolicy.signal(request)
+      let result = await Task.detached(priority: .userInitiated) {
+        guard target.isPaused || !WorkspacePreferences.isKeptRunning(target.directory) else {
+          return WorkloadControl.Result(affected: 0, remaining: 0, retainedBytes: 0, identities: [])
+        }
+        return await WorkloadControl.execute(
+          .init(
+            identities: target.identities,
+            signal: target.isPaused ? .resume : .pause))
       }.value
       self?.projectMessages[target.directory] =
-        count > 0
-        ? "\(target.name): \(count) processes \(request.resume ? "resumed" : "paused; RAM is still held")."
-        : "The processes changed or are protected. Refresh before trying again."
+        result.completed
+        ? "\(target.name): \(result.affected) processes \(target.isPaused ? "resumed" : "suspended; RAM is still held")."
+        : "Action incomplete. \(result.remaining) processes remain; refresh and review."
       self?.actingProjects.remove(target.directory)
       self?.refresh()
     }
@@ -699,19 +736,31 @@ final class DevProcessModel: ObservableObject {
     guard actingProjects.insert(target.directory).inserted else { return }
     projectAction = nil
     projectMessages[target.directory] = nil
-    sentinel.update(projectTargets.values.filter { !actingProjects.contains($0.directory) })
+    updateSentinelTargets()
     Task { [weak self] in
       let message = await Task.detached(priority: .userInitiated) {
-        let count = ProjectPausePolicy.stop(target)
-        guard count > 0 else { return "Processes changed or are protected. Refresh to try again." }
-        for _ in 0..<12 {
-          if ProjectPausePolicy.remaining(target) == 0 {
-            return "Stopped \(count) development processes."
-          }
-          try? await Task.sleep(for: .milliseconds(150))
+        guard !target.keepRunning, !WorkspacePreferences.isKeptRunning(target.directory) else {
+          return "This project is set to Keep running."
         }
-        return
-          "Stop requested; \(ProjectPausePolicy.remaining(target)) processes are still finishing."
+        let result = await WorkloadControl.execute(
+          .init(identities: target.identities, signal: .quit))
+        guard result.affected > 0 else {
+          return "Processes changed or are protected. Refresh to try again."
+        }
+        let scan = DevProcessScanner().snapshot()
+        let project = WorkspaceCatalog.resolvedProjects(
+          .init(
+            input: .init(resources: scan.resources, processes: scan.processes, preferences: []),
+            roots: scan.workspaceRoots)
+        ).first { $0.directory == target.directory }
+        let replacement = project.flatMap {
+          ProjectPausePolicy.target(
+            .init(project: $0, identities: scan.identities, excludedIDs: [], date: .now))
+        }
+        let remaining = max(result.remaining, replacement?.identities.count ?? 0)
+        return remaining == 0
+          ? "Stopped \(result.affected) development processes."
+          : "Partially stopped: \(remaining) workers remain or restarted."
       }.value
       if message.hasPrefix("Stopped ") {
         self?.projectAction = "\(target.name): \(message)"
@@ -804,6 +853,86 @@ final class DevProcessModel: ObservableObject {
     }
   }
 
+  /// AI threads by ID; the scanner can report one session twice, so the first wins instead of trapping.
+  var threadsByID: [String: AIThread] {
+    Dictionary(threads.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+  }
+
+  struct ConsumerSignal {
+    let consumer: ResourceConsumer
+    let signal: AIThreadSignal
+  }
+
+  /// Pauses, resumes or stops an AI session or terminal workload, checking each process's identity first.
+  func signal(_ request: ConsumerSignal) {
+    let consumer = request.consumer
+    if let id = consumer.threadID, let thread = threads.first(where: { $0.id == id }) {
+      signalThread(thread, request.signal)
+      return
+    }
+    guard consumer.kind == .workload, actingConsumers.insert(consumer.id).inserted else { return }
+    consumerMessage = nil
+    let expected = consumer.processIDs.compactMap { identities[$0] }
+    let signal = request.signal
+    Task { [weak self] in
+      let result = await Task.detached(priority: .userInitiated) {
+        await WorkloadControl.execute(.init(identities: expected, signal: signal))
+      }.value
+      guard let self else { return }
+      let name = consumer.name
+      consumerMessage =
+        if result.affected == 0 {
+          "\(name) already exited or changed. The list is refreshed."
+        } else if result.remaining > 0 {
+          signal == .quit || signal == .forceQuit
+            ? "\(name) is still running. Use Force Quit to end it now."
+            : "\(name) has processes that did not respond yet."
+        } else {
+          switch signal {
+          case .pause:
+            "\(name) paused · CPU stopped, \(ByteText.full(consumer.memoryBytes)) still held."
+          case .resume: "\(name) resumed."
+          case .quit, .forceQuit:
+            "\(name) stopped · \(ByteText.full(consumer.memoryBytes)) released."
+          }
+        }
+      actingConsumers.remove(consumer.id)
+      refresh()
+    }
+  }
+
+  struct ConsumerPriority {
+    let consumer: ResourceConsumer
+    let background: Bool
+  }
+
+  /// Background priority gives a consumer CPU only when nothing else needs it; it is reversible.
+  func setBackground(_ request: ConsumerPriority) {
+    let consumer = request.consumer
+    var changed = 0
+    for pid in consumer.processIDs {
+      guard let expected = identities[pid], let current = DevProcessIdentity.read(pid),
+        expected.matches(current), current.process.owner == getuid(), pid != getpid()
+      else { continue }
+      if setpriority(PRIO_DARWIN_PROCESS, id_t(pid), request.background ? PRIO_DARWIN_BG : 0) == 0 {
+        changed += 1
+      }
+    }
+    guard changed > 0 else {
+      consumerMessage = "\(consumer.name) changed or exited. The list is refreshed."
+      refresh()
+      return
+    }
+    if request.background {
+      backgrounded.insert(consumer.id)
+      consumerMessage =
+        "\(consumer.name) now runs in the background: it only gets CPU that nothing else needs."
+    } else {
+      backgrounded.remove(consumer.id)
+      consumerMessage = "\(consumer.name) runs at normal priority again."
+    }
+  }
+
   func pauseThread(_ thread: AIThread) {
     signalThread(thread, .pause)
   }
@@ -824,7 +953,13 @@ final class DevProcessModel: ObservableObject {
     let label = thread.displayName
     Task { [weak self] in
       let outcome = await Task.detached(priority: .userInitiated) { () async -> String? in
-        guard AIThreadStopper.signal(request, signal) > 0 else { return nil }
+        let result = await WorkloadControl.execute(
+          .init(identities: Array(request.expected.values), signal: signal))
+        guard result.affected > 0 else { return nil }
+        if result.remaining > 0 {
+          return signal == .pause
+            ? "pause-pending" : signal == .resume ? "resume-pending" : "still-running"
+        }
         switch signal {
         case .pause:
           for _ in 0..<8 {

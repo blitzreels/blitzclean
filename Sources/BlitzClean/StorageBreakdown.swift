@@ -67,15 +67,19 @@ struct SimulatorDeviceInfo: Identifiable, Equatable, Codable, Sendable {
 }
 
 enum StorageCleanupFocus: Hashable {
-  case caches, simulators, regrown, projects, docker
+  case oldFiles, largeFiles, caches, simulators, regrown, projects, docker
 }
 
 @MainActor
 final class StorageBreakdownModel: ObservableObject {
+  @Published private(set) var inventoryRoot: String?
   @Published var cleanupFocus: StorageCleanupFocus?
   private static let automaticScanInterval: TimeInterval = 5 * 60
   let overview: CleanupOverviewModel
   lazy var repeats = RepeatCleanupModel(history: overview)
+  lazy var oldFiles = OldFilesModel()
+  lazy var largeFiles = LargeFilesModel()
+  lazy var drive = DriveBreakdownModel(history: overview)
 
   @Published private(set) var categories: [StorageCategory] = []
   @Published private(set) var scannedAt: Date?
@@ -97,6 +101,10 @@ final class StorageBreakdownModel: ObservableObject {
   @Published private(set) var inventoryScannedAt: Date?
   private var scanScope: StorageScanScope?
   private var inventoryRequested = false
+  private struct InventoryLocation {
+    let path: String?
+  }
+  private var pendingInventoryRoot: InventoryLocation?
 
   init(overviewConfiguration: CleanupOverviewConfiguration = .application) {
     overview = CleanupOverviewModel(overviewConfiguration)
@@ -131,6 +139,20 @@ final class StorageBreakdownModel: ObservableObject {
 
   func scan() { startScan(.init(scope: .inventory, measurements: .init())) }
 
+  func selectInventoryRoot(_ path: String?) {
+    guard !isScanning, !isCleaning else {
+      pendingInventoryRoot = .init(path: path)
+      cleanupMessage = "The selected folder will be checked when the current task finishes."
+      return
+    }
+    inventoryRoot = path
+    cleanupMessage = nil
+    inventoryScannedAt = nil
+    categories = []
+    selectedPaths = []
+    startScan(.init(scope: .inventory, measurements: .init(deadline: .now.addingTimeInterval(45))))
+  }
+
   func scanCleanup(_ measurements: FolderMeasurementSession = .init()) {
     startScan(.init(scope: .cleanup, measurements: measurements))
   }
@@ -148,18 +170,23 @@ final class StorageBreakdownModel: ObservableObject {
     }
     isScanning = true
     scanScope = scope
-    let scanner = StorageBreakdownScanner(measure: request.measurements.footprint)
+    let measurements =
+      inventoryRoot == nil
+      ? request.measurements : FolderMeasurementSession(deadline: .now.addingTimeInterval(45))
+    let scanner = StorageBreakdownScanner(measure: measurements.footprint)
+    let inventoryRoot = inventoryRoot
     scanTask = Task.detached(priority: .utility) { [weak self] in
       guard let self else { return }
       let result = scanner.scan(
         .init(
           scope: scope,
+          inventoryRoot: inventoryRoot,
           onUpdate: { update in
             Task { @MainActor in self.applyScanUpdate(update) }
           }))
       await self.applyScan(
         .init(
-          result: result, scope: scope, incompleteMeasurements: request.measurements.incompleteCount
+          result: result, scope: scope, incompleteMeasurements: measurements.incompleteCount
         ))
     }
   }
@@ -204,14 +231,20 @@ final class StorageBreakdownModel: ObservableObject {
     simulatorDevices = result.simulatorDevices
     selectedPaths.formIntersection(readyItems.map(\.path))
     isScanning = false
-    StorageScanCache.save(
-      .init(
-        categories: categories, scannedAt: result.scannedAt,
-        simulatorDeviceCount: result.simulatorDeviceCount,
-        bootedSimulatorCount: result.bootedSimulatorCount,
-        simulatorDevices: result.simulatorDevices))
+    if inventoryRoot == nil {
+      StorageScanCache.save(
+        .init(
+          categories: categories, scannedAt: result.scannedAt,
+          simulatorDeviceCount: result.simulatorDeviceCount,
+          bootedSimulatorCount: result.bootedSimulatorCount,
+          simulatorDevices: result.simulatorDevices))
+    }
     scanScope = nil
-    if inventoryRequested {
+    if let pending = pendingInventoryRoot {
+      pendingInventoryRoot = nil
+      inventoryRequested = false
+      selectInventoryRoot(pending.path)
+    } else if inventoryRequested {
       inventoryRequested = false
       self.scan()
     }
@@ -400,7 +433,12 @@ final class StorageBreakdownModel: ObservableObject {
       isCleaning = false
       cleanupMessage = result.message
       inventoryScannedAt = nil
-      scanCleanup()
+      if let pending = pendingInventoryRoot {
+        pendingInventoryRoot = nil
+        selectInventoryRoot(pending.path)
+      } else {
+        scanCleanup()
+      }
     }
   }
 }
@@ -455,6 +493,7 @@ struct StorageBreakdownScanner: Sendable {
 
   struct Request {
     let scope: StorageScanScope
+    var inventoryRoot: String? = nil
     let onUpdate: @Sendable (StorageScanUpdate) -> Void
   }
   private var fileManager: FileManager {
@@ -466,6 +505,7 @@ struct StorageBreakdownScanner: Sendable {
   }
 
   func scan(_ request: Request) -> StorageScanResult {
+    if let root = request.inventoryRoot { return scanLocation(.init(root: root, request: request)) }
     let onUpdate = request.onUpdate
     let home = fileManager.homeDirectoryForCurrentUser.path
     let simulatorState = simulatorState()
@@ -535,6 +575,58 @@ struct StorageBreakdownScanner: Sendable {
       bootedSimulatorCount: simulatorState.bootedCount,
       simulatorDevices: simulatorState.devices
     )
+  }
+
+  private struct LocationRequest {
+    let root: String
+    let request: Request
+  }
+
+  private func scanLocation(_ input: LocationRequest) -> StorageScanResult {
+    let root = input.root
+    var categories: [StorageCategory] = []
+    let discovery = DependencyFileScan.discoverWithin(
+      .init(root: root, deadline: .now.addingTimeInterval(15), maximumEntries: 150_000))
+    let processes = ProjectProcessScanner().processes()
+    let category = nodeModulesCategory(
+      .init(
+        roots: discovery.paths, activeWorkingDirectories: Set(processes.map(\.workingDirectory)),
+        activeProcesses: processes, containingRoot: root))
+    let checked = StorageCategory(
+      id: category.id, name: "Project caches",
+      detail: discovery.complete
+        ? "Rebuild and activity checks for this location"
+        : "Partial scan · choose a project folder to check the rest",
+      systemImage: category.systemImage, safety: category.safety, bytes: category.bytes,
+      items: category.items)
+    categories.append(checked)
+    input.request.onUpdate(.category(checked))
+    if input.request.scope == .inventory {
+      let children =
+        (try? fileManager.contentsOfDirectory(
+          at: URL(fileURLWithPath: root), includingPropertiesForKeys: [.isSymbolicLinkKey],
+          options: [.skipsHiddenFiles])) ?? []
+      let items = children.prefix(64).compactMap { url -> StorageItem? in
+        guard (try? url.resourceValues(forKeys: [.isSymbolicLinkKey]))?.isSymbolicLink == false,
+          let bytes = measure(url.path)?.allocated
+        else { return nil }
+        return StorageItem(
+          name: url.lastPathComponent, path: url.path, bytes: bytes, cleanupKind: nil,
+          cleanupAvailability: nil, lastActivityAt: nil, contentBytes: nil, nodeOrigin: nil,
+          projectRootPath: nil, dependencyInstalledAt: nil, activeProcesses: nil)
+      }
+      let category = StorageCategory(
+        id: "computer-location", name: URL(fileURLWithPath: root).lastPathComponent,
+        detail:
+          "Measured top-level folders · browse to review originals; sizes can overlap caches below",
+        systemImage: "externaldrive", safety: .review,
+        bytes: items.reduce(0) { $0 + $1.bytes }, items: items)
+      categories.append(category)
+      input.request.onUpdate(.category(category))
+    }
+    return .init(
+      categories: categories, scannedAt: .now, simulatorDeviceCount: 0,
+      bootedSimulatorCount: 0, simulatorDevices: [])
   }
 
   private func fixedCategories(_ home: String) -> [CategoryDefinition] {
@@ -814,7 +906,14 @@ struct StorageBreakdownScanner: Sendable {
         )
       )
     }
-    let contextsByTarget = Dictionary(grouping: contexts, by: \.cleanupTargetPath)
+    let containedContexts = contexts.filter { context in
+      guard let root = request.containingRoot else { return true }
+      guard let root = ReviewFile.canonicalPath(root),
+        let target = ReviewFile.canonicalPath(context.cleanupTargetPath)
+      else { return false }
+      return target == root || target.hasPrefix(root + "/")
+    }
+    let contextsByTarget = Dictionary(grouping: containedContexts, by: \.cleanupTargetPath)
       .compactMapValues(\.first)
     let targets = Array(contextsByTarget.keys)
     timing(.init(stage: "dependencies.resolve", seconds: Date.now.timeIntervalSince(phase)))
@@ -1223,6 +1322,7 @@ private struct NodeModulesScanRequest {
   let roots: [String]
   let activeWorkingDirectories: Set<String>
   let activeProcesses: [ProjectProcessInfo]
+  var containingRoot: String? = nil
 }
 
 struct NodeModulesSafetyRequest {

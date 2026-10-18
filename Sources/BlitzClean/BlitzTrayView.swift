@@ -7,11 +7,13 @@ struct BlitzTrayView: View {
   @ObservedObject var recovery: AppRecoveryModel
   @ObservedObject var navigation: CleanNavigation
   @ObservedObject var updates: AppUpdateController
+  @ObservedObject var processes: DevProcessModel
   @Environment(\.openWindow) private var openWindow
   @AppStorage(MenuBarPreferenceKey.memoryDisplay) private var memoryDisplay = MenuBarMemoryDisplay
     .available
 
   private var snapshot: SystemSnapshot { monitor.snapshot }
+  private var commands: ConsumerCommands { .init(processes: processes, memory: memory) }
 
   private var vitals: [MacVital] {
     MacVital.all(
@@ -19,26 +21,34 @@ struct BlitzTrayView: View {
   }
 
   var body: some View {
-    let topApps = memory.apps.largest(.init(count: 3, key: \.memoryBytes))
     VStack(spacing: 0) {
       header
-      VStack(spacing: 10) {
-        if memory.capacity.risk > .normal { pressureAlert }
-        vitalsCard
-        activityCard
-        if !topApps.isEmpty { topAppsList(topApps) }
-      }.padding(.horizontal, 12).padding(.bottom, 12)
-      Rectangle().fill(BlitzUI.separator).frame(height: 1)
+      VStack(alignment: .leading, spacing: 14) {
+        if memory.capacity.risk > .normal { issueRow }
+        resources
+        if let fix { fixRow(fix) }
+        topConsumers
+      }.padding(.horizontal, 12).padding(.bottom, 14)
+      Rectangle().fill(Color.white.opacity(0.07)).frame(height: 1)
       footer
     }
     .frame(width: 340)
+    .background(BlitzUI.canvasBackground)
     .blitzTheme().blitzDropdownHost()
   }
 
+  // MARK: Header
+
   private var header: some View {
-    HStack(spacing: 8) {
+    let attention = memory.capacity.risk > .normal || recovery.attentionCount > 0
+    return HStack(spacing: 10) {
       BrandMark().frame(width: 40, height: 40).scaleEffect(0.55).frame(width: 22, height: 22)
-      Text(AppBrand.name).font(BlitzType.section)
+      Text(AppBrand.name).font(.system(size: 13, weight: .semibold))
+      HStack(spacing: 5) {
+        BlitzStatusDot(tone: attention ? .warning : .good, diameter: 6)
+        Text(attention ? "Needs attention" : "All good").font(BlitzType.caption)
+          .foregroundStyle(BlitzUI.secondaryText)
+      }
       Spacer()
       if updates.version != nil {
         Button(updates.actionTitle) { updates.check() }
@@ -68,131 +78,203 @@ struct BlitzTrayView: View {
         Divider()
         Button("Stop monitoring and quit") { AppLifetime.stopMonitoringAndQuit() }
       }
-    }.padding(.leading, 14).padding(.trailing, 8).padding(.vertical, 8)
+    }.padding(.leading, 14).padding(.trailing, 8).padding(.vertical, 10)
   }
 
-  private var pressureAlert: some View {
+  // MARK: Issue
+
+  private var issueRow: some View {
     let capacity = memory.capacity
     let isDisk = capacity.limit == .disk
     return Button {
       navigation.review(capacity)
       openWindow.dashboard()
     } label: {
-      HStack(alignment: .center, spacing: 12) {
-        Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 13))
-          .foregroundStyle(capacity.risk.tone.color)
+      HStack(spacing: 12) {
+        BlitzColorTile(
+          symbol: isDisk ? "internaldrive.fill" : "exclamationmark",
+          color: capacity.risk.tone.color, size: 28)
         VStack(alignment: .leading, spacing: 2) {
-          Text(capacity.title).font(BlitzType.label)
+          Text(capacity.title).font(BlitzType.rowTitle).foregroundStyle(BlitzUI.primaryText)
           Text(
             isDisk
-              ? "Avoid large downloads and builds. Free up space."
-              : "Avoid new threads or builds. Pause or quit unused projects."
+              ? "Free up space before large downloads or builds."
+              : "Quit what you are not using before starting new work."
           )
           .font(BlitzType.caption).foregroundStyle(BlitzUI.secondaryText)
           .fixedSize(horizontal: false, vertical: true)
         }
         Spacer(minLength: 4)
-        BlitzChevron()
+        Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold))
+          .foregroundStyle(BlitzUI.tertiaryText)
       }
-      .padding(12).frame(maxWidth: .infinity, alignment: .leading)
-      .blitzToneCard(capacity.risk.tone, radius: 14)
-    }.buttonStyle(BlitzCardButtonStyle()).help(capacity.reviewTitle)
+      .padding(12).contentShape(Rectangle())
+    }
+    .buttonStyle(BlitzRowButtonStyle(radius: 12))
+    .blitzCard(padding: 0)
+    .help(capacity.reviewTitle)
   }
 
-  private var vitalsCard: some View {
-    HStack(spacing: 14) {
-      BlitzVitalRings(vitals: vitals, lineWidth: 6) { EmptyView() }
-        .frame(width: 92, height: 92)
-      VStack(spacing: 2) {
+  // MARK: Resources
+
+  private var resources: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      BlitzGroupLabel(title: "Resources").padding(.leading, 4)
+      VStack(spacing: 0) {
         ForEach(vitals) { vital in
-          Button {
-            open(vital.page)
-          } label: {
-            HStack(spacing: 8) {
-              Circle().fill(vital.color).frame(width: 7, height: 7)
-              Text(vital.title).font(BlitzType.caption).foregroundStyle(BlitzUI.secondaryText)
-              Spacer(minLength: 4)
-              Text(vital.compactValue).font(BlitzType.label).monospacedDigit().lineLimit(1)
-                .foregroundStyle(
-                  vital.alertColor ?? BlitzUI.primaryText
-                )
-                .contentTransition(.numericText())
-              BlitzChevron()
-            }.padding(.horizontal, 8).frame(height: 30).contentShape(Rectangle())
-          }.buttonStyle(BlitzRowButtonStyle(radius: 8)).help("Open \(vital.title)")
+          resourceRow(vital)
+          if vital.id != vitals.last?.id { BlitzRowDivider(leading: 50) }
         }
+      }.blitzCard(padding: 0)
+    }
+  }
+
+  private func resourceRow(_ vital: MacVital) -> some View {
+    Button {
+      open(vital.page)
+    } label: {
+      HStack(spacing: 12) {
+        BlitzColorTile(symbol: vital.page.tileSymbol, color: vital.page.color, size: 26)
+        VStack(alignment: .leading, spacing: 6) {
+          HStack(alignment: .firstTextBaseline) {
+            Text(vital.title).font(BlitzType.body).foregroundStyle(BlitzUI.secondaryText)
+            Spacer(minLength: 8)
+            Text(vital.compactValue).font(BlitzNumberFont.value(15)).monospacedDigit()
+              .foregroundStyle(vital.alertColor ?? BlitzUI.primaryText)
+              .contentTransition(.numericText())
+          }
+          visual(vital.page)
+        }
+        Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold))
+          .foregroundStyle(BlitzUI.tertiaryText)
+      }
+      .padding(.horizontal, 12).padding(.vertical, 10).contentShape(Rectangle())
+    }.buttonStyle(BlitzRowButtonStyle(radius: 0)).help("Open \(vital.title)")
+  }
+
+  @ViewBuilder private func visual(_ page: CleanPage) -> some View {
+    switch page {
+    case .cpu:
+      ResourcePlot(
+        samples: monitor.resourceSamples, kind: .cpu, color: page.color, seconds: 120
+      ).frame(height: 20)
+    case .memory:
+      SegmentedBar(
+        segments: [.init(id: "used", color: page.color, fraction: snapshot.ramUsedRatio)],
+        height: 4)
+    default:
+      SegmentedBar(
+        segments: [.init(id: "used", color: page.color, fraction: snapshot.diskUsedRatio)],
+        height: 4)
+    }
+  }
+
+  // MARK: Fix
+
+  private struct Fix {
+    let title: String
+    let detail: String
+    let symbol: String
+    let color: Color
+    let actionTitle: String
+    let actionSymbol: String
+    let perform: () -> Void
+  }
+
+  /// The single most useful thing to do right now, done from the tray when it is safe to.
+  private var fix: Fix? {
+    let commands = commands
+    if let busy = processes.consumers.filter({
+      $0.canSignal && !$0.isPaused
+        && processes.activity.busy(.init(id: $0.id, now: .now)) >= ConsumerActivity.runawayAfter
+    }).max(by: { $0.cpuPercent < $1.cpuPercent }) {
+      return Fix(
+        title: busy.name, detail: "Using \(CPUText.cores(busy.cpuPercent)) for a while",
+        symbol: "cpu.fill", color: BlitzPalette.cpu, actionTitle: "Pause",
+        actionSymbol: "pause.fill",
+        perform: { processes.signal(.init(consumer: busy, signal: .pause)) })
+    }
+    let idle = FreeMemoryPlan.idle(
+      .init(
+        consumers: processes.consumers, activity: processes.activity,
+        quittableApps: commands.quittableApps, now: .now))
+    let short = memory.capacity.risk >= .warning && memory.capacity.limit == .memory
+    let target =
+      idle.first
+      ?? (short ? processes.consumers.first { commands.canStop($0) && !$0.isPaused } : nil)
+    if let target {
+      let idleFor = processes.activity.idle(.init(id: target.id, now: .now))
+      let stopTitle = commands.stopTitle(target)
+      return Fix(
+        title: target.name,
+        detail: idleFor >= ConsumerActivity.idleAfter
+          ? "Idle \(ResourceLeadersSection.duration(idleFor)) · frees \(ByteText.compact(target.memoryBytes))"
+          : "Frees \(ByteText.compact(target.memoryBytes)) of memory",
+        symbol: "memorychip.fill", color: BlitzPalette.memory, actionTitle: stopTitle,
+        actionSymbol: stopTitle == "Quit" ? "xmark" : "stop.fill",
+        perform: { commands.stop(target) })
+    }
+    if memory.capacity.limit == .disk, memory.capacity.risk > .normal {
+      return Fix(
+        title: "Disk almost full", detail: "See what you can free on Overview",
+        symbol: "internaldrive.fill", color: BlitzPalette.storage, actionTitle: "Free up space",
+        actionSymbol: "sparkles", perform: { open(.overview) })
+    }
+    return nil
+  }
+
+  private func fixRow(_ fix: Fix) -> some View {
+    VStack(alignment: .leading, spacing: 8) {
+      BlitzGroupLabel(title: "Suggested").padding(.leading, 4)
+      HStack(spacing: 12) {
+        BlitzColorTile(symbol: fix.symbol, color: fix.color, size: 26)
+        VStack(alignment: .leading, spacing: 2) {
+          Text(fix.title).font(BlitzType.rowTitle).lineLimit(1).truncationMode(.middle)
+          Text(fix.detail).font(BlitzType.caption).foregroundStyle(BlitzUI.secondaryText)
+            .lineLimit(1)
+        }
+        Spacer(minLength: 8)
+        Button(action: fix.perform) {
+          Label(fix.actionTitle, systemImage: fix.actionSymbol)
+        }.blitzButton(.accent).controlSize(.small).fixedSize()
+      }.padding(12).blitzCard(padding: 0)
+    }
+  }
+
+  // MARK: Top consumers
+
+  @ViewBuilder private var topConsumers: some View {
+    let top = Array(processes.consumers.filter { $0.kind != .system }.prefix(3))
+    if !top.isEmpty {
+      VStack(alignment: .leading, spacing: 8) {
+        BlitzGroupLabel(title: "Using the most memory").padding(.leading, 4)
+        VStack(spacing: 0) {
+          ForEach(top) { consumer in
+            TrayConsumerRow(
+              consumer: consumer, commands: commands, total: snapshot.ramTotal,
+              onOpen: { open(.memory) })
+            if consumer.id != top.last?.id { BlitzRowDivider(leading: 46) }
+          }
+        }.blitzCard(padding: 0)
       }
     }
-    .padding(12)
-    .blitzHeroCard()
   }
 
-  private var activityCard: some View {
-    VStack(alignment: .leading, spacing: 6) {
-      plotRow(
-        title: "Memory", page: .memory,
-        kind: memoryDisplay == .available ? .availableMemory : .memory, color: BlitzUI.mint)
-      plotRow(title: "CPU", page: .cpu, kind: .cpu, color: CleanPage.cpu.hue)
-    }.padding(.vertical, 10).padding(.horizontal, 4).blitzTable()
-  }
-
-  private func plotRow(title: String, page: CleanPage, kind: ResourceKind, color: Color)
-    -> some View
-  {
-    Button {
-      open(page)
-    } label: {
-      HStack(spacing: 10) {
-        Text(title).font(BlitzType.caption).foregroundStyle(BlitzUI.secondaryText)
-          .frame(width: 50, alignment: .leading)
-        ResourcePlot(samples: monitor.resourceSamples, kind: kind, color: color, seconds: 60)
-          .frame(height: 26)
-      }.padding(.horizontal, 8).padding(.vertical, 4).contentShape(Rectangle())
-    }.buttonStyle(BlitzRowButtonStyle(radius: 8)).help("Open \(title)")
-  }
-
-  private func topAppsList(_ topApps: [MemoryApp]) -> some View {
-    VStack(alignment: .leading, spacing: 6) {
-      BlitzUI.sectionLabel("Using the most memory").padding(.horizontal, 8)
-      ForEach(topApps) { app in
-        Button {
-          open(.memory)
-        } label: {
-          HStack(spacing: 10) {
-            ApplicationIcon(source: .file(app.bundleURL.path), size: 22, fallback: "app")
-            VStack(alignment: .leading, spacing: 5) {
-              HStack {
-                Text(app.name).font(BlitzType.body).lineLimit(1).truncationMode(.tail)
-                Spacer(minLength: 8)
-                Text(ByteText.compact(app.memoryBytes)).font(BlitzType.numeric)
-                  .foregroundStyle(BlitzUI.supportingText)
-              }
-              share(app)
-            }
-          }.padding(.horizontal, 8).frame(height: 40).contentShape(Rectangle())
-        }.buttonStyle(BlitzRowButtonStyle(radius: 8)).help("Open Memory")
-      }
-    }.padding(.vertical, 10).padding(.horizontal, 4).blitzTable()
-  }
-
-  private func share(_ app: MemoryApp) -> some View {
-    let ratio =
-      snapshot.ramTotal > 0 ? min(1, Double(app.memoryBytes) / Double(snapshot.ramTotal)) : 0
-    return GeometryReader { proxy in
-      ZStack(alignment: .leading) {
-        Capsule().fill(Color.white.opacity(0.06))
-        Capsule().fill(BlitzUI.mint.opacity(0.8)).frame(width: max(3, proxy.size.width * ratio))
-      }
-    }.frame(height: 3).accessibilityHidden(true)
-  }
+  // MARK: Footer
 
   private var footer: some View {
     HStack(spacing: 8) {
       Button {
+        EmergencyControlsLauncher.open()
+      } label: {
+        Image(systemName: "lifepreserver").font(.system(size: 14, weight: .medium))
+          .frame(width: 20)
+      }.blitzButton(.secondary).help("Emergency controls · ⌃⌥⌘R")
+        .accessibilityLabel("Emergency controls")
+      Button {
         open(.recovery)
       } label: {
         HStack(spacing: 6) {
-          Image(systemName: "waveform.path.ecg")
           Text("Revive apps")
           if recovery.attentionCount > 0 {
             BlitzCountBadge(
@@ -200,18 +282,67 @@ struct BlitzTrayView: View {
               label: "\(recovery.attentionCount) apps need attention")
           }
         }.frame(maxWidth: .infinity)
-      }.blitzButton(.secondary).controlSize(.regular)
+      }.blitzButton(.secondary)
       Button {
         open(.overview)
       } label: {
-        Text("Open dashboard").frame(maxWidth: .infinity)
-      }.blitzButton(.accent).controlSize(.regular)
-    }.padding(12)
+        Text("Open BlitzClean").frame(maxWidth: .infinity)
+      }.blitzButton(fix == nil ? .accent : .secondary)
+    }.controlSize(.regular).padding(12)
   }
 
   private func open(_ page: CleanPage) {
+    if page == .storage { navigation.storagePage = .drive }
     navigation.page = page
     openWindow.dashboard()
+  }
+}
+
+/// A memory user in the tray; its Stop or Quit button appears on hover.
+private struct TrayConsumerRow: View {
+  let consumer: ResourceConsumer
+  let commands: ConsumerCommands
+  let total: UInt64
+  let onOpen: () -> Void
+  @State private var hovered = false
+
+  var body: some View {
+    HStack(spacing: 10) {
+      Button(action: onOpen) {
+        HStack(spacing: 10) {
+          if consumer.kind == .workload, let directory = consumer.directory {
+            ProjectIcon(directory: directory, processName: "", size: 22, fallbackSymbol: "terminal")
+          } else {
+            ApplicationIcon(source: .name(consumer.iconName), size: 22, fallback: "terminal")
+          }
+          VStack(alignment: .leading, spacing: 5) {
+            HStack {
+              Text(consumer.name).font(BlitzType.body).lineLimit(1).truncationMode(.middle)
+                .foregroundStyle(BlitzUI.primaryText)
+              Spacer(minLength: 8)
+              if !hovered || !commands.canStop(consumer) {
+                Text(ByteText.compact(consumer.memoryBytes)).font(BlitzType.numeric)
+                  .foregroundStyle(BlitzUI.supportingText)
+              }
+            }
+            SegmentedBar(
+              segments: [
+                .init(
+                  id: "share", color: BlitzPalette.memory,
+                  fraction: total == 0 ? 0 : Double(consumer.memoryBytes) / Double(total))
+              ], height: 3)
+          }
+        }.contentShape(Rectangle())
+      }.buttonStyle(.plain).help("Open Memory")
+      if hovered, commands.canStop(consumer) {
+        Button(commands.stopTitle(consumer)) { commands.stop(consumer) }
+          .blitzButton(.secondary).controlSize(.mini)
+          .disabled(commands.isBusy(consumer))
+      }
+    }
+    .padding(.horizontal, 12).frame(height: 46)
+    .background(hovered ? Color.white.opacity(0.04) : .clear)
+    .onHover { hovered = $0 }
   }
 }
 
