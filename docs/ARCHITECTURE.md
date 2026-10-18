@@ -40,6 +40,13 @@ A failed or incomplete check preserves the candidate and produces a visible expl
 A small filesystem race remains between final validation and removal. Deletion runs as the current user,
 without privileges or hardening against a deliberate attacker.
 
+Every removal ends in `RemovalGate`, on top of each feature's own checks. It refuses paths that are not
+absolute and plain, items under a linked folder, home, system, volume and Git roots, read-only volumes,
+and items whose device and inode changed since review. Each refusal carries the reason shown in the UI.
+Every signal to another process goes through `ProcessSignal`, which requires the same PID, start time,
+executable and owner as the scanned instance, and resumes a stopped process after SIGTERM so it can quit.
+Short-lived commands run through `CommandRunner`, with a deadline, an output cap, and tree-kill on timeout.
+
 Personal-file review rechecks inode, device, size, nanosecond modification time, and allowed roots.
 Storage Browse and its largest-file review use Trash. Separate developer workflows keep their reviewed deletion policies.
 

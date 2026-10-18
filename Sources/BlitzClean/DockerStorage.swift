@@ -1,4 +1,3 @@
-import Darwin
 import Foundation
 
 struct DockerStorageCategory: Identifiable, Codable, Equatable, Sendable {
@@ -45,7 +44,6 @@ enum DockerCleanupOutcome: Sendable {
 }
 
 struct DockerStorageService: Sendable {
-  private static let deadlines = DispatchQueue(label: "com.blitzreels.BlitzClean.docker-deadlines")
   struct Configuration: Sendable {
     let executablePath: String?
     let queryTimeout: TimeInterval
@@ -125,59 +123,27 @@ struct DockerStorageService: Sendable {
       throw DockerStorageError.notInstalled
     }
 
-    let process = Process()
-    let stdout = Pipe()
-    let stderr = Pipe()
-    process.executableURL = URL(fileURLWithPath: executablePath)
-    process.arguments = request.arguments
-    if request.arguments.first == "--host" {
-      var environment = ProcessInfo.processInfo.environment
-      for key in [
-        "DOCKER_CONTEXT", "DOCKER_HOST", "DOCKER_TLS", "DOCKER_TLS_VERIFY", "DOCKER_CERT_PATH",
-      ] {
-        environment.removeValue(forKey: key)
-      }
-      process.environment = environment
-    }
-    process.standardInput = FileHandle.nullDevice
-    process.standardOutput = stdout
-    process.standardError = stderr
-    try process.run()
-    let deadline = DispatchWorkItem {
-      if process.isRunning { kill(process.processIdentifier, SIGKILL) }
-    }
-    Self.deadlines.asyncAfter(deadline: .now() + request.timeout, execute: deadline)
-    let errors = DockerErrorOutput()
-    let readers = DispatchGroup()
-    readers.enter()
-    DispatchQueue.global(qos: .utility).async {
-      errors.read(stderr.fileHandleForReading)
-      readers.leave()
-    }
-    let data = stdout.fileHandleForReading.readDataToEndOfFile()
-    process.waitUntilExit()
-    readers.wait()
-    deadline.cancel()
-    let output = String(decoding: data, as: UTF8.self).trimmingCharacters(
-      in: .whitespacesAndNewlines)
-    let error = errors.text.isEmpty ? output : errors.text
-    guard process.terminationReason == .exit, process.terminationStatus == 0 else {
+    let result = CommandRunner.run(
+      .init(
+        executable: executablePath, arguments: request.arguments, timeout: request.timeout,
+        maximumBytes: 32 * 1_024 * 1_024, input: nil,
+        environment: request.arguments.first == "--host"
+          ? .init(
+            set: [:],
+            removed: [
+              "DOCKER_CONTEXT", "DOCKER_HOST", "DOCKER_TLS", "DOCKER_TLS_VERIFY",
+              "DOCKER_CERT_PATH",
+            ]) : .inherited))
+    let output = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+    let errors = result.errors.trimmingCharacters(in: .whitespacesAndNewlines)
+    let error = errors.isEmpty ? output : errors
+    guard result.status == 0 else {
       throw DockerStorageError.commandFailed(
         error.isEmpty
           ? "Docker did not complete the request. Try again after opening Docker." : error)
     }
 
     return DockerCommandOutput(standardOutput: output)
-  }
-}
-
-private final class DockerErrorOutput: @unchecked Sendable {
-  private var data = Data()
-
-  func read(_ handle: FileHandle) { data = handle.readDataToEndOfFile() }
-
-  var text: String {
-    String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
   }
 }
 

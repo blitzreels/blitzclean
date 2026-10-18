@@ -43,7 +43,7 @@ final class LargeFilesModel: ObservableObject {
     Task {
       let result = await Task.detached(priority: .utility) { LargeFileScanner.scan(request) }.value
       guard scanGeneration == generation else { return }
-      items = result.items
+      items = result.items.filter { FileIdentity.read($0.path) != nil && !moving.contains($0.path) }
       limited = result.limited
       scannedAt = .now
       isScanning = false

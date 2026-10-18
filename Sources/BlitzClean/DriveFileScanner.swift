@@ -107,7 +107,8 @@ enum DriveFileScanner {
     var unreadable = 0
     var errors: [String] = []
     var currentPath = ""
-    var walkers: [DriveWalker] = []
+    var walkers: [FileTree] = []
+    let ledger = HardLinkLedger()
     var roots = Set<String>()
     let firmlinks = Set(
       (try? String(contentsOfFile: "/usr/share/firmlinks", encoding: .utf8))?
@@ -123,7 +124,7 @@ enum DriveFileScanner {
         continue
       }
       guard roots.insert(path).inserted else { continue }
-      if let walker = DriveWalker(path) {
+      if let walker = FileTree(.init(path: path, needsMetadata: true)) {
         walkers.append(walker)
       } else {
         unreadable += 1
@@ -140,9 +141,8 @@ enum DriveFileScanner {
       for walker in walkers {
         for _ in 0..<2_048 {
           guard !Task.isCancelled, let entry = walker.next() else { break }
-          let info = entry.pointee
-          currentPath = String(cString: info.fts_path)
-          if info.fts_info == FTS_D,
+          currentPath = entry.path
+          if entry.kind == .directory,
             (walker.root == "/"
               && (firmlinks.contains(currentPath) || currentPath == "/System/Volumes"))
               || (walker.root == "/System/Volumes/Data"
@@ -151,20 +151,21 @@ enum DriveFileScanner {
             walker.skip(entry)
             continue
           }
-          if [FTS_DNR, FTS_ERR, FTS_NS].contains(Int32(info.fts_info)) {
+          if entry.kind == .unreadable || entry.kind == .unreadableDirectory {
             unreadable += 1
             if errors.count < 20 { errors.append(currentPath) }
           }
-          guard info.fts_info == FTS_F, let metadata = info.fts_statp?.pointee else { continue }
+          guard entry.kind == .file, let metadata = entry.metadata else { continue }
           visited += 1
-          let bytes = UInt64(max(0, metadata.st_blocks)) * 512
+          let bytes = AllocatedSize.of(metadata)
+          let counted = ledger.bytes(metadata) ?? 0
           let relative = currentPath.dropFirst(walker.root == "/" ? 1 : walker.root.count + 1)
           if let separator = relative.firstIndex(of: "/") {
             var child = (walker.root == "/" ? "" : walker.root) + "/" + relative[..<separator]
             if request.roots == ["/"], child.hasPrefix("/System/Volumes/Data/") {
               child = String(child.dropFirst("/System/Volumes/Data".count))
             }
-            folderBytes[child, default: 0] += bytes
+            folderBytes[child, default: 0] += counted
           }
           guard bytes >= request.minimumBytes else { continue }
           let file = ReviewFile(
@@ -184,44 +185,5 @@ enum DriveFileScanner {
     let result = snapshot(!Task.isCancelled)
     request.progress(result)
     return result
-  }
-}
-
-private final class DriveWalker {
-  let root: String
-  private let paths: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>
-  private let tree: UnsafeMutablePointer<FTS>
-  private(set) var finished = false
-
-  init?(_ path: String) {
-    root = path
-    paths = .allocate(capacity: 2)
-    paths.initialize(to: strdup(path))
-    paths.advanced(by: 1).initialize(to: nil)
-    guard let tree = fts_open(paths, FTS_PHYSICAL | FTS_NOCHDIR | FTS_XDEV, nil) else {
-      free(paths.pointee)
-      paths.deinitialize(count: 2)
-      paths.deallocate()
-      return nil
-    }
-    self.tree = tree
-  }
-
-  func next() -> UnsafeMutablePointer<FTSENT>? {
-    guard !finished else { return nil }
-    let entry = fts_read(tree)
-    if entry == nil { finished = true }
-    return entry
-  }
-
-  func skip(_ entry: UnsafeMutablePointer<FTSENT>) {
-    fts_set(tree, entry, FTS_SKIP)
-  }
-
-  deinit {
-    fts_close(tree)
-    free(paths.pointee)
-    paths.deinitialize(count: 2)
-    paths.deallocate()
   }
 }

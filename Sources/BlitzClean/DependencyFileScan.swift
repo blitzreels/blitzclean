@@ -19,7 +19,7 @@ enum DependencyFileScan {
   }
 
   static func discoverWithin(_ request: DiscoveryRequest) -> Discovery {
-    guard let tree = DependencyTree(.init(path: request.root, needsMetadata: false)) else {
+    guard let tree = FileTree(.init(path: request.root, needsMetadata: false)) else {
       return .init(paths: [], complete: false)
     }
     var paths: [String] = []
@@ -31,13 +31,13 @@ enum DependencyFileScan {
         complete = false
         break
       }
-      if [FTS_ERR, FTS_DNR, FTS_NS].contains(Int32(entry.pointee.fts_info)) { complete = false }
-      guard entry.pointee.fts_info == FTS_D else { continue }
-      let name = tree.name(entry)
+      if [.unreadable, .unreadableDirectory].contains(entry.kind) { complete = false }
+      guard entry.kind == .directory else { continue }
+      let name = entry.name
       if name == "node_modules" {
-        paths.append(String(cString: entry.pointee.fts_path))
+        paths.append(entry.path)
         tree.skip(entry)
-      } else if entry.pointee.fts_level > 0,
+      } else if entry.level > 0,
         generatedDirectories.contains(name)
           || [".Trashes", ".Spotlight-V100", ".fseventsd", "Backups.backupdb"].contains(name)
       {
@@ -56,16 +56,16 @@ enum DependencyFileScan {
     let output = DiscoveredPaths()
     DispatchQueue.concurrentPerform(iterations: min(2, roots.count)) { worker in
       for index in stride(from: worker, to: roots.count, by: 2) {
-        guard let tree = DependencyTree(.init(path: roots[index], needsMetadata: false)) else {
+        guard let tree = FileTree(.init(path: roots[index], needsMetadata: false)) else {
           continue
         }
         while let entry = tree.next() {
-          guard entry.pointee.fts_info == FTS_D else { continue }
-          let name = tree.name(entry)
+          guard entry.kind == .directory else { continue }
+          let name = entry.name
           if name == "node_modules" {
-            output.insert(String(cString: entry.pointee.fts_path))
+            output.insert(entry.path)
             tree.skip(entry)
-          } else if entry.pointee.fts_level > 0, generatedDirectories.contains(name) {
+          } else if entry.level > 0, generatedDirectories.contains(name) {
             tree.skip(entry)
           }
         }
@@ -83,35 +83,14 @@ enum DependencyFileScan {
     let deadline: Date
   }
 
+  /// Nil unless every entry was read: a dependency size decides what gets deleted.
   static func measure(_ request: Measurement) -> DependencyFootprint? {
-    guard Date.now < request.deadline,
-      let tree = DependencyTree(.init(path: request.path, needsMetadata: true))
+    guard
+      let footprint = FolderFootprint.measure(
+        .init(path: request.path, deadline: request.deadline)),
+      !footprint.partial
     else { return nil }
-    var allocated: UInt64 = 0
-    var content: UInt64 = 0
-    var entries = 0
-    var linked: Set<Identity> = []
-    errno = 0
-    while let entry = tree.next() {
-      entries += 1
-      if entries % 128 == 0, Date.now >= request.deadline { return nil }
-      let info = entry.pointee
-      if info.fts_info == FTS_ERR || info.fts_info == FTS_DNR || info.fts_info == FTS_NS {
-        return nil
-      }
-      if info.fts_info == FTS_DP { continue }
-      guard let metadata = info.fts_statp?.pointee else { return nil }
-      if metadata.st_nlink > 1, info.fts_info != FTS_D {
-        guard linked.insert(.init(device: metadata.st_dev, inode: metadata.st_ino)).inserted else {
-          continue
-        }
-      }
-      allocated += UInt64(max(0, metadata.st_blocks)) * 512
-      content += UInt64(max(0, metadata.st_size))
-      errno = 0
-    }
-    guard errno == 0, Date.now < request.deadline else { return nil }
-    return .init(allocated: allocated, content: content)
+    return .init(allocated: footprint.allocated, content: footprint.content)
   }
 
   static func measureAll(_ paths: [String]) -> [String: DependencyFootprint] {
@@ -141,11 +120,6 @@ enum DependencyFileScan {
   private static let generatedDirectories: Set<String> = [
     ".git", ".build", ".venv", "venv", "__pycache__", "Pods", ".gradle",
   ]
-
-  private struct Identity: Hashable {
-    let device: dev_t
-    let inode: ino_t
-  }
 
   private final class DiscoveredPaths: @unchecked Sendable {
     private let lock = NSLock()
@@ -196,51 +170,5 @@ enum DependencyFileScan {
       defer { lock.unlock() }
       return storage
     }
-  }
-}
-
-private final class DependencyTree {
-  struct Input {
-    let path: String
-    let needsMetadata: Bool
-  }
-
-  private let paths: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>
-  private let tree: UnsafeMutablePointer<FTS>
-
-  init?(_ input: Input) {
-    paths = .allocate(capacity: 2)
-    paths.initialize(to: strdup(input.path))
-    paths.advanced(by: 1).initialize(to: nil)
-    let options = FTS_PHYSICAL | FTS_NOCHDIR | FTS_XDEV | (input.needsMetadata ? 0 : FTS_NOSTAT)
-    guard let tree = fts_open(paths, options, nil) else {
-      free(paths.pointee)
-      paths.deinitialize(count: 2)
-      paths.deallocate()
-      return nil
-    }
-    self.tree = tree
-  }
-
-  func next() -> UnsafeMutablePointer<FTSENT>? {
-    errno = 0
-    return fts_read(tree)
-  }
-
-  func skip(_ entry: UnsafeMutablePointer<FTSENT>) { fts_set(tree, entry, FTS_SKIP) }
-
-  func name(_ entry: UnsafeMutablePointer<FTSENT>) -> String {
-    withUnsafePointer(to: &entry.pointee.fts_name) {
-      $0.withMemoryRebound(to: CChar.self, capacity: Int(entry.pointee.fts_namelen) + 1) {
-        String(cString: $0)
-      }
-    }
-  }
-
-  deinit {
-    fts_close(tree)
-    free(paths.pointee)
-    paths.deinitialize(count: 2)
-    paths.deallocate()
   }
 }

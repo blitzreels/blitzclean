@@ -213,7 +213,7 @@ The panel cannot guarantee responsiveness during an OS-wide kernel or storage st
 
 Projects associates Docker containers through Compose/Supabase labels and explicit manual assignments.
 Unassigned containers stay visible separately. Stop/Start preserves containers and database volumes.
-Container shutdown has no automatic forced timeout; slow shutdown reports an incomplete action.
+Each container gets 120 seconds to shut down, so databases can flush, before Docker forces it to stop.
 Project Stop includes native compilers and runtime descendants, then checks for remaining or restarted workers.
 
 Repeat folder removal honors Keep running and refuses recent files (seven days), tracked files,

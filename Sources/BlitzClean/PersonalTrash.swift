@@ -48,6 +48,10 @@ enum PersonalTrash {
         ? ["-nP", "-Fp", "+D", identity.path] : ["-nP", "-Fp", "--", identity.path])
     if check.status == 0 { throw PersonalTrashError.open }
     guard check.status == 1, check.output.isEmpty else { throw PersonalTrashError.unverified }
+    try RemovalGate.check(
+      .init(
+        path: identity.path, expected: .init(device: identity.device, inode: identity.inode),
+        method: .trash))
     var resulting: NSURL?
     try FileManager.default.trashItem(
       at: URL(fileURLWithPath: identity.path), resultingItemURL: &resulting)

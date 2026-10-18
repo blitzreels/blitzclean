@@ -83,9 +83,25 @@ struct CleanupHistoryStore: Sendable {
 
   func load() throws -> CleanupLedger {
     guard FileManager.default.fileExists(atPath: url.path) else { return CleanupLedger() }
+    let data = try Data(contentsOf: url)
     let decoder = JSONDecoder()
     decoder.dateDecodingStrategy = .iso8601
-    return try decoder.decode(CleanupLedger.self, from: Data(contentsOf: url))
+    if let ledger = try? decoder.decode(CleanupLedger.self, from: data) { return ledger }
+    let readable = (try? decoder.decode(LossyLedger.self, from: data))?.wins.compactMap(\.value)
+    try preserveUnreadableFile()
+    return CleanupLedger(wins: readable ?? [])
+  }
+
+  private struct LossyLedger: Decodable {
+    let wins: [Lossy<CleanupWin>]
+  }
+
+  /// Moves a history file this build cannot fully read aside, so new removals keep being recorded
+  /// and the original stays available.
+  private func preserveUnreadableFile() throws {
+    let backup = url.deletingLastPathComponent().appendingPathComponent(
+      "\(url.lastPathComponent).unreadable-\(UUID().uuidString)")
+    try FileManager.default.moveItem(at: url, to: backup)
   }
 
   func save(_ ledger: CleanupLedger) throws {
@@ -93,7 +109,7 @@ struct CleanupHistoryStore: Sendable {
       at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
     let encoder = JSONEncoder()
     encoder.dateEncodingStrategy = .iso8601
-    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+    encoder.outputFormatting = [.sortedKeys]
     try encoder.encode(ledger).write(to: url, options: .atomic)
     try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
   }

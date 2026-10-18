@@ -190,14 +190,7 @@ enum RegrowCleaner {
   static func size(_ path: String) -> UInt64? {
     var info = stat()
     guard lstat(path, &info) == 0, info.st_mode & S_IFMT == S_IFDIR else { return nil }
-    let result = CleanupActivity.runCommand(
-      .init(executable: "/usr/bin/du", arguments: ["-sk", path], timeout: 60))
-    guard
-      let kilobytes = result.output.split(whereSeparator: \.isWhitespace).first.flatMap({
-        UInt64($0)
-      })
-    else { return nil }
-    return kilobytes * 1_024
+    return DiskUsage.allocatedBytes(.init(path: path, timeout: 60))
   }
 
   static func reviewedTree(_ target: RegrowTarget) throws -> CacheTree {
@@ -252,7 +245,7 @@ enum RegrowCleaner {
         try CacheCleaner.tree(.init(path: target.path, deadline: .now.addingTimeInterval(15)))
           == reviewed
       else { throw CacheCleanError.changed }
-      try FileManager.default.removeItem(atPath: target.path)
+      try RemovalGate.remove(.init(path: target.path, expected: nil, method: .permanent))
     case .pnpmPrune:
       guard let pnpm = pnpmExecutable(home: home) else {
         throw RegrowCleanError.failed("pnpm was not found. Run pnpm store prune in Terminal.")
@@ -280,17 +273,39 @@ enum RegrowCleaner {
 
 /// Cleanup reports written outside the app, such as an agent-run cleanup, in the same JSON shape.
 enum CleanupReportImporter {
+  /// Agents write these by hand, so numbers may arrive as integers, decimals or strings, and one
+  /// malformed entry only drops that entry.
   private struct Report: Decodable {
-    struct Started: Decodable { let at: Double? }
+    struct Started: Decodable {
+      let at: Double?
+
+      init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        at = values.number(.at)
+      }
+
+      enum CodingKeys: String, CodingKey { case at }
+    }
     struct Removed: Decodable {
       let path: String
       let allocatedBytes: UInt64?
       let freeBefore: UInt64?
       let freeAfter: UInt64?
       let time: Double?
+
+      init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        path = try values.decode(String.self, forKey: .path)
+        allocatedBytes = values.number(.allocatedBytes).flatMap { UInt64(exactly: $0.rounded()) }
+        freeBefore = values.number(.freeBefore).flatMap { UInt64(exactly: $0.rounded()) }
+        freeAfter = values.number(.freeAfter).flatMap { UInt64(exactly: $0.rounded()) }
+        time = values.number(.time)
+      }
+
+      enum CodingKeys: String, CodingKey { case path, allocatedBytes, freeBefore, freeAfter, time }
     }
     let started: Started?
-    let removed: [Removed]?
+    let removed: [Lossy<Removed>]?
   }
 
   static func wins(_ url: URL) -> [CleanupWin] {
@@ -300,7 +315,7 @@ enum CleanupReportImporter {
     let fallback =
       (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate)
       ?? .now
-    return (report.removed ?? []).enumerated().map { index, item in
+    return (report.removed ?? []).compactMap(\.value).enumerated().map { index, item in
       let internalDisk = !item.path.hasPrefix("/Volumes/")
       let volume = { (free: UInt64?) in
         free.map {
@@ -337,6 +352,9 @@ final class RepeatCleanupModel: ObservableObject {
   private var checkedAt: Date?
   private var checkScope: CheckScope?
   private var fullCheckRequested = false
+  /// Folders removed while a check runs; that check measured them before removal, so its result
+  /// for them is dropped.
+  private var removedDuringCheck: Set<String> = []
 
   static let backThreshold: UInt64 = 1_024 * 1_024
 
@@ -393,12 +411,15 @@ final class RepeatCleanupModel: ObservableObject {
 
   func check(_ request: CheckRequest) {
     guard !isChecking else {
-      if request.scope == .all, checkScope == .overview { fullCheckRequested = true }
+      if request.force || (request.scope == .all && checkScope == .overview) {
+        fullCheckRequested = true
+      }
       return
     }
     if !request.force, let checkedAt, Date.now.timeIntervalSince(checkedAt) < 120 { return }
     isChecking = true
     checkScope = request.scope
+    removedDuringCheck = []
     let targets = entries.map(\.target).filter {
       request.scope == .all || $0.recipe != .pnpmPrune
     }
@@ -426,7 +447,9 @@ final class RepeatCleanupModel: ObservableObject {
           next += 1
         }
         for await (path, status) in group {
-          statuses[path] = status
+          if !removing.contains(path), !removedDuringCheck.contains(path) {
+            statuses[path] = status
+          }
           if next < targets.count {
             add(targets[next])
             next += 1
@@ -463,6 +486,7 @@ final class RepeatCleanupModel: ObservableObject {
           removed += 1
           if target.recipe != .pnpmPrune {
             statuses[target.path] = RegrowStatus(bytes: nil, blocker: nil)
+            if isChecking { removedDuringCheck.insert(target.path) }
           }
         } catch {
           failures[target.path] = error.localizedDescription
@@ -475,5 +499,14 @@ final class RepeatCleanupModel: ObservableObject {
         + (kept > 0 ? ". \(kept) kept; see the rows for why." : "")
       check(force: true)
     }
+  }
+}
+
+extension KeyedDecodingContainer {
+  /// A JSON number, or a string holding one; nil when absent or unreadable.
+  fileprivate func number(_ key: Key) -> Double? {
+    if let value = try? decodeIfPresent(Double.self, forKey: key) { return value }
+    if let text = try? decodeIfPresent(String.self, forKey: key) { return Double(text) }
+    return nil
   }
 }

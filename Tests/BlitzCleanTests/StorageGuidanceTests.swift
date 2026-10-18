@@ -82,7 +82,7 @@ struct StorageGuidanceTests {
     try Data("{}".utf8).write(to: project.appendingPathComponent("package-lock.json"))
     let path = try #require(ReviewFile.canonicalPath(root.path))
     let scanner = StorageBreakdownScanner(measure: { _ in .init(allocated: 4096, content: 10) })
-    let result = scanner.scan(.init(scope: .inventory, inventoryRoot: path, onUpdate: { _ in }))
+    let result = scanner.scan(.init(projectRoot: path, onUpdate: { _ in }))
     #expect(
       result.categories.allSatisfy {
         $0.items.allSatisfy { ReviewFile.canonicalPath($0.path)?.hasPrefix(path + "/") == true }
@@ -91,7 +91,6 @@ struct StorageGuidanceTests {
       result.categories.flatMap(\.items).first { $0.cleanupKind == .nodeModules })
     #expect(dependency.path.hasSuffix("/project/node_modules"))
     #expect(dependency.cleanupAvailability == .ready)
-    #expect(!result.categories.contains { $0.id == "computer-applications" })
   }
 
   @Test func generatedCleanupCannotExpandOutsideTheSelectedFolder() throws {
@@ -104,7 +103,7 @@ struct StorageGuidanceTests {
     try Data("{}".utf8).write(to: root.appendingPathComponent("package-lock.json"))
     let scanner = StorageBreakdownScanner(measure: { _ in .init(allocated: 4096, content: 10) })
     let result = scanner.scan(
-      .init(scope: .cleanup, inventoryRoot: selected.path, onUpdate: { _ in }))
+      .init(projectRoot: selected.path, onUpdate: { _ in }))
     #expect(result.categories.flatMap(\.items).isEmpty)
   }
 

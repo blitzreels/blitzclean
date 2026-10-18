@@ -118,7 +118,7 @@ enum CacheCleaner {
       guard info.st_uid == getuid() else { throw CacheCleanError.unverified }
       let type = info.st_mode & S_IFMT
       guard type == S_IFREG || type == S_IFDIR else { throw CacheCleanError.outsideRoot }
-      bytes += UInt64(max(0, info.st_blocks)) * 512
+      bytes += AllocatedSize.of(info)
       newest = max(newest, Date(timeIntervalSince1970: Double(info.st_mtimespec.tv_sec)))
       let identity =
         "\(path)|\(info.st_dev)|\(info.st_ino)|\(info.st_size)|\(info.st_mtimespec.tv_sec)|\(info.st_mtimespec.tv_nsec)|\(info.st_mode)\n"
@@ -220,7 +220,7 @@ enum CacheCleaner {
     }
     try validateLocation(candidate)
     let before = CleanupVolume.read(candidate.path)
-    try FileManager.default.removeItem(atPath: candidate.path)
+    try RemovalGate.remove(.init(path: candidate.path, expected: nil, method: .permanent))
     return .init(
       id: UUID().uuidString, date: .now, title: "Cleaned \(candidate.rule.title)",
       paths: [candidate.path],

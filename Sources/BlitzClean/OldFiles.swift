@@ -141,7 +141,7 @@ enum OldFileScanner {
     else { return .ineligible }
     var newest = input.request.usageDates(URL(fileURLWithPath: physical)).max() ?? .distantFuture
     guard newest < input.request.cutoff else { return .recent }
-    var bytes = UInt64(max(0, info.st_blocks)) * 512
+    var bytes = AllocatedSize.of(info)
     if type == S_IFDIR {
       guard
         let contents = folder(

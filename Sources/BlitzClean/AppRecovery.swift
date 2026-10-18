@@ -3,7 +3,7 @@ import ApplicationServices
 import Darwin
 import Foundation
 
-struct RecoveryProcess: Equatable, Sendable {
+struct RecoveryProcess: Codable, Equatable, Sendable {
   let processID: Int32
   let owner: UInt32
   let startSeconds: UInt64

@@ -37,6 +37,7 @@ final class MemoryRescueModel: NSObject, ObservableObject {
   @Published private(set) var candidates: [MemoryCandidate] = []
   @Published private(set) var sample: MemoryGuardSample?
   @Published private(set) var isRefreshing = false
+  private var refreshRequested = false
   @Published private(set) var actionProcessID: Int32?
   @Published private(set) var quitMessages: [Int32: String] = [:]
   @Published private(set) var statusMessage: String?
@@ -80,11 +81,8 @@ final class MemoryRescueModel: NSObject, ObservableObject {
     pressure = MemoryPressureReader().current()
     alertsEnabled = UserDefaults.standard.object(forKey: "memory.alertsEnabled") as? Bool ?? true
     diskAlertsEnabled = UserDefaults.standard.object(forKey: "disk.alertsEnabled") as? Bool ?? true
-    if let data = UserDefaults.standard.data(forKey: "memory.appPolicies"),
-      let saved = try? JSONDecoder().decode([String: MemoryAppPolicy].self, from: data)
-    {
-      policies = saved
-    }
+    policies =
+      SavedSettings.dictionary(.init(key: "memory.appPolicies", defaults: .standard)) ?? [:]
     super.init()
     NotificationCenter.default.addObserver(
       self, selector: #selector(persistHistoryNow),
@@ -112,7 +110,7 @@ final class MemoryRescueModel: NSObject, ObservableObject {
           ? .critical
           : source.data.contains(.warning) ? .warning : .normal
         self.sampleMemory(event: level)
-        self.refresh()
+        if !self.isRefreshing { self.refresh() }
       }
     }
     pressureSource = source
@@ -123,7 +121,9 @@ final class MemoryRescueModel: NSObject, ObservableObject {
         self.sampleMemory(event: nil)
         self.persistHistoryIfDue(urgent: false)
         let interval: TimeInterval = NSApp.isActive ? 15 : 30
-        if self.scannedAt.map({ Date.now.timeIntervalSince($0) >= interval }) ?? true {
+        if !self.isRefreshing,
+          self.scannedAt.map({ Date.now.timeIntervalSince($0) >= interval }) ?? true
+        {
           self.refresh()
         }
       }
@@ -133,7 +133,10 @@ final class MemoryRescueModel: NSObject, ObservableObject {
   }
 
   func refresh() {
-    guard !isRefreshing else { return }
+    guard !isRefreshing else {
+      refreshRequested = true
+      return
+    }
     isRefreshing = true
     let descriptors = appProvider.descriptors()
     let scanner = scanner
@@ -168,6 +171,10 @@ final class MemoryRescueModel: NSObject, ObservableObject {
       scannedAt = now
       isRefreshing = false
       updateCandidates()
+      if refreshRequested {
+        refreshRequested = false
+        refresh()
+      }
     }
   }
 

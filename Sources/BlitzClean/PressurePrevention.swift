@@ -159,12 +159,12 @@ enum ProjectPausePolicy {
     for expected in target.identities {
       guard let current = DevProcessIdentity.read(expected.process.processID),
         expected.matches(current),
-        current.process.owner == getuid(), current.process.processID > 1,
-        current.process.processID != getpid()
+        request.resume ? current.process.stopped : !current.process.stopped
       else { continue }
-      guard request.resume ? current.process.stopped : !current.process.stopped else { continue }
-      if kill(current.process.processID, request.resume ? SIGCONT : SIGSTOP) == 0 {
-        changed.append(current)
+      if case .sent(let signaled) = ProcessSignal.send(
+        .init(expected: expected, signal: request.resume ? SIGCONT : SIGSTOP))
+      {
+        changed.append(signaled)
       }
     }
     return changed.count
@@ -175,19 +175,9 @@ enum ProjectPausePolicy {
       Date.now.timeIntervalSince(target.capturedAt) < 20
     else { return 0 }
     var count = 0
-    for expected in target.identities {
-      guard let current = DevProcessIdentity.read(expected.process.processID),
-        expected.matches(current), current.process.owner == getuid(),
-        current.process.processID > 1, current.process.processID != getpid(),
-        kill(current.process.processID, SIGTERM) == 0
-      else { continue }
+    for expected in target.identities
+    where ProcessSignal.send(.init(expected: expected, signal: SIGTERM)).wasSent {
       count += 1
-      if current.process.stopped,
-        let stillCurrent = DevProcessIdentity.read(current.process.processID),
-        expected.matches(stillCurrent)
-      {
-        kill(stillCurrent.process.processID, SIGCONT)
-      }
     }
     return count
   }

@@ -127,13 +127,25 @@ Measured with `ps -o cputime` over 120 seconds, the dashboard window open behind
   Pressure protection still samples every 2 s; its UI updates only when the verdict changes or after 6 s.
 - In front, the project scan runs every 5 s (was 3 s).
 
+## One storage engine (October 18)
+
+The on-demand full inventory is gone: no screen showed its app, Library, system-folder and Spotlight results.
+Storage now has four views over one walker, `FileTree`, which stays on its volume and never follows links:
+
+- Drive groups the whole disk into units.
+- Browse and Largest files rank folders and files under any folder.
+- Cleanup measures dependency folders and the simulator cache.
+
+Hard-linked files count once per scan in every view, so a pnpm store has the same size in Drive and Browse.
+`du`, `mdfind` and per-category `du` passes no longer run. A folder with unreadable entries reports what was
+readable, marked partial, instead of no size.
+
 ## Repeat the measurements
 
 These opt-in tests read real machine data and are skipped in ordinary test runs:
 
 ```sh
 BLITZCLEAN_BENCHMARK=storage swift test -c release --filter PerformanceBenchmarks
-BLITZCLEAN_BENCHMARK=inventory swift test -c release --filter PerformanceBenchmarks
 BLITZCLEAN_BENCHMARK=fast swift test -c release --filter PerformanceBenchmarks
 BLITZCLEAN_BENCHMARK=audit swift test -c release --filter liveDashboardAudit
 ```

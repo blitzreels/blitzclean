@@ -96,8 +96,8 @@ struct BlitzStorageView: View {
   }
 
   private func openCleanup(_ route: StorageCleanupRoute) {
-    if let root = route.projectRoot, root != storage.inventoryRoot {
-      storage.selectInventoryRoot(root)
+    if let root = route.projectRoot, root != storage.projectRoot {
+      storage.selectProjectRoot(root)
     }
     storage.cleanupFocus = route.focus
     navigation.storagePage = .cleanup

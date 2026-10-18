@@ -221,7 +221,9 @@ enum LeftoverProcessStopper {
       parentProcessID(processID) == 1,
       !WorkspacePreferences.isKeptRunning(request.process.workingDirectory)
     else { return false }
-    return Darwin.kill(processID, request.force ? SIGKILL : SIGTERM) == 0
+    return ProcessSignal.send(
+      .init(expected: request.process.identity, signal: request.force ? SIGKILL : SIGTERM)
+    ).wasSent
   }
 
   static func isCurrent(_ request: LeftoverStopRequest) -> Bool {

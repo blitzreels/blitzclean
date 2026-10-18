@@ -439,7 +439,7 @@ struct BlitzSettingsView: View {
   private func setRoots(_ value: [String]) {
     roots = value
     UserDefaults.standard.set(value, forKey: "locations.projectRoots")
-    if !storage.isScanning { storage.scan() }
+    storage.scanCleanup()
   }
 
   var body: some View {

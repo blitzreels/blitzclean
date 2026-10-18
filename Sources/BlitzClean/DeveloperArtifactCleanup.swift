@@ -71,7 +71,7 @@ enum DeveloperArtifactCleanup {
         return failed(reason)
       }
       do {
-        try FileManager.default.removeItem(atPath: artifact.path)
+        try RemovalGate.remove(.init(path: artifact.path, expected: nil, method: .permanent))
         removed = true
       } catch { return failed("Could not remove this folder: \(error.localizedDescription)") }
     }

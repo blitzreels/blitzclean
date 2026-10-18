@@ -7,14 +7,19 @@ enum EmergencyControlsLauncher {
   private static var helper: Process?
   static let notification = Notification.Name("com.blitzreels.BlitzClean.emergency.show")
 
-  static func start() {
+  static func start() { start(showing: false) }
+
+  /// `showing` makes the helper open its panel as soon as it is ready, instead of waiting for a
+  /// notification it might not be listening for yet.
+  private static func start(showing: Bool) {
     guard helper?.isRunning != true, let executable = Bundle.main.executableURL else { return }
     let bundledHelper = Bundle.main.bundleURL.appendingPathComponent(
       "Contents/Helpers/BlitzClean Emergency.app/Contents/MacOS/BlitzRescue")
     let process = Process()
     process.executableURL =
       FileManager.default.isExecutableFile(atPath: bundledHelper.path) ? bundledHelper : executable
-    process.arguments = ["--emergency-controls", "--parent", String(getpid())]
+    process.arguments =
+      ["--emergency-controls", "--parent", String(getpid())] + (showing ? ["--show"] : [])
     process.standardInput = FileHandle.nullDevice
     process.standardOutput = FileHandle.nullDevice
     process.standardError = FileHandle.nullDevice
@@ -28,11 +33,7 @@ enum EmergencyControlsLauncher {
 
   static func open() {
     if helper?.isRunning != true {
-      start()
-      Task {
-        try? await Task.sleep(for: .milliseconds(500))
-        DistributedNotificationCenter.default().postNotificationName(notification, object: nil)
-      }
+      start(showing: true)
     } else {
       DistributedNotificationCenter.default().postNotificationName(notification, object: nil)
     }
@@ -100,7 +101,7 @@ final class EmergencyControls: NSObject, NSApplicationDelegate, NSTableViewDataS
           return
         }
         registerShortcut()
-        refresh()
+        if panel.isVisible { refresh() }
       }
     }
     refresh()
@@ -229,6 +230,8 @@ final class EmergencyControls: NSObject, NSApplicationDelegate, NSTableViewDataS
       table.reloadData()
       if let selected, let index = targets.firstIndex(where: { $0.id == selected }) {
         table.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
+      } else {
+        table.deselectAll(nil)
       }
       scanning = false
       if status.stringValue == "Reading local workloads…" {

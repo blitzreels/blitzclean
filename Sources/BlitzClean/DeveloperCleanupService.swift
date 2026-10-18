@@ -24,7 +24,7 @@ struct DeveloperCleanupService: Sendable {
 
   init(
     deleteItem: @escaping @Sendable (URL) throws -> Void = { url in
-      try FileManager.default.removeItem(at: url)
+      try RemovalGate.remove(.init(path: url.path, expected: nil, method: .permanent))
     }
   ) {
     self.deleteItem = deleteItem

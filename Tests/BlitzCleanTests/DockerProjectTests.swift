@@ -72,7 +72,7 @@ struct DockerProjectTests {
       .init(endpoint: "unix:///var/run/docker.sock", containers: [expected], start: false))
     #expect(result.contains("Stopped 1"))
     let commands = try String(contentsOf: log, encoding: .utf8)
-    #expect(commands.contains("stop --timeout -1 \(id)"))
+    #expect(commands.contains("stop --timeout 120 \(id)"))
     #expect(!commands.contains("prune"))
     #expect(!commands.contains(" rm "))
     let changed = DockerProjectContainer(

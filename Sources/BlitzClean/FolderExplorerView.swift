@@ -255,7 +255,7 @@ struct FolderExplorerView: View {
             fallback: entry.isDirectory ? "folder.fill" : "doc")
           VStack(alignment: .leading, spacing: 3) {
             Text(entry.name).font(BlitzType.rowTitle).lineLimit(1).truncationMode(.middle)
-            Text(guidance.caption(entry.path))
+            Text(RemovalGate.protection(entry.path) ?? guidance.caption(entry.path))
               .font(BlitzType.caption).foregroundStyle(BlitzUI.secondaryText).lineLimit(2)
           }.frame(maxWidth: .infinity, alignment: .leading)
           GeometryReader { geometry in

@@ -38,13 +38,21 @@ struct DockerProjectService: Sendable {
       .init(arguments: ["--host", endpoint, "ps", "--all", "--quiet", "--no-trunc"], timeout: 3)
     )
     .standardOutput.split(whereSeparator: \.isWhitespace).map(String.init)
-    guard ids.count <= 256, ids.allSatisfy(Self.validID) else {
+    guard ids.allSatisfy(Self.validID) else {
       throw DockerStorageError.invalidOutput
     }
-    let assignments =
+    let saved =
       UserDefaults.standard.dictionary(forKey: "docker.projectDirectories") as? [String: String]
       ?? [:]
-    let containers = try inspect(.init(endpoint: endpoint, ids: ids)).map { original in
+    let assignments = saved.filter { Set(ids).contains($0.key) }
+    if assignments.count != saved.count {
+      UserDefaults.standard.set(assignments, forKey: "docker.projectDirectories")
+    }
+    let batches = stride(from: 0, to: ids.count, by: 256).map {
+      Array(ids[$0..<min($0 + 256, ids.count)])
+    }
+    let inspected = try batches.flatMap { try inspect(.init(endpoint: endpoint, ids: $0)) }
+    let containers = inspected.map { original in
       var container = original
       container.assignedDirectory = assignments[container.id]
       return container
@@ -112,8 +120,8 @@ struct DockerProjectService: Sendable {
         .init(
           arguments: ["--host", endpoint]
             + (action.start
-              ? ["start", current.id] : ["stop", "--timeout", "-1", current.id]),
-          timeout: 12))
+              ? ["start", current.id] : ["stop", "--timeout", "120", current.id]),
+          timeout: action.start ? 12 : 135))
       let verified = try inspect(.init(endpoint: endpoint, ids: [current.id])).first
       guard verified?.running == action.start, verified?.paused == false else {
         throw DockerStorageError.commandFailed("Container state did not reach the requested state.")

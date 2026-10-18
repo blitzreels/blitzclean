@@ -17,7 +17,7 @@ struct AppRecoveryRefreshTests {
   @Test func cachedHealthyAppIsCheckedAgain() async throws {
     let driver = RefreshRecoveryDriver()
     let model = AppRecoveryModel(
-      driver: driver, defaults: UserDefaults(suiteName: UUID().uuidString)!)
+      driver: driver, defaults: TestDefaults("recovery-refresh").defaults)
     await model.scan([app])
     #expect(model.check(for: app)?.health == .responsive)
     await driver.set(.unresponsive)
@@ -30,7 +30,7 @@ struct AppRecoveryRefreshTests {
     let driver = RefreshRecoveryDriver()
     await driver.set(.stopped)
     let model = AppRecoveryModel(
-      driver: driver, defaults: UserDefaults(suiteName: UUID().uuidString)!)
+      driver: driver, defaults: TestDefaults("recovery-refresh").defaults)
     let report = try #require(await model.revive(app))
     #expect(report.outcome == .revived)
     await driver.set(.stopped)
@@ -44,7 +44,7 @@ struct AppRecoveryRefreshTests {
     let driver = RefreshRecoveryDriver()
     await driver.set(.stopped)
     let model = AppRecoveryModel(
-      driver: driver, defaults: UserDefaults(suiteName: UUID().uuidString)!)
+      driver: driver, defaults: TestDefaults("recovery-refresh").defaults)
     await model.noteProcessStates([app])
     #expect(model.attentionCount == 1)
     await driver.set(.responsive)
@@ -55,7 +55,7 @@ struct AppRecoveryRefreshTests {
   @Test func aNewStopCanBeRevivedImmediately() async throws {
     let driver = RefreshRecoveryDriver()
     let model = AppRecoveryModel(
-      driver: driver, defaults: UserDefaults(suiteName: UUID().uuidString)!)
+      driver: driver, defaults: TestDefaults("recovery-refresh").defaults)
     await driver.set(.stopped)
     _ = await model.revive(app)
     await driver.set(.stopped)
@@ -87,7 +87,7 @@ struct AppRecoveryRefreshTests {
     let driver = RefreshRecoveryDriver()
     await driver.delayChecks()
     let model = AppRecoveryModel(
-      driver: driver, defaults: UserDefaults(suiteName: UUID().uuidString)!)
+      driver: driver, defaults: TestDefaults("recovery-refresh").defaults)
     let first = Task { await model.scan([app]) }
     for _ in 0..<100 {
       if await driver.observations > 0 { break }

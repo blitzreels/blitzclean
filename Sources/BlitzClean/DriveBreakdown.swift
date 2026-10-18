@@ -577,7 +577,6 @@ struct DriveScanner: Sendable {
     private var bytes: [String: UInt64] = [:]
     private var folders: [String: Int] = [:]
     private var partial: Set<String> = []
-    private var linked: Set<String> = []
     private var visited = 0
     private var cancelled = false
 
@@ -620,12 +619,8 @@ struct DriveScanner: Sendable {
 
       mutating func add(_ entry: Entry) {
         guard let key = entry.key, let metadata = entry.metadata else { return }
-        if metadata.st_nlink > 1, metadata.st_mode & S_IFMT != S_IFDIR,
-          !entry.progress.firstLink("\(metadata.st_dev):\(metadata.st_ino)")
-        {
-          return
-        }
-        bytes[key, default: 0] += UInt64(max(0, metadata.st_blocks)) * 512
+        guard let counted = entry.progress.links.bytes(metadata) else { return }
+        bytes[key, default: 0] += counted
         visited += 1
       }
     }
@@ -639,12 +634,8 @@ struct DriveScanner: Sendable {
       visited += batch.visited
     }
 
-    /// True the first time a hard-linked file is seen, so pnpm stores and clones of links count once.
-    func firstLink(_ key: String) -> Bool {
-      lock.lock()
-      defer { lock.unlock() }
-      return linked.insert(key).inserted
-    }
+    /// Hard-linked files count once across every worker, so pnpm stores and link clones count once.
+    let links = HardLinkLedger()
   }
 
   private struct Work {
@@ -691,7 +682,7 @@ struct DriveScanner: Sendable {
           let key = catalog.unit(.init(path: path, name: name, inherited: item.inherited))
           queue.append(.init(path: path, inherited: key ?? item.inherited))
         } else if let key = catalog.unit(file: item.path, inherited: item.inherited) {
-          direct.bytes[key, default: 0] += UInt64(max(0, child.st_blocks)) * 512
+          direct.bytes[key, default: 0] += progress.links.bytes(child) ?? 0
           direct.visited += 1
         }
       }
@@ -730,37 +721,25 @@ struct DriveScanner: Sendable {
   }
 
   private func walk(_ input: WalkInput) {
-    let paths = UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>.allocate(capacity: 2)
-    paths.initialize(to: strdup(input.work.path))
-    paths.advanced(by: 1).initialize(to: nil)
-    defer {
-      free(paths.pointee)
-      paths.deinitialize(count: 2)
-      paths.deallocate()
-    }
-    guard let tree = fts_open(paths, FTS_PHYSICAL | FTS_NOCHDIR | FTS_XDEV, nil) else { return }
-    defer { fts_close(tree) }
+    guard let tree = FileTree(.init(path: input.work.path, needsMetadata: true)) else { return }
     var stack: [(level: Int, key: String?)] = [(-1, input.work.inherited)]
     var batch = Progress.Batch()
-    while let entry = fts_read(tree) {
-      let info = entry.pointee
-      let level = Int(info.fts_level)
-      let kind = Int32(info.fts_info)
+    while let entry = tree.next() {
+      let level = entry.level
+      let kind = entry.kind
       switch kind {
-      case FTS_D, FTS_DNR:
-        if kind == FTS_D, info.fts_statp?.pointee.st_dev != input.device {
-          fts_set(tree, entry, FTS_SKIP)
+      case .directory, .unreadableDirectory:
+        if kind == .directory, entry.metadata?.st_dev != input.device {
+          tree.skip(entry)
           continue
         }
-        let path = String(cString: info.fts_path)
+        let path = entry.path
         let inherited = stack.last?.key
         let key =
           level == 0
           ? input.work.inherited
-          : catalog.unit(
-            .init(path: path, name: (path as NSString).lastPathComponent, inherited: inherited))
-            ?? inherited
-        guard kind == FTS_D else {
+          : catalog.unit(.init(path: path, name: entry.name, inherited: inherited)) ?? inherited
+        guard kind == .directory else {
           if let key { batch.partial.insert(key) }
           continue
         }
@@ -769,14 +748,13 @@ struct DriveScanner: Sendable {
           batch.folders[key, default: 0] += 1
         }
         stack.append((level, key))
-        batch.add(.init(metadata: info.fts_statp?.pointee, key: key, progress: input.progress))
-      case FTS_DP:
+        batch.add(.init(metadata: entry.metadata, key: key, progress: input.progress))
+      case .directoryEnd:
         if stack.count > 1, stack.last?.level == level { stack.removeLast() }
-      case FTS_ERR, FTS_NS:
+      case .unreadable:
         if let key = stack.last?.key { batch.partial.insert(key) }
-      default:
-        batch.add(
-          .init(metadata: info.fts_statp?.pointee, key: stack.last?.key, progress: input.progress))
+      case .file, .other:
+        batch.add(.init(metadata: entry.metadata, key: stack.last?.key, progress: input.progress))
       }
       if batch.visited >= 4_096 {
         input.progress.merge(batch)

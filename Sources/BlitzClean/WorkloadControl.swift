@@ -80,17 +80,10 @@ enum WorkloadControl {
         else { continue }
         tracked[pid] = child
       }
-      for pid in ordered {
-        guard let expected = tracked[pid], let current = DevProcessIdentity.read(pid),
-          expected.matches(current), pid > 1, pid != getpid(), current.process.owner == getuid()
-        else { continue }
-        if !signaled.contains(pid), kill(pid, request.signal.value) == 0 {
+      for pid in ordered where !signaled.contains(pid) {
+        guard let expected = tracked[pid] else { continue }
+        if ProcessSignal.send(.init(expected: expected, signal: request.signal.value)).wasSent {
           signaled.insert(pid)
-          if request.signal == .quit, current.process.stopped,
-            let latest = DevProcessIdentity.read(pid), expected.matches(latest)
-          {
-            _ = kill(pid, SIGCONT)
-          }
         }
       }
       remaining =

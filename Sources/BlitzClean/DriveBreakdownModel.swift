@@ -55,7 +55,7 @@ final class DriveBreakdownModel: ObservableObject {
       let ticker = Task { @MainActor [weak self] in
         while !Task.isCancelled {
           try? await Task.sleep(for: .milliseconds(500))
-          guard let self, self.isScanning else { return }
+          guard let self, self.isScanning, self.progress === progress else { return }
           let snapshot = progress.snapshot
           self.visited = snapshot.visited
           if self.rank.isEmpty {
@@ -84,6 +84,7 @@ final class DriveBreakdownModel: ObservableObject {
     progress?.cancel()
     progress = nil
     isScanning = false
+    if rank.isEmpty { breakdown = nil }
   }
 
   private struct AssembleInput: Sendable {
@@ -333,7 +334,10 @@ enum DriveRemover {
           continue
         }
         do {
-          try FileManager.default.removeItem(atPath: path)
+          try RemovalGate.remove(
+            .init(
+              path: path, expected: .init(device: child.st_dev, inode: child.st_ino),
+              method: .permanent))
           outcome.removed.append(path)
         } catch {
           outcome.failed.append(path)
@@ -395,7 +399,7 @@ enum DriveRemover {
         continue
       }
       do {
-        try FileManager.default.removeItem(atPath: path)
+        try RemovalGate.remove(.init(path: path, expected: nil, method: .permanent))
         outcome.removed.append(path)
       } catch {
         outcome.failed.append(path)
@@ -516,6 +520,10 @@ enum DriveRemover {
     }
     if NSWorkspace.shared.runningApplications.contains(where: { $0.bundleURL?.path == path }) {
       outcome.note = "Quit \(unit.title) first, then delete it."
+      return outcome
+    }
+    do { try RemovalGate.check(.init(path: path, expected: nil, method: .trash)) } catch {
+      outcome.note = "\(unit.title) was kept: \(error.localizedDescription)"
       return outcome
     }
     let url = URL(fileURLWithPath: path)

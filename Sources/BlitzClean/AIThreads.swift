@@ -313,16 +313,9 @@ enum AIThreadStopper {
   static func signal(_ request: AIThreadStopRequest, _ signal: AIThreadSignal) -> Int {
     var signaled = 0
     for processID in request.thread.processIDs {
-      guard processID > 1, processID != getpid(), let expected = request.expected[processID],
-        let current = DevProcessIdentity.read(processID), expected.matches(current),
-        current.process.owner == getuid()
-      else { continue }
-      guard Darwin.kill(processID, signal.value) == 0 else { continue }
-      signaled += 1
-      if signal == .quit, current.process.stopped,
-        let latest = DevProcessIdentity.read(processID), expected.matches(latest)
-      {
-        _ = Darwin.kill(processID, SIGCONT)
+      guard let expected = request.expected[processID] else { continue }
+      if ProcessSignal.send(.init(expected: expected, signal: signal.value)).wasSent {
+        signaled += 1
       }
     }
     return signaled

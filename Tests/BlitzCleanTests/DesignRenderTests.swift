@@ -22,13 +22,13 @@ struct DesignRenderTests {
     monitor.refresh()
 
     let apps = memory.apps.filter(\.isRecoveryEligible).sorted { $0.memoryBytes > $1.memoryBytes }
-    let defaults = try #require(UserDefaults(suiteName: "design-render-\(UUID())"))
+    let defaults = TestDefaults("design-render").defaults
     let recovery = AppRecoveryModel(driver: RenderRecoveryDriver(apps: apps), defaults: defaults)
     await recovery.scan(apps)
     if apps.count > 3 { _ = await recovery.revive(apps[3]) }
     if apps.count > 4 { _ = await recovery.revive(apps[4]) }
 
-    let navigation = CleanNavigation(try #require(UserDefaults(suiteName: "nav-\(UUID())")))
+    let navigation = CleanNavigation(TestDefaults("navigation").defaults)
     let services = DashboardServices(
       recovery: recovery, permissions: PermissionsModel(), docker: DockerStorageModel(),
       folders: FolderExplorerModel(),
