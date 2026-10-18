@@ -269,7 +269,7 @@ struct MemoryControlView: View {
     }
   }
 
-  static func uptime(since date: Date, now: Date = .now) -> String {
+  nonisolated static func uptime(since date: Date, now: Date = .now) -> String {
     let minutes = max(0, Int(now.timeIntervalSince(date) / 60))
     if minutes < 60 { return "\(minutes)m" }
     if minutes < 24 * 60 { return "\(minutes / 60)h \(minutes % 60)m" }

@@ -95,13 +95,14 @@ final class EmergencyControls: NSObject, NSApplicationDelegate, NSTableViewDataS
     timer = Timer.scheduledTimer(withTimeInterval: 4, repeats: true) { [weak self] _ in
       Task { @MainActor [weak self] in
         guard let self else { return }
-        if let parent, DevProcessIdentity.read(parent.process.processID).map(parent.matches) != true
+        if let parent = self.parent,
+          DevProcessIdentity.read(parent.process.processID).map(parent.matches) != true
         {
           NSApp.terminate(nil)
           return
         }
-        registerShortcut()
-        if panel.isVisible { refresh() }
+        self.registerShortcut()
+        if self.panel.isVisible { self.refresh() }
       }
     }
     refresh()
