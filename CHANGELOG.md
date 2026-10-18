@@ -1,5 +1,44 @@
 # Changelog
 
+## 1.5.0 - 2026-10-18
+
+### Storage
+
+- Open Storage on Drive: the whole disk grouped into units such as Projects, iOS simulators, App data and Caches,
+  each with one action or a stated reason it stays. Browse and Cleanup sit beside it.
+- Cleanup lists old downloads and screenshots, and large personal files, with Move to Trash and Undo.
+- Drive, Browse, Largest files and Cleanup share one disk walker: sizes stay on their volume, hard-linked files
+  such as pnpm stores count once everywhere, and folders with unreadable entries show a partial size.
+- The unused full inventory scan, with its `du` and Spotlight passes, no longer runs.
+- Protected locations (home, standard folders, system and volume roots, Git history) say why they stay.
+
+### Memory and projects
+
+- Emergency controls open with Control–Option–Command–R in a separate process, even while the dashboard is busy.
+- Stop project dev servers together with their Docker containers; database volumes are kept, and each container
+  gets 120 seconds to shut down.
+- Fix a crash on the Memory page when two AI sessions shared an identifier.
+
+### Safety
+
+- Every removal passes one final check: plain absolute path, no linked parent, not a protected root, writable
+  volume, and the same file that was reviewed.
+- Every signal to a process checks the same PID, start time, executable and owner; Storage's Stop processes
+  now does too, so a reused PID is never stopped.
+- Commands run with a deadline and an output limit, and stop the processes they started on timeout.
+- Unreadable Keep running settings now block stopping and removal instead of turning protection off.
+- Emergency controls clear the selection when the selected workload exits, so Stop never acts on another row.
+
+### Reliability
+
+- Cleanup history that cannot be read is moved aside and new removals keep being recorded.
+- Agent cleanup reports skip only malformed entries and accept decimal or string numbers.
+- Browse resumes measuring after a removal; a stopped first Drive scan is not kept as a result;
+  trashed large files no longer return when a scan finishes; Stop and Remove again refresh correctly.
+- Recognise Claude Code installed under Application Support, and find session titles for accented folders.
+- Docker projects with more than 256 containers work.
+- Folder size caches are saved off the main thread.
+
 ## 1.4.0 - 2026-10-09
 
 ### Revive apps
