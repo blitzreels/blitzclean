@@ -2,7 +2,7 @@ import Foundation
 
 struct ResourceHistoryStore {
   let url: URL
-  static let maximumBytes = 512 * 1_024
+  static let maximumBytes = 1_024 * 1_024
 
   static var application: Self {
     .init(url: AppData.file("resource-history.json"))

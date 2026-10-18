@@ -184,10 +184,19 @@ struct MemoryIncident: Codable, Identifiable, Sendable {
 struct MemoryIncidentHistory: Codable, Sendable {
   private(set) var events: [MemoryIncident] = []
   static let capacity = 1_440
+  /// Routine samples keep their per-process breakdown for an hour; incidents keep it for a day.
+  static let detailedSeconds: TimeInterval = 3_600
+  static let maximumBytes = 2 * 1_024 * 1_024
 
   mutating func append(_ event: MemoryIncident) {
     events.append(event)
     events.removeAll { event.date.timeIntervalSince($0.date) > 86_400 }
+    for index in events.indices
+    where events[index].kind == "sample" && events[index].resources != nil
+      && event.date.timeIntervalSince(events[index].date) > Self.detailedSeconds
+    {
+      events[index].resources = nil
+    }
     if events.count > Self.capacity { events.removeFirst(events.count - Self.capacity) }
   }
 
@@ -215,10 +224,21 @@ actor MemoryIncidentStore {
   }
 
   func save(_ history: MemoryIncidentHistory) throws {
+    try Self.write(.init(history: history, url: url))
+  }
+
+  struct WriteInput {
+    let history: MemoryIncidentHistory
+    let url: URL
+  }
+
+  /// Synchronous so the last minutes survive a quit.
+  nonisolated static func write(_ input: WriteInput) throws {
     try FileManager.default.createDirectory(
-      at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-    let data = try history.boundedData(maximumBytes: 6 * 1_024 * 1_024)
-    try data.write(to: url, options: .atomic)
-    try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+      at: input.url.deletingLastPathComponent(), withIntermediateDirectories: true)
+    let data = try input.history.boundedData(maximumBytes: MemoryIncidentHistory.maximumBytes)
+    try data.write(to: input.url, options: .atomic)
+    try FileManager.default.setAttributes(
+      [.posixPermissions: 0o600], ofItemAtPath: input.url.path)
   }
 }

@@ -91,30 +91,45 @@ struct BlitzButtonStyle: ButtonStyle {
   }
 
   func makeBody(configuration: Configuration) -> some View {
-    configuration.label
-      .font(.system(size: BlitzControlMetrics.fontSize(controlSize), weight: .medium))
+    let shape = RoundedRectangle(cornerRadius: BlitzUI.controlRadius, style: .continuous)
+    let pressed = configuration.isPressed && isEnabled
+    let destructive = configuration.role == .destructive && emphasis != .accent
+    return configuration.label
+      .font(
+        .system(
+          size: BlitzControlMetrics.fontSize(controlSize),
+          weight: emphasis == .quiet ? .medium : .semibold)
+      )
       .lineLimit(1)
       .symbolRenderingMode(.monochrome)
-      .padding(.horizontal, BlitzControlMetrics.horizontalPadding(controlSize))
+      .padding(.horizontal, BlitzControlMetrics.horizontalPadding(controlSize) + 2)
       .padding(.vertical, 4)
       .frame(minHeight: BlitzControlMetrics.height(controlSize))
       .foregroundStyle(foreground(configuration.role))
-      .background(fill, in: RoundedRectangle(cornerRadius: BlitzUI.controlRadius))
+      .background(fill(destructive: destructive), in: shape)
       .overlay {
-        RoundedRectangle(cornerRadius: BlitzUI.controlRadius)
-          .strokeBorder(emphasis == .secondary ? BlitzUI.panelStroke : .clear, lineWidth: 1)
-          .allowsHitTesting(false)
+        shape.strokeBorder(border(destructive: destructive), lineWidth: 1).allowsHitTesting(false)
       }
-      .scaleEffect(configuration.isPressed && isEnabled ? 0.97 : 1)
+      .overlay(alignment: .top) {
+        if emphasis != .quiet {
+          Rectangle().fill(Color.white.opacity(emphasis == .accent ? 0.45 : 0.10))
+            .frame(height: 1).padding(.horizontal, BlitzUI.controlRadius - 2).padding(.top, 1)
+            .allowsHitTesting(false)
+        }
+      }
+      .shadow(color: glow, radius: isHovered && isEnabled ? 10 : 6, y: 2)
+      .shadow(color: .black.opacity(emphasis == .quiet ? 0 : 0.35), radius: 1, y: 1)
+      .scaleEffect(pressed ? 0.97 : 1)
       .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
-      .opacity(isEnabled ? (configuration.isPressed ? 0.88 : 1) : 0.4)
-      .contentShape(RoundedRectangle(cornerRadius: BlitzUI.controlRadius))
+      .animation(.easeOut(duration: 0.15), value: isHovered)
+      .opacity(isEnabled ? (pressed ? 0.9 : 1) : 0.4)
+      .contentShape(shape)
       .onHover { isHovered = $0 }
       .blitzPointingHand()
   }
 
   private func foreground(_ role: ButtonRole?) -> Color {
-    if role == .destructive, emphasis != .accent { return BlitzUI.recordRed }
+    if role == .destructive, emphasis != .accent { return Color(red: 1.0, green: 0.45, blue: 0.45) }
     switch emphasis {
     case .accent, .emphasized: return .black.opacity(0.88)
     case .secondary: return BlitzUI.primaryText
@@ -122,13 +137,46 @@ struct BlitzButtonStyle: ButtonStyle {
     }
   }
 
-  private var fill: Color {
-    let hovered = isHovered && isEnabled
+  private var glow: Color {
+    guard isEnabled else { return .clear }
     switch emphasis {
-    case .accent: return hovered ? BlitzUI.mint.opacity(0.9) : BlitzUI.mint
-    case .emphasized: return hovered ? .white : BlitzUI.primaryText
-    case .secondary: return hovered ? BlitzUI.hoverFill : BlitzUI.controlFill
-    case .quiet: return hovered ? BlitzUI.quietFill : .clear
+    case .accent: return BlitzUI.mint.opacity(isHovered ? 0.45 : 0.25)
+    default: return .clear
+    }
+  }
+
+  private func border(destructive: Bool) -> Color {
+    if emphasis == .quiet { return .clear }
+    if destructive { return BlitzUI.recordRed.opacity(0.35) }
+    switch emphasis {
+    case .accent: return Color.white.opacity(0.18)
+    case .emphasized: return Color.white.opacity(0.3)
+    default: return Color.white.opacity(isHovered && isEnabled ? 0.16 : 0.10)
+    }
+  }
+
+  private func fill(destructive: Bool) -> AnyShapeStyle {
+    let hovered = isHovered && isEnabled
+    if destructive, emphasis != .quiet {
+      return AnyShapeStyle(BlitzUI.recordRed.opacity(hovered ? 0.24 : 0.15))
+    }
+    switch emphasis {
+    case .accent:
+      let top = Color(red: 0.55, green: 1.0, blue: 0.82)
+      return AnyShapeStyle(
+        LinearGradient(
+          colors: hovered ? [top, BlitzUI.mint] : [top.opacity(0.95), BlitzUI.mint.opacity(0.92)],
+          startPoint: .top, endPoint: .bottom))
+    case .emphasized:
+      return AnyShapeStyle(hovered ? Color.white : BlitzUI.primaryText)
+    case .secondary:
+      return AnyShapeStyle(
+        LinearGradient(
+          colors: [
+            Color.white.opacity(hovered ? 0.16 : 0.11), Color.white.opacity(hovered ? 0.09 : 0.055),
+          ], startPoint: .top, endPoint: .bottom))
+    case .quiet:
+      return AnyShapeStyle(hovered ? BlitzUI.quietFill : Color.clear)
     }
   }
 }

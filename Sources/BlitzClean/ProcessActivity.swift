@@ -16,7 +16,8 @@ struct CPUProcessInput {
 
 enum CPUProcessRanking {
   static func ranked(_ input: CPUProcessInput) -> [CPUProcess] {
-    let records = Dictionary(uniqueKeysWithValues: input.records.map { ($0.processID, $0) })
+    let records = Dictionary(
+      input.records.map { ($0.processID, $0) }, uniquingKeysWith: { first, _ in first })
     return input.records.filter { $0.cpuPercent > 0 }.map { record in
       var current = record
       var visited: Set<Int32> = []
@@ -78,7 +79,7 @@ extension DevProcess {
   }
 }
 
-struct DevProcessIdentity: Equatable, Sendable {
+struct DevProcessIdentity: Codable, Equatable, Sendable {
   let process: RecoveryProcess
   let executable: String
 
@@ -111,12 +112,15 @@ enum DevProcessStopper {
     guard !WorkspacePreferences.isKeptRunning(target.workingDirectory) else {
       return "This project is set to Keep running. Unpin it in Projects before stopping a process."
     }
-    guard let expected = request.expected, let current = DevProcessIdentity.read(target.processID),
-      expected.matches(current), current.process.owner == getuid(), target.processID != getpid(),
-      target.processID > 1
-    else { return "\(target.name) exited or changed. Refresh before stopping it." }
-    guard Darwin.kill(target.processID, request.force ? SIGKILL : SIGTERM) == 0 else {
-      return "Could not stop \(target.name): \(String(cString: strerror(errno)))"
+    guard let expected = request.expected, expected.process.processID == target.processID else {
+      return "\(target.name) exited or changed. Refresh before stopping it."
+    }
+    switch ProcessSignal.send(.init(expected: expected, signal: request.force ? SIGKILL : SIGTERM))
+    {
+    case .sent: break
+    case .changed, .refused: return "\(target.name) exited or changed. Refresh before stopping it."
+    case .failed(let code):
+      return "Could not stop \(target.name): \(String(cString: strerror(code)))"
     }
     return request.force
       ? "Force quit requested for \(target.name)" : "Asked \(target.name) to stop"

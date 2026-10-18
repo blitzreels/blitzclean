@@ -210,8 +210,14 @@ struct CleanupOverviewTests {
     let invalid = Data("incomplete write".utf8)
     try invalid.write(to: fixture.configuration.store.url)
     model.record(win("local"))
-    #expect(try Data(contentsOf: fixture.configuration.store.url) == invalid)
-    #expect(model.historyError != nil)
+    let folder = fixture.configuration.store.url.deletingLastPathComponent()
+    let backup = try #require(
+      FileManager.default.contentsOfDirectory(atPath: folder.path).first {
+        $0.hasPrefix(fixture.configuration.store.url.lastPathComponent + ".unreadable-")
+      })
+    #expect(try Data(contentsOf: folder.appendingPathComponent(backup)) == invalid)
+    #expect(try fixture.configuration.store.load().wins.map(\.id) == ["local"])
+    #expect(model.historyError == nil)
     #expect(model.ledger.wins.map(\.id) == ["local"])
   }
 

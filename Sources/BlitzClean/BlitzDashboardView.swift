@@ -22,6 +22,24 @@ enum CleanPage: String, CaseIterable, Identifiable {
     }
   }
 
+  /// Filled glyph for the sidebar squircle.
+  var tileSymbol: String {
+    self == .recovery ? "waveform.path.ecg" : symbol + ".fill"
+  }
+
+  /// Sidebar squircle color, as System Settings colors each pane.
+  var color: Color {
+    switch self {
+    case .overview: Color(red: 0.36, green: 0.38, blue: 0.92)
+    case .memory: BlitzPalette.memory
+    case .cpu: BlitzPalette.cpu
+    case .storage: BlitzPalette.storage
+    case .recovery: BlitzPalette.apps
+    case .projects: Color(red: 0.18, green: 0.70, blue: 0.82)
+    case .settings: Color(white: 0.48)
+    }
+  }
+
   static let main: [Self] = [.overview, .memory, .cpu, .storage, .recovery, .projects]
 
   static func destination(for window: String) -> Self? {
@@ -46,16 +64,16 @@ enum CleanPage: String, CaseIterable, Identifiable {
 }
 
 enum CleanStoragePage: String, CaseIterable {
+  case drive = "Drive"
   case browse = "Browse"
-  case mac = "Inventory"
   case cleanup = "Cleanup"
 
   static func restored(_ value: String?) -> Self {
     switch value {
-    case "Mac": .mac
+    case "Mac", "Inventory": .drive
     case "Caches", "Dependencies": .cleanup
     case "Files & media", "Files": .browse
-    default: value.flatMap(Self.init(rawValue:)) ?? .browse
+    default: value.flatMap(Self.init(rawValue:)) ?? .drive
     }
   }
 }
@@ -92,7 +110,7 @@ final class CleanNavigation: ObservableObject {
   /// Opens the page that resolves the limiting resource.
   func review(_ pressure: PressureAssessment) {
     if pressure.limit == .disk {
-      storagePage = .cleanup
+      storagePage = .drive
       page = .storage
     } else {
       page = .projects
@@ -125,7 +143,7 @@ struct BlitzDashboardView: View {
     HStack(spacing: 0) {
       BlitzSidebar(
         navigation: navigation, recovery: services.recovery, memory: memory,
-        permissions: services.permissions)
+        permissions: services.permissions, monitor: monitor, processes: processes)
       Rectangle().fill(BlitzUI.separator).frame(width: 1)
       VStack(spacing: 0) {
         if navigation.page != .recovery {
@@ -166,9 +184,10 @@ struct BlitzDashboardView: View {
       BlitzOverviewView(
         monitor: monitor, memory: memory, repeats: storage.repeats, processes: processes,
         recovery: services.recovery, navigation: navigation, cleanup: cleanup,
-        history: storage.overview, storage: storage, docker: services.docker, audit: audit)
+        history: storage.overview, storage: storage, docker: services.docker, audit: audit,
+        drive: storage.drive, worktrees: developerBrowser)
     case .memory: MemoryControlView(monitor: monitor, model: memory, processes: processes)
-    case .cpu: CPUControlView(monitor: monitor)
+    case .cpu: CPUControlView(monitor: monitor, processes: processes, memory: memory)
     case .storage:
       BlitzStorageView(
         monitor: monitor, cleanup: cleanup, storage: storage, navigation: navigation,
@@ -192,7 +211,18 @@ private struct BlitzSidebar: View {
   @ObservedObject var recovery: AppRecoveryModel
   @ObservedObject var memory: MemoryRescueModel
   @ObservedObject var permissions: PermissionsModel
+  @ObservedObject var monitor: SystemMonitor
+  @ObservedObject var processes: DevProcessModel
   @AppStorage(PermissionSkips.key) private var skippedPermissions = ""
+
+  private var insights: [CleanPage: SidebarInsight] {
+    SidebarInsights.make(
+      .init(
+        snapshot: monitor.snapshot, memoryTone: memory.pressure.tone,
+        leads: SidebarInsights.latestLeads(monitor.resourceSamples), pressure: processes.pressure,
+        recoveryCount: recovery.attentionCount, projectProcesses: processes.processes,
+        leftoverCount: processes.leftovers.count))
+  }
 
   private var missingPermissions: Int {
     PermissionState(
@@ -208,11 +238,12 @@ private struct BlitzSidebar: View {
     VStack(alignment: .leading, spacing: 2) {
       Color.clear.frame(height: BlitzUI.toolbarHeight).contentShape(Rectangle())
         .blitzWindowDrag()
+      let insights = insights
       ForEach(Array(CleanPage.main.enumerated()), id: \.element) { index, page in
-        item(page, shortcut: index + 1)
+        item(page, shortcut: index + 1, insight: insights[page])
       }
       Spacer(minLength: 16)
-      item(.settings, shortcut: nil)
+      item(.settings, shortcut: nil, insight: nil)
     }
     .padding(.horizontal, 12)
     .padding(.bottom, 14)
@@ -223,29 +254,37 @@ private struct BlitzSidebar: View {
     .accessibilityLabel("App navigation")
   }
 
-  @ViewBuilder private func item(_ page: CleanPage, shortcut: Int?) -> some View {
+  @ViewBuilder private func item(
+    _ page: CleanPage, shortcut: Int?, insight: SidebarInsight?
+  ) -> some View {
     let selected = selection == page
     let button = Button {
-      if page == .storage { navigation.storagePage = .browse }
+      if page == .storage { navigation.storagePage = .drive }
       navigation.page = page
     } label: {
       HStack(spacing: 10) {
-        Image(systemName: page.symbol).symbolVariant(selected ? .fill : .none)
-          .font(.system(size: 14, weight: .medium)).frame(width: 20)
-          .foregroundStyle(selected ? BlitzUI.mint : BlitzUI.secondaryText)
-        Text(page.rawValue).font(BlitzType.callout).lineLimit(1)
+        BlitzColorTile(symbol: page.tileSymbol, color: page.color, size: 22)
+        VStack(alignment: .leading, spacing: 1) {
+          Text(page.rawValue).font(BlitzType.callout).lineLimit(1)
+          if let insight {
+            Text(insight.text).font(BlitzType.caption).monospacedDigit().lineLimit(1)
+              .foregroundStyle(insight.needsAttention ? insight.tone.color : BlitzUI.tertiaryText)
+              .contentTransition(.numericText())
+          }
+        }
         Spacer(minLength: 4)
-        if page == .recovery, recovery.attentionCount > 0 {
-          BlitzCountBadge(
-            count: recovery.attentionCount, label: "\(recovery.attentionCount) apps need attention")
+        if insight?.needsAttention == true {
+          Circle().fill(insight?.tone.color ?? BlitzUI.warning).frame(width: 7, height: 7)
+            .accessibilityHidden(true)
         }
         if page == .settings, missingPermissions > 0 {
           BlitzCountBadge(
             count: missingPermissions, label: "\(missingPermissions) permissions to allow")
         }
-      }.frame(maxWidth: .infinity, alignment: .leading)
+      }.frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, insight == nil ? 0 : 3)
     }
     .blitzButton(selected ? .secondary : .quiet)
+    .accessibilityValue(insight?.text ?? "")
     .accessibilityAddTraits(selected ? .isSelected : [])
     if let shortcut {
       button.keyboardShortcut(KeyEquivalent(Character("\(shortcut)")), modifiers: .command)

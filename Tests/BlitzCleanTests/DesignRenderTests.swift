@@ -22,13 +22,13 @@ struct DesignRenderTests {
     monitor.refresh()
 
     let apps = memory.apps.filter(\.isRecoveryEligible).sorted { $0.memoryBytes > $1.memoryBytes }
-    let defaults = try #require(UserDefaults(suiteName: "design-render-\(UUID())"))
+    let defaults = TestDefaults("design-render").defaults
     let recovery = AppRecoveryModel(driver: RenderRecoveryDriver(apps: apps), defaults: defaults)
     await recovery.scan(apps)
     if apps.count > 3 { _ = await recovery.revive(apps[3]) }
     if apps.count > 4 { _ = await recovery.revive(apps[4]) }
 
-    let navigation = CleanNavigation(try #require(UserDefaults(suiteName: "nav-\(UUID())")))
+    let navigation = CleanNavigation(TestDefaults("navigation").defaults)
     let services = DashboardServices(
       recovery: recovery, permissions: PermissionsModel(), docker: DockerStorageModel(),
       folders: FolderExplorerModel(),
@@ -51,23 +51,27 @@ struct DesignRenderTests {
     try await write(
       BlitzTrayView(
         monitor: monitor, memory: memory, recovery: recovery, navigation: navigation,
-        updates: AppUpdateController { _ in nil }),
-      to: directory.appendingPathComponent("Tray.png"), size: .init(width: 340, height: 640))
+        updates: AppUpdateController { _ in nil }, processes: processes),
+      to: directory.appendingPathComponent("Tray.png"), size: .init(width: 340, height: 820))
     let storage = StorageBreakdownModel()
     try await write(
       StorageCleanupView(
         storage: storage, caches: QuickCleanModel(), docker: DockerStorageModel(),
         worktrees: .init(
-          model: DeveloperBrowserModel(), processes: processes, workspaces: WorkspaceController())
+          model: DeveloperBrowserModel(), processes: processes, workspaces: WorkspaceController()),
+        onSearchDrives: {}
       )
       .background(BlitzUI.canvasBackground).environment(\.colorScheme, .dark),
       to: directory.appendingPathComponent("Storage cleanup.png"), wait: .seconds(20),
       size: .init(width: 1080, height: 2600))
     try await write(
-      MacStorageInventoryView(model: storage, onBrowse: { _ in })
-        .background(BlitzUI.canvasBackground).environment(\.colorScheme, .dark),
-      to: directory.appendingPathComponent("Storage inventory.png"),
-      size: .init(width: 1080, height: 1400))
+      DriveBreakdownView(
+        model: storage.drive, worktrees: DeveloperBrowserModel(), history: storage.overview,
+        onBrowse: { _ in }, onCleanup: { _ in }
+      )
+      .background(BlitzUI.canvasBackground).environment(\.colorScheme, .dark),
+      to: directory.appendingPathComponent("Storage drive.png"),
+      size: .init(width: 1080, height: 3600))
   }
 
   private func write(

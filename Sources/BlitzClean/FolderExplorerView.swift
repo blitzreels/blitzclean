@@ -4,7 +4,9 @@ import SwiftUI
 struct FolderExplorerView: View {
   @ObservedObject var model: FolderExplorerModel
   let onManageSimulators: () -> Void
+  let onCleanup: (StorageCleanupRoute) -> Void
   @State private var pendingTrash: [FolderEntry] = []
+  @State private var deletesPermanently = false
   @State private var visibleCount = 200
   @State private var largestFirst = true
   @State private var inspectedFile: FolderEntry?
@@ -77,8 +79,12 @@ struct FolderExplorerView: View {
           .font(BlitzType.caption).monospacedDigit()
           Spacer()
           if model.isTrashing { ProgressView().controlSize(.small) }
-          Button("Move to Trash…", role: .destructive) { pendingTrash = selected }
-            .blitzButton(.secondary).disabled(selected.isEmpty || model.isTrashing)
+          Button("Move to Trash…") { review(.init(items: selected, permanently: false)) }
+            .blitzButton(.quiet).disabled(selected.isEmpty || model.isTrashing)
+          Button("Delete permanently…", role: .destructive) {
+            review(.init(items: selected, permanently: true))
+          }
+          .blitzButton(.secondary).disabled(selected.isEmpty || model.isTrashing)
         }
       }.padding(.horizontal, BlitzUI.pagePadding).padding(.vertical, 12).background(
         BlitzUI.panelBackground)
@@ -89,23 +95,38 @@ struct FolderExplorerView: View {
       inspectedFile = nil
     }
     .onChange(of: model.query) { visibleCount = 200 }
-    .onDeleteCommand { pendingTrash = selected }
+    .onDeleteCommand { review(.init(items: selected, permanently: false)) }
     .safeAreaInset(edge: .bottom, spacing: 0) {
       if !pendingTrash.isEmpty {
+        let names = pendingTrash.prefix(4).map(\.name).joined(separator: ", ")
+        let size = ByteText.full(pendingTrash.compactMap(\.bytes).reduce(0, +))
+        let count = pendingTrash.count == 1 ? "this item" : "\(pendingTrash.count) items"
+        let owned = pendingTrash.contains { StorageGuidance.read($0.path).kind == .managed }
+        let ownership =
+          owned
+          ? "\nSome items belong to an app such as Codex, Claude or Docker; it can lose history or settings."
+          : ""
         BlitzConfirmation(
-          title: pendingTrash.count == 1
-            ? "Move this item to Trash?" : "Move \(pendingTrash.count) items to Trash?",
-          message: pendingTrash.prefix(4).map(\.name).joined(separator: ", ")
-            + "\nFolders include all their contents. Restore from Trash if needed; empty it to reclaim space.",
-          confirmTitle: "Move to Trash",
+          title: deletesPermanently ? "Permanently delete \(count)?" : "Move \(count) to Trash?",
+          message: names
+            + (deletesPermanently
+              ? "\n\(size) is deleted now, including everything inside folders. This cannot be undone."
+                + ownership
+              : "\nFolders include all their contents. Restore from Trash if needed; empty it to reclaim space."),
+          confirmTitle: deletesPermanently ? "Delete \(size)" : "Move to Trash",
           onConfirm: {
-            model.trash(pendingTrash)
+            model.remove(.init(items: pendingTrash, permanently: deletesPermanently))
             pendingTrash = []
             inspectedFile = nil
           },
           onCancel: { pendingTrash = [] })
       }
     }
+  }
+
+  private func review(_ removal: FolderExplorerModel.Removal) {
+    deletesPermanently = removal.permanently
+    pendingTrash = removal.items
   }
 
   private var toolbar: some View {
@@ -201,6 +222,7 @@ struct FolderExplorerView: View {
 
   private func entryRow(_ input: (entry: FolderEntry, maximumBytes: UInt64)) -> some View {
     let entry = input.entry
+    let guidance = StorageGuidance.read(entry.path)
     return HStack(spacing: 0) {
       Toggle(
         "Select \(entry.name)",
@@ -228,10 +250,14 @@ struct FolderExplorerView: View {
         }
       } label: {
         HStack(spacing: 12) {
-          Image(systemName: entry.isDirectory ? "folder.fill" : "doc")
-            .font(.system(size: 20)).foregroundStyle(BlitzUI.secondaryText).frame(width: 24)
-          Text(entry.name).font(BlitzType.rowTitle).lineLimit(1).truncationMode(.middle)
-            .frame(maxWidth: .infinity, alignment: .leading)
+          ApplicationIcon(
+            source: .storage(entry.path), size: 26,
+            fallback: entry.isDirectory ? "folder.fill" : "doc")
+          VStack(alignment: .leading, spacing: 3) {
+            Text(entry.name).font(BlitzType.rowTitle).lineLimit(1).truncationMode(.middle)
+            Text(RemovalGate.protection(entry.path) ?? guidance.caption(entry.path))
+              .font(BlitzType.caption).foregroundStyle(BlitzUI.secondaryText).lineLimit(2)
+          }.frame(maxWidth: .infinity, alignment: .leading)
           GeometryReader { geometry in
             let fraction =
               input.maximumBytes == 0
@@ -263,8 +289,14 @@ struct FolderExplorerView: View {
     .contextMenu {
       if entry.isDirectory { Button("Open folder") { model.open(entry.path) } }
       Button("Show in Finder") { model.reveal(entry) }
+      if let focus = guidance.cleanup {
+        Button("Review cleanup") { onCleanup(.init(focus: focus, path: entry.path)) }
+      }
       if model.canTrash(entry) {
-        Button("Move to Trash…", role: .destructive) { pendingTrash = [entry] }
+        Button("Move to Trash…") { review(.init(items: [entry], permanently: false)) }
+        Button("Delete permanently…", role: .destructive) {
+          review(.init(items: [entry], permanently: true))
+        }
       }
     }
   }

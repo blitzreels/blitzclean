@@ -5,16 +5,14 @@ import Testing
 
 @MainActor
 struct PersistenceRegressionTests {
-  @Test func storageDefaultsToBrowseWithoutASeparateFilesTab() throws {
-    #expect(CleanStoragePage.restored(nil) == .browse)
-    #expect(CleanStoragePage.allCases.first == .browse)
+  @Test func storageDefaultsToDriveWithoutASeparateFilesTab() throws {
+    #expect(CleanStoragePage.restored(nil) == .drive)
+    #expect(CleanStoragePage.allCases.first == .drive)
     #expect(!CleanStoragePage.allCases.contains { $0.rawValue == "Files" })
   }
 
   @Test func relaunchRestoresNavigation() throws {
-    let suite = UUID().uuidString
-    let defaults = try #require(UserDefaults(suiteName: suite))
-    defer { defaults.removePersistentDomain(forName: suite) }
+    let defaults = TestDefaults("navigation").defaults
     let first = CleanNavigation(defaults)
     first.page = .storage
     first.storagePage = .browse
@@ -24,9 +22,7 @@ struct PersistenceRegressionTests {
   }
 
   @Test func removedDeveloperDestinationMigratesOnlyOnce() throws {
-    let suite = UUID().uuidString
-    let defaults = try #require(UserDefaults(suiteName: suite))
-    defer { defaults.removePersistentDomain(forName: suite) }
+    let defaults = TestDefaults("navigation").defaults
     defaults.set("Developer storage", forKey: "navigation.page")
     defaults.set("Dependencies", forKey: "navigation.storagePage")
     let migrated = CleanNavigation(defaults)
@@ -40,11 +36,9 @@ struct PersistenceRegressionTests {
   }
 
   @Test func legacyStorageChoicesKeepTheirTask() throws {
-    let suite = UUID().uuidString
-    let defaults = try #require(UserDefaults(suiteName: suite))
-    defer { defaults.removePersistentDomain(forName: suite) }
+    let defaults = TestDefaults("navigation").defaults
     let choices: [String: CleanStoragePage] = [
-      "Mac": .mac, "Caches": .cleanup, "Dependencies": .cleanup,
+      "Mac": .drive, "Inventory": .drive, "Caches": .cleanup, "Dependencies": .cleanup,
       "Files & media": .browse, "Files": .browse,
     ]
     for (saved, expected) in choices {

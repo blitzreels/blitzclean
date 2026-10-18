@@ -14,6 +14,7 @@ final class DeveloperBrowserModel: ObservableObject {
   @Published private(set) var selectedFolder: String?
   private var scanTask: Task<Void, Never>?
   private var pending: [DeveloperArtifact] = []
+  private var forced: Set<String> = []
   private var deleteTask: Task<Void, Never>?
 
   func loadIfNeeded() {
@@ -68,7 +69,7 @@ final class DeveloperBrowserModel: ObservableObject {
                 ?? (internalVolume ? nil : "On an external drive. Review it in Finder."),
               identity: assessment.identity, worktree: assessment, reinstallCommand: nil,
               internalVolume: internalVolume))
-          await self?.publish(allArtifacts)
+          await self?.publishProgress(allArtifacts)
         }
       }
       await self?.finish(
@@ -79,6 +80,11 @@ final class DeveloperBrowserModel: ObservableObject {
   }
 
   private func setProgress(_ value: String) { progress = value }
+
+  /// Partial results replace the list only on the first scan; a rescan keeps the old list until it finishes.
+  private func publishProgress(_ values: [DeveloperArtifact]) {
+    if scannedAt == nil { publish(values) }
+  }
 
   private func publish(_ values: [DeveloperArtifact]) {
     artifacts = values.sorted { ($0.bytes ?? 0) > ($1.bytes ?? 0) }
@@ -104,15 +110,20 @@ final class DeveloperBrowserModel: ObservableObject {
   struct Removal {
     let artifact: DeveloperArtifact
     let history: CleanupOverviewModel
+    /// Removes a worktree despite local-only blockers such as uncommitted or ignored files.
+    let force: Bool
   }
 
   func remove(_ request: Removal) {
     let artifact = request.artifact
-    guard artifact.blocker == nil, !deleting.contains(artifact.id) else { return }
+    let allowed =
+      artifact.blocker == nil || (request.force && DeveloperArtifactCleanup.canForce(artifact))
+    guard allowed, !deleting.contains(artifact.id) else { return }
     if isScanning { scanTask?.cancel() }
     deleting.insert(artifact.id)
     messages.removeValue(forKey: artifact.id)
     pending.append(artifact)
+    if request.force { forced.insert(artifact.id) }
     guard deleteTask == nil else { return }
     deleteTask = Task { [weak self] in
       guard let self else { return }
@@ -120,8 +131,11 @@ final class DeveloperBrowserModel: ObservableObject {
         while isScanning { try? await Task.sleep(for: .milliseconds(100)) }
         let next = pending.removeFirst()
         messages[next.id] = "Verifying and removing…"
+        let force = forced.remove(next.id) != nil
         let outcome = await Task.detached(priority: .utility) {
-          DeveloperArtifactCleanup.remove(next)
+          force
+            ? DeveloperArtifactCleanup.forceRemoveWorktree(next)
+            : DeveloperArtifactCleanup.remove(next)
         }.value
         deleting.remove(next.id)
         if outcome.removed {

@@ -57,14 +57,14 @@ struct PerformanceBenchmarks {
   @Test func liveReadOnlyScans() throws {
     guard let mode = ProcessInfo.processInfo.environment["BLITZCLEAN_BENCHMARK"] else { return }
     guard mode != "audit" else { return }
-    if mode == "storage" || mode == "inventory" {
+    if mode == "storage" {
       let start = Date.now
       let result = StorageBreakdownScanner(timing: { timing in
         print("BENCH \(timing.stage): \(timing.seconds)s")
         fflush(stdout)
       }).scan(
         .init(
-          scope: mode == "inventory" ? .inventory : .cleanup,
+          projectRoot: nil,
           onUpdate: { update in
             let label: String
             switch update {
@@ -76,11 +76,7 @@ struct PerformanceBenchmarks {
           }))
       let elapsed = Date.now.timeIntervalSince(start)
       print("BENCH storage total: \(elapsed)s; \(result.categories.count) categories")
-      if mode == "storage" {
-        #expect(elapsed < 25, "Cleanup scan exceeds the 25-second local scan budget")
-        #expect(
-          !result.categories.contains { $0.id.hasPrefix("computer-") || $0.id == "large-files" })
-      }
+      #expect(elapsed < 25, "Cleanup scan exceeds the 25-second local scan budget")
     } else {
       for iteration in 1...3 {
         var start = Date.now

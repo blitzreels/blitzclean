@@ -40,6 +40,7 @@ struct MemoryProcessTests {
   private func row(_ input: Input) -> ResourceProcess {
     .init(
       processID: input.pid, parentProcessID: 1, name: "Helper", owner: "Browser",
-      directory: "/dev/project", memoryBytes: input.bytes, cpuPercent: 0, isTool: false)
+      directory: "/dev/project", memoryBytes: input.bytes, cpuPercent: 0, isTool: false,
+      executable: "/usr/local/bin/node")
   }
 }

@@ -197,8 +197,9 @@ struct FolderExplorerCacheTests {
     let store: FolderSizeCache
 
     init() throws {
-      suite = "BlitzClean-cache-test-\(UUID())"
-      store = FolderSizeCache(defaults: try #require(UserDefaults(suiteName: suite)))
+      let temporary = TestDefaults("folder-cache")
+      suite = temporary.suite
+      store = FolderSizeCache(defaults: temporary.defaults)
       let directory = FileManager.default.temporaryDirectory
         .appendingPathComponent(suite)
       try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

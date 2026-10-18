@@ -8,61 +8,88 @@ struct MemoryControlView: View {
   @AppStorage("history.memorySeconds") private var seconds = 86_400.0
   @State private var query = ""
   @State private var listingMode = MemoryListingMode.apps
-  @State private var showsAllThreads = false
-  @State private var pending: MemoryAction?
+  @State private var showsAll = false
+  @State private var pending: PendingProcessAction?
   @State private var appResult: String?
   @StateObject private var forceQuit = ForceQuitModel()
 
-  private static let threadLimit = 6
+  private static let rowLimit = 10
 
-  /// Filtered and sorted once per render; sections read these instead of refiltering.
-  private struct Listing {
-    let threads: [AIThread]
-    let apps: [MemoryCandidate]
-    let codexThreadsByApp: [String: Int]
-  }
+  private var commands: ConsumerCommands { .init(processes: processes, memory: model) }
 
-  private var listing: Listing {
-    let threads = query.isEmpty ? processes.threads : processes.threads.filter { $0.matches(query) }
-    let apps = model.candidates
-      .filter { query.isEmpty || $0.app.name.localizedCaseInsensitiveContains(query) }
-      .sorted { $0.app.memoryBytes > $1.app.memoryBytes }
-    var codex: [String: Int] = [:]
-    for thread in processes.threads where thread.tool == .codexDesktop {
-      if let name = thread.tool.appName { codex[name, default: 0] += 1 }
+  private var consumers: [ResourceConsumer] {
+    let all = processes.consumers.sorted { $0.memoryBytes > $1.memoryBytes }
+    guard !query.isEmpty else { return all }
+    let threads = processes.threadsByID
+    return all.filter { consumer in
+      consumer.name.localizedCaseInsensitiveContains(query)
+        || consumer.directory?.localizedCaseInsensitiveContains(query) == true
+        || consumer.threadID.flatMap { threads[$0] }?.matches(query) == true
     }
-    return Listing(threads: threads, apps: apps, codexThreadsByApp: codex)
   }
 
   var body: some View {
-    let listing = listing
+    let consumers = consumers
+    let idle = FreeMemoryPlan.idle(
+      .init(
+        consumers: processes.consumers, activity: processes.activity,
+        quittableApps: commands.quittableApps, now: .now))
     return ScrollView {
       VStack(alignment: .leading, spacing: 24) {
-        summaryCard
-        BlitzSegmentedPicker(
-          title: "Memory breakdown", options: MemoryListingMode.allCases,
-          selection: $listingMode, label: { $0.rawValue }
-        )
-        .frame(maxWidth: 280)
+        ResourceVerdictCard(
+          verdict: verdict(idle), symbol: "memorychip.fill", color: BlitzPalette.memory,
+          message: appResult ?? processes.threadMessage
+            ?? processes.consumerMessage ?? model.statusMessage
+        ) {
+          VStack(spacing: 14) {
+            HStack {
+              Spacer()
+              HistoryRangePicker(seconds: $seconds)
+            }
+            ResourcePlot(
+              samples: monitor.resourceSamples, kind: .memory, color: BlitzPalette.memory,
+              seconds: seconds
+            ).frame(height: 90)
+            HStack(spacing: 24) {
+              stat("Free", ByteText.compact(monitor.snapshot.ramAvailable))
+              stat("On disk (swap)", model.sample?.swapUsed.map(ByteText.compact) ?? "—")
+              stat("Compressed", model.sample.map { ByteText.compact($0.compressed) } ?? "—")
+            }
+          }
+        }
+        HStack {
+          BlitzSegmentedPicker(
+            title: "Memory breakdown", options: MemoryListingMode.allCases,
+            selection: $listingMode, label: { $0.rawValue }
+          ).frame(maxWidth: 280)
+          Spacer()
+          detachedButton
+        }
         if listingMode == .processes {
           MemoryProcessesView(
             processes: processes.resources, isLoading: processes.scannedAt == nil,
             query: query, scanMessage: processes.statusMessage)
         } else {
-          if query.isEmpty || !listing.threads.isEmpty { threadSection(listing.threads) }
-          if query.isEmpty || !listing.apps.isEmpty { appSection(listing) }
-          if !query.isEmpty && listing.apps.isEmpty && listing.threads.isEmpty {
-            Text("No matching apps or threads").font(BlitzType.body)
-              .foregroundStyle(BlitzUI.secondaryText)
-          }
+          consumerList(consumers)
         }
+        ResourceLeadersSection(
+          samples: monitor.resourceSamples, kind: .memory, seconds: seconds, limit: 3,
+          action: { leader in
+            let commands = commands
+            guard
+              let consumer = processes.consumers.first(where: {
+                $0.name == leader.name && commands.canStop($0) && !$0.isPaused
+              })
+            else { return nil }
+            return .init(title: commands.stopTitle(consumer)) { commands.stop(consumer) }
+          })
         pressureSection
       }.padding(BlitzUI.pagePadding)
     }
     .safeAreaInset(edge: .top, spacing: 0) {
       PageSearchBar(
         title: listingMode == .processes
-          ? "Search processes, apps or PID" : "Search apps or AI threads",
+          ? "Search processes, apps or PID" : "Search apps, AI sessions or projects",
         text: $query)
     }
     .task {
@@ -75,8 +102,139 @@ struct MemoryControlView: View {
           title: action.title, message: action.message, confirmTitle: action.confirmTitle,
           onConfirm: {
             pending = nil
-            run(action)
+            action.perform()
           }, onCancel: { pending = nil })
+      }
+    }
+  }
+
+  // MARK: Verdict
+
+  private func verdict(_ idle: [ResourceConsumer]) -> ResourceVerdict {
+    let snapshot = monitor.snapshot
+    let swap = model.sample?.swapUsed ?? 0
+    let risk = processes.pressure.risk
+    let gib: UInt64 = 1_024 * 1_024 * 1_024
+    let title =
+      switch risk {
+      case .normal: "Memory is fine"
+      case .growing: "Memory use is rising"
+      case .warning: "Memory is short"
+      case .critical: "Memory is critically short"
+      }
+    var summary =
+      "\(ByteText.compact(snapshot.ramUsed)) of \(ByteText.compact(snapshot.ramTotal)) in use · \(ByteText.compact(snapshot.ramAvailable)) free"
+    if swap >= gib { summary += " · \(ByteText.compact(swap)) moved to disk" }
+    let explanation: String? =
+      if risk >= .warning {
+        "macOS is moving memory to disk, which slows every app. Close what you are not using."
+      } else if swap >= snapshot.ramTotal / 4, swap >= 4 * gib {
+        "\(ByteText.compact(swap)) is still on disk from earlier. It drains as memory frees up; a restart clears it at once."
+      } else { nil }
+    let commands = commands
+    if let first = idle.first {
+      let total = idle.reduce(0) { $0 + $1.memoryBytes }
+      let idleFor = processes.activity.idle(.init(id: first.id, now: .now))
+      return ResourceVerdict(
+        title: title, tone: tone(risk), summary: summary, explanation: explanation,
+        recommendation:
+          "\(first.name) has been idle \(ResourceLeadersSection.duration(idleFor)) and holds \(ByteText.compact(first.memoryBytes)).",
+        primary: .init(title: "\(commands.stopTitle(first)) \(short(first.name))") {
+          commands.stop(first)
+        },
+        secondary: idle.count > 1
+          ? .init(title: "Free \(ByteText.compact(total))") {
+            pending = .init(
+              title: "Stop \(idle.count) idle items?",
+              message: idle.map { "\($0.name) · \(ByteText.compact($0.memoryBytes))" }.joined(
+                separator: "\n")
+                + "\n\nNone of these used the CPU in the last 30 minutes. Apps are asked to quit, so their save dialogs can still appear.",
+              confirmTitle: "Free \(ByteText.compact(total))",
+              perform: { commands.stopAll(idle) })
+          } : nil)
+    }
+    if risk >= .warning,
+      let top = processes.consumers.first(where: { commands.canStop($0) && !$0.isPaused })
+    {
+      return ResourceVerdict(
+        title: title, tone: tone(risk), summary: summary, explanation: explanation,
+        recommendation:
+          "\(top.name) uses the most memory: \(ByteText.compact(top.memoryBytes)).",
+        primary: .init(title: "\(commands.stopTitle(top)) \(short(top.name))") {
+          commands.stop(top)
+        }, secondary: nil)
+    }
+    return ResourceVerdict(
+      title: title, tone: tone(risk), summary: summary, explanation: explanation,
+      recommendation: nil, primary: nil, secondary: nil)
+  }
+
+  private func tone(_ risk: MemoryRisk) -> BlitzStatusTone {
+    switch risk {
+    case .normal: .good
+    case .growing: .working
+    case .warning: .warning
+    case .critical: .critical
+    }
+  }
+
+  private func short(_ name: String) -> String {
+    name.count > 22 ? String(name.prefix(21)) + "…" : name
+  }
+
+  private func stat(_ title: String, _ value: String) -> some View {
+    HStack {
+      Text(title).font(BlitzType.body).foregroundStyle(BlitzUI.secondaryText)
+      Spacer()
+      Text(value).font(BlitzType.label).monospacedDigit()
+    }.frame(maxWidth: .infinity, alignment: .leading)
+  }
+
+  // MARK: List
+
+  @ViewBuilder private var detachedButton: some View {
+    let detached = processes.threads.filter { $0.isDetached && !$0.isPaused }
+    if !detached.isEmpty {
+      Button("Quit \(detached.count) detached…") {
+        pending = .init(
+          title: "Quit \(detached.count) detached AI agents?",
+          message:
+            "Their app or terminal already closed, so nothing is using them. \(detached.map { $0.project ?? $0.name }.joined(separator: ", ")) · \(ByteText.full(detached.reduce(0) { $0 + $1.memoryBytes })).",
+          confirmTitle: "Quit detached",
+          perform: { for thread in detached { processes.stopThread(thread, force: false) } })
+      }.blitzButton(.secondary).controlSize(.small)
+        .help("Agents whose app or terminal already closed")
+    }
+  }
+
+  private func consumerList(_ consumers: [ResourceConsumer]) -> some View {
+    let visible =
+      showsAll || !query.isEmpty ? consumers : Array(consumers.prefix(Self.rowLimit))
+    let threads = processes.threadsByID
+    return VStack(alignment: .leading, spacing: 10) {
+      BlitzSectionHeader(title: "Using memory", count: consumers.count) {
+        Text("Helpers count toward their app").font(BlitzType.caption)
+          .foregroundStyle(BlitzUI.tertiaryText)
+      }
+      LazyVStack(spacing: 0) {
+        if consumers.isEmpty {
+          BlitzEmptyRow(
+            text: processes.scannedAt == nil
+              ? "Reading what uses memory…" : query.isEmpty ? "Nothing to show" : "No matches",
+            isLoading: processes.scannedAt == nil)
+        }
+        ForEach(visible) { consumer in
+          ConsumerRow(
+            consumer: consumer, metric: .memory, commands: commands,
+            activity: processes.activity,
+            isBackground: processes.backgrounded.contains(consumer.id),
+            thread: consumer.threadID.flatMap { threads[$0] },
+            onConfirm: { pending = $0 }, onForceQuitApp: forceQuitApp)
+          if consumer.id != visible.last?.id { BlitzRowDivider(leading: 56) }
+        }
+      }.blitzTable()
+      if consumers.count > Self.rowLimit, query.isEmpty {
+        BlitzShowAllButton(total: consumers.count, noun: "items", isExpanded: $showsAll)
       }
     }
   }
@@ -111,249 +269,24 @@ struct MemoryControlView: View {
     }
   }
 
-  private var summaryCard: some View {
-    VStack(spacing: 16) {
-      HStack(alignment: .firstTextBaseline, spacing: 8) {
-        Text(ByteText.full(monitor.snapshot.ramUsed)).font(BlitzUI.valueFont).monospacedDigit()
-        Text("of \(ByteText.full(monitor.snapshot.ramTotal)) used")
-          .foregroundStyle(BlitzUI.secondaryText).font(BlitzType.body)
-        Spacer()
-        HistoryRangePicker(seconds: $seconds)
-      }
-      ResourcePlot(
-        samples: monitor.resourceSamples, kind: .memory, color: BlitzUI.mint, seconds: seconds
-      ).frame(height: 100)
-      HStack(spacing: 24) {
-        stat("Available", ByteText.compact(monitor.snapshot.ramAvailable))
-        stat("Swap", model.sample?.swapUsed.map(ByteText.compact) ?? "—")
-        stat("Pressure", model.pressure.title)
-        stat("AI threads", ByteText.compact(processes.threads.reduce(0) { $0 + $1.memoryBytes }))
-      }
-    }.panelCard(padding: 20)
-  }
-
-  private func stat(_ title: String, _ value: String) -> some View {
-    HStack {
-      Text(title).font(BlitzType.body).foregroundStyle(BlitzUI.secondaryText)
-      Spacer()
-      Text(value).font(BlitzType.label).monospacedDigit()
-    }.frame(maxWidth: .infinity, alignment: .leading)
-  }
-
-  // MARK: AI threads
-
-  private func threadSection(_ threads: [AIThread]) -> some View {
-    let visible =
-      showsAllThreads || !query.isEmpty ? threads : Array(threads.prefix(Self.threadLimit))
-    let detached = threads.filter(\.isDetached)
-    let running = processes.threads.filter { !$0.isPaused }
-      .sorted { $0.memoryBytes > $1.memoryBytes }
-    let stopping = !processes.stoppingThreads.isEmpty
-    return VStack(alignment: .leading, spacing: 10) {
-      BlitzSectionHeader(title: "AI threads", count: threads.count) {
-        if !detached.isEmpty {
-          Button("Quit \(detached.count) detached…") {
-            pending = .quitThreads(detached)
-          }.blitzButton(.secondary).controlSize(.small).disabled(stopping)
-            .help("Agents whose app or terminal already closed")
-        }
-        if running.count > 1 {
-          Button("Pause \(running.count - 1) others") {
-            for thread in running.dropFirst() { processes.pauseThread(thread) }
-          }.blitzButton(.secondary).controlSize(.small).disabled(stopping)
-            .help("Keeps the largest thread running. Paused threads keep their RAM.")
-        }
-      }
-      if let message = processes.threadMessage {
-        BlitzStatusLine(text: message, tone: .working)
-      }
-      LazyVStack(spacing: 0) {
-        if threads.isEmpty {
-          BlitzEmptyRow(
-            text: processes.scannedAt == nil
-              ? "Reading AI processes…"
-              : query.isEmpty ? "No AI threads running" : "No matching threads",
-            isLoading: processes.scannedAt == nil)
-        }
-        ForEach(visible) { thread in
-          threadRow(thread)
-          if thread.id != visible.last?.id { BlitzRowDivider(leading: 56) }
-        }
-      }.blitzTable()
-      if threads.count > Self.threadLimit, query.isEmpty {
-        BlitzShowAllButton(total: threads.count, noun: "threads", isExpanded: $showsAllThreads)
-      }
-    }
-  }
-
-  private func threadRow(_ thread: AIThread) -> some View {
-    AIThreadRow(
-      thread: thread, isBusy: processes.stoppingThreads.contains(thread.id),
-      onPause: { processes.pauseThread(thread) },
-      onResume: { processes.resumeThread(thread) },
-      onQuit: { processes.stopThread(thread, force: false) },
-      onForceQuit: { pending = .forceQuitThread(thread) })
-  }
-
-  static func uptime(since date: Date, now: Date = .now) -> String {
+  nonisolated static func uptime(since date: Date, now: Date = .now) -> String {
     let minutes = max(0, Int(now.timeIntervalSince(date) / 60))
     if minutes < 60 { return "\(minutes)m" }
     if minutes < 24 * 60 { return "\(minutes / 60)h \(minutes % 60)m" }
     return "\(minutes / (24 * 60))d \(minutes / 60 % 24)h"
   }
 
-  // MARK: Apps
-
-  private func appSection(_ listing: Listing) -> some View {
-    let apps = listing.apps
-    let lastID = apps.last?.id
-    return VStack(alignment: .leading, spacing: 10) {
-      BlitzSectionHeader(title: "Apps", count: apps.count) {
-        Text("Memory includes helpers").font(BlitzType.caption)
-          .foregroundStyle(BlitzUI.tertiaryText)
-      }
-      if let message = appResult ?? model.statusMessage {
-        BlitzStatusLine(text: message, tone: .working)
-      }
-      LazyVStack(spacing: 0) {
-        if apps.isEmpty {
-          BlitzEmptyRow(
-            text: model.isRefreshing
-              ? "Reading running apps…" : query.isEmpty ? "No apps to review" : "No matching apps",
-            isLoading: model.isRefreshing)
-        }
-        ForEach(apps) { candidate in
-          appRow((candidate: candidate, codexThreads: listing.codexThreadsByApp))
-          if candidate.id != lastID { BlitzRowDivider(leading: 56) }
-        }
-      }.blitzTable()
-    }
-  }
-
-  private func appRow(_ input: (candidate: MemoryCandidate, codexThreads: [String: Int]))
-    -> some View
-  {
-    let candidate = input.candidate
-    let app = candidate.app
-    let busy = model.isActing(on: app) || forceQuit.activeApp?.id == app.id
-    let detail = appDetail((candidate: candidate, codexThreads: input.codexThreads[app.name] ?? 0))
-    return HStack(spacing: 12) {
-      AppRowIdentity(
-        app: app, detail: detail.isEmpty ? nil : detail, warning: model.quitMessages[app.id])
-      BlitzTrailingValue(value: ByteText.full(app.memoryBytes), detail: nil)
-        .frame(width: 80, alignment: .trailing)
-      Group {
-        if app.isTerminationEligible {
-          BlitzProcessButton(title: "Quit", label: "Quit \(app.name)", isBusy: busy) { quit(app) }
-            .disabled(model.actionProcessID != nil || forceQuit.activeApp != nil)
-            .help("Ask \(app.name) to quit. Its save dialog can still appear.")
-        } else {
-          Image(systemName: "lock").font(.system(size: 11)).foregroundStyle(BlitzUI.tertiaryText)
-            .help(app.protectionReason ?? "Stays open")
-        }
-      }.frame(width: 96, alignment: .trailing)
-      BlitzActionMenu(label: "More actions for \(app.name)") {
-        if app.isTerminationEligible {
-          Button("Force Quit…", role: .destructive) { pending = .forceQuitApp(app) }
-            .disabled(forceQuit.activeApp != nil)
-        }
-        Button("Show in Finder") { Finder.reveal(app.bundleURL.path) }
-        if app.protectionReason == nil {
-          Divider()
-          ForEach(MemoryAppPolicy.allCases, id: \.self) { policy in
-            Button {
-              model.setPolicy(.init(app: app, policy: policy))
-            } label: {
-              MenuCheckLabel(title: policy.title, isOn: candidate.policy == policy)
-            }
-          }
-        }
-      }.disabled(busy)
-    }.blitzRow()
-  }
-
-  private func appDetail(_ input: (candidate: MemoryCandidate, codexThreads: Int)) -> String {
-    let candidate = input.candidate
-    let helpers = candidate.app.childProcessCount
-    let helperText = helpers == 0 ? nil : helpers == 1 ? "1 helper" : "\(helpers) helpers"
-    let aiThreads = input.codexThreads
-    let threadText =
-      aiThreads == 0 ? nil : aiThreads == 1 ? "1 AI thread" : "\(aiThreads) AI threads"
-    let usage: String? =
-      if candidate.app.protectionReason != nil || candidate.reason.hasPrefix("Activity unknown") {
-        nil
-      } else if candidate.policy == .keepRunning {
-        "Pinned"
-      } else {
-        candidate.reason.components(separatedBy: " · ").first
-      }
-    return [helperText, threadText, usage].compactMap { $0 }.joined(separator: " · ")
-  }
-
   // MARK: Actions
 
-  private func quit(_ app: MemoryApp) {
+  private func forceQuitApp(_ app: MemoryApp) {
     appResult = nil
     Task {
-      await model.quit(app)
+      if let message = await forceQuit.runAndDescribe(app) { appResult = message }
+      model.refresh()
       monitor.refresh()
       processes.refresh()
     }
   }
-
-  private func run(_ action: MemoryAction) {
-    switch action {
-    case .forceQuitApp(let app):
-      appResult = nil
-      Task {
-        if let message = await forceQuit.runAndDescribe(app) { appResult = message }
-        model.refresh()
-        monitor.refresh()
-        processes.refresh()
-      }
-    case .forceQuitThread(let thread):
-      processes.stopThread(thread, force: true)
-    case .quitThreads(let threads):
-      for thread in threads { processes.stopThread(thread, force: false) }
-    }
-  }
-}
-
-private enum MemoryAction {
-  case forceQuitApp(MemoryApp)
-  case forceQuitThread(AIThread)
-  case quitThreads([AIThread])
-
-  var title: String {
-    switch self {
-    case .forceQuitApp(let app): "Force quit \(app.name)?"
-    case .forceQuitThread(let thread): "Force quit \(Self.label(thread))?"
-    case .quitThreads(let threads): "Quit \(threads.count) detached AI agents?"
-    }
-  }
-
-  var message: String {
-    switch self {
-    case .forceQuitApp(let app):
-      "\(app.name) ends immediately. Unsaved changes are lost."
-    case .forceQuitThread(let thread):
-      "Ends \(thread.processIDs.count) processes immediately, including a reply in progress. \(ByteText.full(thread.memoryBytes))."
-    case .quitThreads(let threads):
-      "Their app or terminal already closed, so nothing is using them. \(threads.map { $0.project ?? $0.name }.joined(separator: ", ")) · \(ByteText.full(threads.reduce(0) { $0 + $1.memoryBytes }))."
-    }
-  }
-
-  var confirmTitle: String {
-    switch self {
-    case .forceQuitApp, .forceQuitThread: "Force Quit"
-    case .quitThreads: "Quit detached"
-    }
-  }
-
-  private static func label(_ thread: AIThread) -> String {
-    thread.displayName
-  }
-
 }
 
 struct AIThreadRow: View {
@@ -388,18 +321,18 @@ struct AIThreadRow: View {
             separator: "\n"))
       BlitzTrailingValue(value: ByteText.full(thread.memoryBytes), detail: nil)
         .frame(width: 80, alignment: .trailing)
-      BlitzProcessButton(
-        title: thread.isPaused ? "Resume" : "Pause",
-        label: "\(thread.isPaused ? "Resume" : "Pause") \(thread.displayName)",
-        isBusy: isBusy, action: thread.isPaused ? onResume : onPause
-      )
-      .frame(width: 96, alignment: .trailing)
-      .help(
-        thread.isPaused
-          ? "Resume this thread and its local tools."
-          : "Pause this thread’s local processes. RAM stays allocated; remote work may continue.")
+      primaryButton
+        .frame(width: 96, alignment: .trailing)
+        .help(
+          thread.isPaused
+            ? "Resume these suspended local workers."
+            : "End these local workers to release their memory. Remote generation may continue.")
       BlitzActionMenu(label: "More actions for \(thread.displayName)") {
-        Button("Quit", action: onQuit)
+        if thread.isPaused {
+          Button("Stop", action: onQuit)
+        } else {
+          Button("Suspend — keeps memory", action: onPause)
+        }
         Button("Force Quit…", role: .destructive) { onForceQuit() }
         if let directory = thread.directory {
           Button("Show project in Finder") { Finder.reveal(directory) }
@@ -409,6 +342,13 @@ struct AIThreadRow: View {
         }
       }.disabled(isBusy)
     }.blitzRow()
+  }
+
+  var primaryButton: BlitzProcessButton {
+    BlitzProcessButton(
+      title: thread.isPaused ? "Resume" : "Stop",
+      label: "\(thread.isPaused ? "Resume" : "Stop") \(thread.displayName)",
+      isBusy: isBusy, action: thread.isPaused ? onResume : onQuit)
   }
 
   private var detail: String {

@@ -91,7 +91,28 @@ struct DockerStorageTests {
     let result = try DockerStorageService(
       .init(executablePath: script.path, queryTimeout: 3)
     ).load()
-    #expect(result.rebuildableBytes == 1_000_000_000)
+    #expect(result.rebuildableBytes == 0)
+    #expect(result.categories.first?.reclaimableBytes == 1_000_000_000)
+  }
+
+  @Test func eligibleCleanupExcludesTaggedImageEstimateAndDeduplicatesDanglingImages() {
+    let images = DockerStorageParser.danglingBytes(
+      """
+      {"ID":"abc","Size":"50MB"}
+      {"ID":"abc","Size":"50MB"}
+      {"ID":"def","Size":"25MB"}
+      """)
+    #expect(images == 75_000_000)
+    let snapshot = DockerStorageSnapshot(
+      categories: [
+        .init(
+          id: "images", name: "Images", totalCount: 10, activeCount: 4,
+          sizeBytes: 5_000_000_000, reclaimableBytes: 2_000_000_000),
+        .init(
+          id: "build-cache", name: "Build cache", totalCount: 1, activeCount: 0,
+          sizeBytes: 10, reclaimableBytes: 10),
+      ], updatedAt: .now, eligibleImageBytes: images)
+    #expect(snapshot.rebuildableBytes == 75_000_010)
   }
 
   private func executable(_ body: String) throws -> URL {

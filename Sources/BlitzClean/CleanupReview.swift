@@ -17,7 +17,9 @@ struct ReviewFile: Codable, Equatable, Identifiable, Sendable {
     let ext = URL(fileURLWithPath: path).pathExtension.lowercased()
     if ["mov", "mp4", "m4v", "mkv", "webm"].contains(ext) { return "Video" }
     if ["png", "jpg", "jpeg", "heic", "webp", "gif", "tiff"].contains(ext) { return "Image" }
-    if ["zip", "tgz", "gz", "dmg", "pkg", "iso", "tar"].contains(ext) {
+    if ["zip", "tgz", "gz", "dmg", "pkg", "iso", "tar", "rar", "7z", "xip", "apk", "ipa", "wpress"]
+      .contains(ext)
+    {
       return "Archive / installer"
     }
     return "Large file"
@@ -35,7 +37,7 @@ struct ReviewFile: Codable, Equatable, Identifiable, Sendable {
       let physicalPath = canonicalPath(path)
     else { return nil }
     return Self(
-      path: physicalPath, bytes: UInt64(max(0, info.st_blocks)) * 512,
+      path: physicalPath, bytes: AllocatedSize.of(info),
       modifiedAt: Date(timeIntervalSince1970: Double(info.st_mtimespec.tv_sec)),
       device: info.st_dev, inode: info.st_ino, logicalBytes: info.st_size,
       modifiedNanoseconds: Int64(info.st_mtimespec.tv_nsec))
@@ -46,6 +48,8 @@ struct ReviewFile: Codable, Equatable, Identifiable, Sendable {
     defer { free(resolved) }
     return String(cString: resolved)
   }
+
+  var fileIdentity: FileIdentity { .init(device: device, inode: inode) }
 
   var currentVersion: ReviewFile? {
     guard let current = Self.read(path), current.path == path else { return nil }
@@ -174,47 +178,18 @@ struct CleanupCommandResult: Sendable {
 }
 
 enum CleanupActivity {
-  private static let deadlines = DispatchQueue(
-    label: "com.blitzreels.BlitzClean.cleanup-deadlines", qos: .userInitiated)
-
   static func command(_ arguments: [String]) -> CleanupCommandResult {
     runCommand(
       CleanupCommandRequest(executable: "/usr/sbin/lsof", arguments: arguments, timeout: 8))
   }
 
   static func runCommand(_ request: CleanupCommandRequest) -> CleanupCommandResult {
-    let process = Process()
-    let pipe = Pipe()
-    let errors = Pipe()
-    process.executableURL = URL(fileURLWithPath: request.executable)
-    process.arguments = request.arguments
-    process.standardOutput = pipe
-    process.standardError = errors
-    do { try process.run() } catch { return CleanupCommandResult(status: -1, output: "") }
-    let timeout = DispatchWorkItem {
-      if process.isRunning { process.terminate() }
-    }
-    let deadline = DispatchWorkItem {
-      if process.isRunning { kill(process.processIdentifier, SIGKILL) }
-    }
-    deadlines.asyncAfter(deadline: .now() + request.timeout, execute: timeout)
-    deadlines.asyncAfter(deadline: .now() + request.timeout + 1, execute: deadline)
-    let diagnostics = CleanupDiagnosticOutput()
-    let readers = DispatchGroup()
-    readers.enter()
-    DispatchQueue.global(qos: .utility).async {
-      diagnostics.read(errors.fileHandleForReading)
-      readers.leave()
-    }
-    let data = pipe.fileHandleForReading.readDataToEndOfFile()
-    process.waitUntilExit()
-    readers.wait()
-    timeout.cancel()
-    deadline.cancel()
+    let output = CommandRunner.run(
+      .init(
+        executable: request.executable, arguments: request.arguments, timeout: request.timeout,
+        maximumBytes: 64 * 1_024 * 1_024, input: nil, environment: .inherited))
     return CleanupCommandResult(
-      status: process.terminationReason == .exit && acceptsDiagnostics(diagnostics.text)
-        ? process.terminationStatus : -1,
-      output: String(decoding: data, as: UTF8.self))
+      status: acceptsDiagnostics(output.errors) ? output.status : -1, output: output.text)
   }
 
   static func acceptsDiagnostics(_ output: String) -> Bool {
@@ -278,17 +253,12 @@ enum CleanupActivity {
   }
 
   private static func simulatorAvailability() -> StorageCleanupAvailability {
-    let process = Process()
-    let pipe = Pipe()
-    process.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
-    process.arguments = ["simctl", "list", "devices", "booted", "--json"]
-    process.standardOutput = pipe
-    process.standardError = FileHandle.nullDevice
-    do { try process.run() } catch { return .blocked("Simulator state unavailable") }
-    let data = pipe.fileHandleForReading.readDataToEndOfFile()
-    process.waitUntilExit()
-    guard process.terminationStatus == 0,
-      let list = try? JSONDecoder().decode(BootedSimulatorList.self, from: data)
+    let output = CommandRunner.run(
+      .init(
+        executable: "/usr/bin/xcrun", arguments: ["simctl", "list", "devices", "booted", "--json"],
+        timeout: 30, maximumBytes: 4 * 1_024 * 1_024, input: nil, environment: .inherited))
+    guard output.status == 0,
+      let list = try? JSONDecoder().decode(BootedSimulatorList.self, from: output.data)
     else { return .blocked("Simulator state unavailable") }
     return list.devices.values.joined().contains { $0.state == "Booted" }
       ? .blocked("Simulator is running") : .ready
@@ -299,14 +269,6 @@ struct CleanupCommandRequest: Sendable {
   let executable: String
   let arguments: [String]
   let timeout: TimeInterval
-}
-
-private final class CleanupDiagnosticOutput: @unchecked Sendable {
-  private var data = Data()
-
-  func read(_ handle: FileHandle) { data = handle.readDataToEndOfFile() }
-
-  var text: String { String(decoding: data, as: UTF8.self) }
 }
 
 private struct BootedSimulatorList: Decodable {
@@ -339,7 +301,25 @@ struct ReviewDeleteRequest: Sendable {
 }
 
 enum ReviewFileDeletion {
+  /// Wider than `canTrashPath`: items the user picks in Browse may include app-managed data,
+  /// but never macOS, Git history, credentials, app bundles or a top-level Library folder.
+  static func canDeleteWhenChosen(_ path: String) -> Bool {
+    guard RemovalGate.protection(path) == nil else { return false }
+    let guidance = StorageGuidance.read(path)
+    guard guidance.kind != .protected, !SimulatorDeviceService.isDevicePath(path) else {
+      return false
+    }
+    let visible = StorageGuidance.visiblePath(path)
+    let library = NSHomeDirectory() + "/Library"
+    guard visible != library,
+      URL(fileURLWithPath: visible).deletingLastPathComponent().path != library
+    else { return false }
+    return visible.hasPrefix("/Users/") || visible.hasPrefix("/Volumes/")
+  }
+
   static func canTrashPath(_ path: String) -> Bool {
+    guard RemovalGate.protection(path) == nil, StorageGuidance.read(path).allowsDirectTrash
+    else { return false }
     guard !SimulatorDeviceService.isDevicePath(path) else { return false }
     let dataPrefix = "/System/Volumes/Data"
     let visible = path.hasPrefix(dataPrefix + "/") ? String(path.dropFirst(dataPrefix.count)) : path
@@ -383,8 +363,8 @@ enum ReviewFileDeletion {
     if result.status == 0 { throw ReviewDeleteError.busy([]) }
     guard result.status == 1, result.output.isEmpty else { throw ReviewDeleteError.unverified }
     try validateIdentity(request)
-    try FileManager.default.trashItem(
-      at: URL(fileURLWithPath: request.file.path), resultingItemURL: nil)
+    try RemovalGate.remove(
+      .init(path: request.file.path, expected: request.file.fileIdentity, method: .trash))
   }
 
   static func delete(_ request: ReviewDeleteRequest) throws -> CleanupWin {
@@ -398,7 +378,8 @@ enum ReviewFileDeletion {
     guard result.status == 1, result.output.isEmpty else { throw ReviewDeleteError.unverified }
     try validateIdentity(request)
     let before = CleanupVolume.read(request.file.path)
-    try FileManager.default.removeItem(atPath: request.file.path)
+    try RemovalGate.remove(
+      .init(path: request.file.path, expected: request.file.fileIdentity, method: .permanent))
     return CleanupWin(
       id: UUID().uuidString, date: .now, title: "Deleted \(request.file.name)",
       paths: [request.file.path],
@@ -446,6 +427,7 @@ final class CleanupOverviewModel: ObservableObject {
   @Published private(set) var driveProgress: DriveScanProgress?
   private var synchronizationTask: Task<Void, Never>?
   private var hasUnsavedHistory = false
+  private var loadedLedgerStamp: CleanupHistoryStore.Stamp?
   private var importedReports: [String: Date?] = [:]
   private var fileValidationTask: Task<[ReviewFile], Never>?
   private var lastFileValidation = Date.distantPast
@@ -519,6 +501,11 @@ final class CleanupOverviewModel: ObservableObject {
         fileValidationTask = nil
       }
     }
+    let stamp = store.stamp()
+    guard hasUnsavedHistory || stamp == nil || stamp != loadedLedgerStamp else {
+      importReports()
+      return
+    }
     do {
       var latest = try store.load()
       for win in ledger.wins { latest.record(win) }
@@ -527,6 +514,7 @@ final class CleanupOverviewModel: ObservableObject {
         hasUnsavedHistory = false
       }
       if latest != ledger { ledger = latest }
+      loadedLedgerStamp = hasUnsavedHistory ? nil : store.stamp()
       historyError = nil
     } catch {
       historyError = "Cleanup history could not be read. Existing history is preserved."

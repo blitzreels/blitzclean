@@ -107,13 +107,45 @@ walk in the ready-item list. This is a responsiveness sample, not a frame-rate o
 Compact and standard fixture renders covered scanning, results, empty, cleaning, and completion states.
 The full suite passed 297 tests; strict formatting, plist, shell checks, and the local release build passed.
 
+## Background cost (October 13)
+
+Measured with `ps -o cputime` over 120 seconds, the dashboard window open behind another app.
+
+| | Before | After |
+|---|---|---|
+| App CPU in the background | 8.6% of one core | 2.9% |
+| `memory-history.json` | 5.8 MB rewritten about every 20 s | 1.6 MB, at most once a minute |
+| `cleanup-history.json` | decoded every 3 s | decoded only when its stat stamp changes |
+| `pressure-latest.json` | rewritten every 15 s | every 60 s, or at once after an automatic pause |
+| Resident memory | 120–170 MB | about 105 MB |
+
+- Routine memory samples drop their per-process breakdown after an hour; incidents keep it for a day.
+  Cap: 2 MiB. Unsaved history is written synchronously on quit; a critical pressure change saves at once.
+- Process name, path and project are read once per process lifetime (pid plus start time), not every tick.
+- In the background, the monitor publishes every 6 s instead of 2 s, the project scan (`ps` and `lsof`,
+  about 0.12 s of CPU each run) runs every 15 s, and the app list every 30 s.
+  Pressure protection still samples every 2 s; its UI updates only when the verdict changes or after 6 s.
+- In front, the project scan runs every 5 s (was 3 s).
+
+## One storage engine (October 18)
+
+The on-demand full inventory is gone: no screen showed its app, Library, system-folder and Spotlight results.
+Storage now has four views over one walker, `FileTree`, which stays on its volume and never follows links:
+
+- Drive groups the whole disk into units.
+- Browse and Largest files rank folders and files under any folder.
+- Cleanup measures dependency folders and the simulator cache.
+
+Hard-linked files count once per scan in every view, so a pnpm store has the same size in Drive and Browse.
+`du`, `mdfind` and per-category `du` passes no longer run. A folder with unreadable entries reports what was
+readable, marked partial, instead of no size.
+
 ## Repeat the measurements
 
 These opt-in tests read real machine data and are skipped in ordinary test runs:
 
 ```sh
 BLITZCLEAN_BENCHMARK=storage swift test -c release --filter PerformanceBenchmarks
-BLITZCLEAN_BENCHMARK=inventory swift test -c release --filter PerformanceBenchmarks
 BLITZCLEAN_BENCHMARK=fast swift test -c release --filter PerformanceBenchmarks
 BLITZCLEAN_BENCHMARK=audit swift test -c release --filter liveDashboardAudit
 ```

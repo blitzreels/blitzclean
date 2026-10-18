@@ -158,7 +158,7 @@ struct AppRecoveryTests {
       42: [stopped, stopped, running(.responding)],
       43: [.observe(RecoveryObservation(process: process(id: 43), response: .noReply))],
     ])
-    let defaults = try #require(UserDefaults(suiteName: "recovery-tests-\(UUID())"))
+    let defaults = TestDefaults("recovery").defaults
     let model = AppRecoveryModel(driver: driver, defaults: defaults)
     await model.scan([app, hung])
     #expect(model.check(for: app)?.health == .stopped)
@@ -192,7 +192,7 @@ struct AppRecoveryTests {
         42: [stopped, running(.responding)],
         43: [.observe(RecoveryObservation(process: process(id: 43), response: .noReply))],
       ], slowIDs: [43])
-    let defaults = try #require(UserDefaults(suiteName: "recovery-tests-\(UUID())"))
+    let defaults = TestDefaults("recovery").defaults
     let model = AppRecoveryModel(driver: driver, defaults: defaults)
     let scan = Task { await model.scan([app, slow]) }
     for _ in 0..<100 where model.check(for: app)?.health != .stopped {
@@ -226,7 +226,7 @@ struct AppRecoveryTests {
   @Test func crashedAppMovesToTheCrashList() async throws {
     let crash = URL(fileURLWithPath: "/tmp/ChatGPT-2026.ips")
     let driver = ScriptedRecoveryDriver([42: [stopped, .exit]], crash: crash)
-    let defaults = try #require(UserDefaults(suiteName: "recovery-tests-\(UUID())"))
+    let defaults = TestDefaults("recovery").defaults
     let model = AppRecoveryModel(driver: driver, defaults: defaults)
     let report = try #require(await model.revive(app))
     #expect(report.outcome == .crashed)

@@ -12,8 +12,9 @@ struct BlitzOverviewView: View {
   @ObservedObject var storage: StorageBreakdownModel
   @ObservedObject var docker: DockerStorageModel
   @ObservedObject var audit: DashboardAuditModel
-  @AppStorage(MenuBarPreferenceKey.memoryDisplay) private var memoryDisplay = MenuBarMemoryDisplay
-    .available
+  @ObservedObject var drive: DriveBreakdownModel
+  @ObservedObject var worktrees: DeveloperBrowserModel
+  @State private var pending: PendingProcessAction?
 
   private var models: DashboardAuditModel.Models {
     .init(
@@ -30,31 +31,45 @@ struct BlitzOverviewView: View {
       quickBytes: cleanup.quickBytes, canClean: cleanup.canClean,
       pressure: processes.pressure, detachedCount: detached.count,
       detachedBytes: detached.reduce(0) { $0 + $1.memoryBytes },
-      recoveryCount: recovery.attentionCount)
+      recoveryCount: recovery.attentionCount,
+      personalFiles: .init(
+        oldCount: storage.oldFiles.visibleItems.count, oldBytes: storage.oldFiles.totalBytes,
+        oldAge: storage.oldFiles.age.title, largeCount: storage.largeFiles.items.count,
+        largeBytes: storage.largeFiles.totalBytes))
     ScrollView {
       VStack(alignment: .leading, spacing: 24) {
+        OverviewDashboard(
+          monitor: monitor, memory: memory, processes: processes, recovery: recovery,
+          navigation: navigation, storage: storage, drive: drive, history: history,
+          worktrees: worktrees,
+          pending: $pending)
+        if let message = drive.message?.text ?? processes.consumerMessage ?? processes.threadMessage
+        {
+          BlitzStatusLine(text: message, tone: .working)
+        }
+        BlitzGroupLabel(title: "Deep checkup").padding(.bottom, -14)
         OverviewCleanCard(
           presentation: .init(
             progress: audit.progress, recommendations: findings.recommendations,
             cleanupResult: audit.cleanupResult, isCleaning: cleanup.isCleaning,
             cleaningCompleted: cleanup.completed, cleaningTotal: cleanup.total,
             isMutating: models.isMutating, historyError: history.historyError),
-          vitals: MacVital.all(
-            .init(
-              snapshot: monitor.snapshot, memoryDisplay: memoryDisplay,
-              memoryTone: memory.pressure.tone)),
-          onCheck: { audit.check(models) }, onAction: perform, onOpen: open)
-        OverviewRecordLine(ledger: history.ledger)
+          onCheck: { audit.check(models) }, onAction: perform)
         if let error = monitor.historyPersistenceError {
           BlitzStatusLine(text: error, tone: .warning)
         }
       }.frame(maxWidth: 1040).padding(BlitzUI.pagePadding).frame(maxWidth: .infinity)
     }
-  }
-
-  private func open(_ page: CleanPage) {
-    if page == .storage { navigation.storagePage = .browse }
-    navigation.page = page
+    .safeAreaInset(edge: .bottom, spacing: 0) {
+      if let action = pending {
+        BlitzConfirmation(
+          title: action.title, message: action.message, confirmTitle: action.confirmTitle,
+          onConfirm: {
+            pending = nil
+            action.perform()
+          }, onCancel: { pending = nil })
+      }
+    }
   }
 
   private func perform(_ action: AuditAction) {
@@ -67,21 +82,6 @@ struct BlitzOverviewView: View {
       storage.cleanupFocus = focus
       navigation.storagePage = .cleanup
       navigation.page = .storage
-    }
-  }
-}
-
-/// One line from the removal log: last cleanup, measured space recovered and cleanup count.
-struct OverviewRecordLine: View {
-  let ledger: CleanupLedger
-
-  var body: some View {
-    if let latest = ledger.wins.first {
-      let count = ledger.wins.count
-      Text(
-        "Last cleanup \(latest.date.formatted(.relative(presentation: .named))). \(ByteText.compact(ledger.internalGains)) recovered across \(count.formatted()) \(count == 1 ? "cleanup" : "cleanups")."
-      )
-      .font(BlitzType.caption).monospacedDigit().foregroundStyle(BlitzUI.secondaryText)
     }
   }
 }

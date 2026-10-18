@@ -192,43 +192,29 @@ enum ProjectActivityResolver {
 
   static func scan(_ request: ScanRequest) -> Date? {
     guard request.maximumEntries > 0, Date.now < request.deadline else { return nil }
-    let paths = UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>.allocate(capacity: 2)
-    paths.initialize(to: strdup(request.rootPath))
-    paths.advanced(by: 1).initialize(to: nil)
-    defer {
-      free(paths.pointee)
-      paths.deinitialize(count: 2)
-      paths.deallocate()
+    guard let tree = FileTree(.init(path: request.rootPath, needsMetadata: true)) else {
+      return nil
     }
-    guard let tree = fts_open(paths, FTS_PHYSICAL | FTS_NOCHDIR | FTS_XDEV, nil) else { return nil }
-    defer { fts_close(tree) }
     var newest: Date?
     var count = 0
-    errno = 0
-    while let entry = fts_read(tree) {
+    while let entry = tree.next() {
       count += 1
       guard count <= request.maximumEntries, Date.now < request.deadline else { return nil }
-      let info = entry.pointee
-      let name = withUnsafePointer(to: &entry.pointee.fts_name) {
-        $0.withMemoryRebound(to: CChar.self, capacity: Int(info.fts_namelen) + 1) {
-          String(cString: $0)
-        }
-      }
-      if info.fts_info == FTS_D, info.fts_level > 0, excludedDirectoryNames.contains(name) {
-        fts_set(tree, entry, FTS_SKIP)
-      } else if info.fts_info == FTS_F, !name.hasPrefix("._"), name != ".DS_Store",
-        let metadata = info.fts_statp?.pointee
+      let name = entry.name
+      if entry.kind == .directory, entry.level > 0, excludedDirectoryNames.contains(name) {
+        tree.skip(entry)
+      } else if entry.kind == .file, !name.hasPrefix("._"), name != ".DS_Store",
+        let metadata = entry.metadata
       {
         let date = Date(
           timeIntervalSince1970: Double(metadata.st_mtimespec.tv_sec)
             + Double(metadata.st_mtimespec.tv_nsec) / 1_000_000_000)
         newest = max(newest ?? .distantPast, date)
-      } else if info.fts_info == FTS_ERR || info.fts_info == FTS_DNR || info.fts_info == FTS_NS {
+      } else if entry.kind == .unreadable || entry.kind == .unreadableDirectory {
         return nil
       }
-      errno = 0
     }
-    return errno == 0 ? newest : nil
+    return tree.completed ? newest : nil
   }
 
   private static let excludedDirectoryNames: Set<String> = [

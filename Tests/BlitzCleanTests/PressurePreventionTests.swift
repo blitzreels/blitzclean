@@ -5,6 +5,40 @@ import Testing
 @testable import BlitzClean
 
 struct PressurePreventionTests {
+  @Test func manualProjectTargetIncludesNativeWorkersLaunchedByAgents() {
+    let names = ["tsc", "workerd", "esbuild", "pnpm-native", "node"]
+    let resources = names.enumerated().map { offset, name in
+      ResourceProcess(
+        processID: Int32(800_000 + offset), parentProcessID: 1, name: name,
+        owner: "Codex", directory: "/tmp/project", memoryBytes: 1, cpuPercent: 0, isTool: false,
+        executable: "/usr/local/bin/node")
+    }
+    let identities = Dictionary(
+      uniqueKeysWithValues: resources.map { resource in
+        (
+          resource.id,
+          DevProcessIdentity(
+            process: .init(
+              processID: resource.id, owner: getuid(),
+              startSeconds: 1, startMicroseconds: 0, state: UInt32(SRUN)),
+            executable: "/tools/\(resource.name)")
+        )
+      })
+    let project = WorkspaceProject(
+      directory: "/tmp/project",
+      preference: .init(
+        directory: "/tmp/project", name: "Project", keepRunning: false, startCommand: nil),
+      resources: resources, servers: [])
+    let target = ProjectPausePolicy.target(
+      .init(project: project, identities: identities, excludedIDs: [], date: .now))
+    #expect(target?.identities.count == names.count)
+    let automatic = ProjectPausePolicy.target(
+      .init(
+        project: project, identities: identities,
+        excludedIDs: Set(resources.map(\.id)), date: .now))
+    #expect(automatic == nil)
+  }
+
   @Test func stopHandlesPausedWorkersAndRejectsStaleOrChangedIdentities() async throws {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/bin/sleep")
@@ -44,7 +78,8 @@ struct PressurePreventionTests {
   @Test func backgroundWorkersAreRunningProjectsWithoutPorts() {
     let resource = ResourceProcess(
       processID: 100, parentProcessID: 1, name: "node", owner: "Background service",
-      directory: "/tmp/openseo", memoryBytes: 500_000_000, cpuPercent: 50, isTool: false)
+      directory: "/tmp/openseo", memoryBytes: 500_000_000, cpuPercent: 50, isTool: false,
+      executable: "/usr/local/bin/node")
     let project = WorkspaceProject(
       directory: "/tmp/openseo",
       preference: .init(
@@ -61,13 +96,16 @@ struct PressurePreventionTests {
     let resources = [
       ResourceProcess(
         processID: 1_001, parentProcessID: 1, name: "node", owner: "Background service",
-        directory: root.path, memoryBytes: 10, cpuPercent: 0, isTool: false),
+        directory: root.path, memoryBytes: 10, cpuPercent: 0, isTool: false,
+        executable: "/usr/local/bin/node"),
       ResourceProcess(
         processID: 1_002, parentProcessID: 1_001, name: "node", owner: "Background service",
-        directory: "/tmp", memoryBytes: 20, cpuPercent: 0, isTool: false),
+        directory: "/tmp", memoryBytes: 20, cpuPercent: 0, isTool: false,
+        executable: "/usr/local/bin/node"),
       ResourceProcess(
         processID: 1_003, parentProcessID: 1_002, name: "ffmpeg", owner: "Background service",
-        directory: "/", memoryBytes: 30, cpuPercent: 0, isTool: false),
+        directory: "/", memoryBytes: 30, cpuPercent: 0, isTool: false,
+        executable: "/usr/local/bin/node"),
     ]
     let projects = WorkspaceCatalog.projects(
       .init(resources: resources, processes: [], preferences: []))
@@ -81,7 +119,8 @@ struct PressurePreventionTests {
     let resources = [
       ResourceProcess(
         processID: getpid(), parentProcessID: 1, name: "node", owner: "Codex",
-        directory: "/tmp/project", memoryBytes: 1, cpuPercent: 0, isTool: true)
+        directory: "/tmp/project", memoryBytes: 1, cpuPercent: 0, isTool: true,
+        executable: "/usr/local/bin/node")
     ]
     let project = WorkspaceProject(
       directory: "/tmp/project",

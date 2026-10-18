@@ -103,6 +103,14 @@ The eligible cleanup size is not Apple's full System Data figure. As described i
 also contains runtime resources and app support data. BlitzClean does not delete macOS, swap, backups,
 app databases, or arbitrary temporary folders through this feature.
 
+### Old downloads and screenshots
+
+Storage → Cleanup lists items at the top of Downloads, plus screenshots and screen recordings on the Desktop or
+in the custom screenshot folder, that were not added, changed or opened for 3 months, 6 months or 1 year.
+A folder counts only when nothing inside changed; folders too large to read fully are left out. Apps and
+unfinished downloads are skipped. Move to Trash rechecks each item and skips anything open; Undo puts them back.
+Keep hides an item from later cleanups. Space returns when you empty the Trash.
+
 ### Browse
 
 Move through drives and folders in the same window, and select files or folders to move to the Trash.
@@ -153,7 +161,8 @@ with incompatible streams.
 ## History and pressure
 
 CPU and RAM charts keep two-second detail for 15 minutes and five-minute points for seven days.
-The chart file is limited to 512 KiB. Scan results, filters, export history, and the removal log are also saved locally.
+Each sample records the app using the most CPU and the most RAM; CPU and Memory list the biggest users for the
+selected range. Older points keep each five-minute peak and its cause. The chart file is limited to 1 MiB. Scan results, filters, export history, and the removal log are also saved locally.
 
 Pressure warnings look at memory pressure, compression, swap, the disk reserve, and CPU.
 Projects can opt in to automatic pausing. Pausing stops CPU work but keeps the memory allocated,
@@ -177,8 +186,8 @@ meantime change the real result.
 Quit and Stop on a single item, including a leftover process, run immediately and keep the app's own save dialogs.
 Force Quit and bulk actions ask for confirmation first. Stop never turns into Force Quit on its own.
 
-AI sessions have Pause and Resume buttons in Overview and at the top of Memory.
-Pausing stops local workers and keeps their RAM; generation running on a remote server can continue.
+Memory offers Stop for local AI workers, with Suspend/Resume in the action menu.
+Suspension stops local workers and keeps their RAM; generation running on a remote server can continue.
 Each row shows the verified session name when there is one, plus the provider, project, process ID,
 and any tools it started. Claude running Codex appears as Claude Code that includes Codex CLI,
 and cmux appears as the terminal host. Shared desktop workers can't always be matched to a chat title,
@@ -193,6 +202,19 @@ Docker inspection and cleanup require a local Unix socket; SSH and TCP contexts 
 Each operation pins its endpoint so a context switch cannot redirect its commands. Image pruning
 preserves tagged images and removes only dangling images; build-cache pruning remains available.
 Docker's displayed reclaimable estimate can therefore exceed the amount this conservative cleanup removes.
+The cleanup action counts only eligible dangling images and build cache; unknown image eligibility is excluded.
+
+Emergency controls open with Control–Option–Command–R or from the tray and Tools menu.
+They run in a separate process and read native process identities without waiting for dashboard scans.
+Stop requests graceful shutdown; Force Stop asks inline and can lose unsaved work.
+The shared Codex app target affects all chats and requires confirmation even for suspension or normal Stop.
+Stopping local workers does not cancel remote generation, and restarting a service does not restore its heap.
+The panel cannot guarantee responsiveness during an OS-wide kernel or storage stall.
+
+Projects associates Docker containers through Compose/Supabase labels and explicit manual assignments.
+Unassigned containers stay visible separately. Stop/Start preserves containers and database volumes.
+Each container gets 120 seconds to shut down, so databases can flush, before Docker forces it to stop.
+Project Stop includes native compilers and runtime descendants, then checks for remaining or restarted workers.
 
 Repeat folder removal honors Keep running and refuses recent files (seven days), tracked files,
 open files, symbolic links, incomplete checks, and trees that change during validation.

@@ -27,7 +27,7 @@ struct DashboardAuditTests {
           return []
         }
       ]))
-    for _ in 0..<100 where model.progress.results.count < 4 {
+    for _ in 0..<100 where model.progress.results.count < AuditCheck.allCases.count - 1 {
       try await Task.sleep(for: .milliseconds(5))
     }
     var refreshCalls = 0
@@ -43,10 +43,10 @@ struct DashboardAuditTests {
     model.recheck(.init(checks: checks))
     #expect(refreshCalls == 0)
     await gate.release()
-    for _ in 0..<100 where model.progress.isRunning || refreshCalls < 5 {
+    for _ in 0..<100 where model.progress.isRunning || refreshCalls < AuditCheck.allCases.count {
       try await Task.sleep(for: .milliseconds(5))
     }
-    #expect(refreshCalls == 5)
+    #expect(refreshCalls == AuditCheck.allCases.count)
     #expect(model.progress.completedAt != nil)
     #expect(model.progress.warnings.isEmpty)
   }
@@ -99,12 +99,12 @@ struct DashboardAuditTests {
       })
     model.start(.init(checks: checks))
     model.start(.init(checks: checks))
-    for _ in 0..<100 where model.progress.results.count < 4 {
+    for _ in 0..<100 where model.progress.results.count < AuditCheck.allCases.count - 1 {
       try await Task.sleep(for: .milliseconds(5))
     }
-    #expect(model.progress.results.count == 4)
+    #expect(model.progress.results.count == AuditCheck.allCases.count - 1)
     #expect(model.progress.isRunning)
-    #expect(calls == 5)
+    #expect(calls == AuditCheck.allCases.count)
     await gate.release()
     for _ in 0..<100 where model.progress.isRunning {
       try await Task.sleep(for: .milliseconds(5))
@@ -155,7 +155,7 @@ struct DashboardAuditTests {
       pressure: .init(
         risk: .critical, limit: .memory, title: "Memory under pressure", detail: "",
         action: "Review memory", date: .now),
-      detachedCount: 2, detachedBytes: 4_000_000_000, recoveryCount: 1)
+      detachedCount: 2, detachedBytes: 4_000_000_000, recoveryCount: 1, personalFiles: .none)
     #expect(urgent.recommendations.prefix(3).map(\.id) == ["pressure", "recovery", "caches"])
     #expect(urgent.recommendations.filter { $0.action == .cleanCaches }.map(\.id) == ["caches"])
     #expect(urgent.recommendations.first { $0.id == "docker" }?.action == .cleanup(.docker))
@@ -167,7 +167,8 @@ struct DashboardAuditTests {
       .init(items: [], dockerBytes: 0, hasSkippedLocations: false, dockerUnavailable: false))
     let findings = AuditFindings(
       progress: AuditRenderFixture.complete, cleanup: empty, quickBytes: 0, canClean: false,
-      pressure: .checking, detachedCount: 0, detachedBytes: 0, recoveryCount: 0)
+      pressure: .checking, detachedCount: 0, detachedBytes: 0, recoveryCount: 0,
+      personalFiles: .none)
     #expect(findings.recommendations.isEmpty)
     let completed = AuditRenderFixture.presentation(findings)
     #expect(completed.title == "Nothing worth cleaning right now")
@@ -251,8 +252,7 @@ struct DashboardAuditTests {
       for width in [708.0, 988.0] {
         let renderer = ImageRenderer(
           content: OverviewCleanCard(
-            presentation: presentation, vitals: AuditRenderFixture.vitals, onCheck: {},
-            onAction: { _ in }, onOpen: { _ in }
+            presentation: presentation, onCheck: {}, onAction: { _ in }
           )
           .padding(28).frame(width: width).background(BlitzUI.canvasBackground).blitzTheme())
         renderer.scale = 2
@@ -272,7 +272,8 @@ struct DashboardAuditTests {
   private func findings(_ input: FindingsInput) -> AuditFindings {
     .init(
       progress: input.progress, cleanup: input.summary, quickBytes: 8_200_000_000, canClean: true,
-      pressure: .checking, detachedCount: 0, detachedBytes: 0, recoveryCount: 0)
+      pressure: .checking, detachedCount: 0, detachedBytes: 0, recoveryCount: 0,
+      personalFiles: .none)
   }
 }
 
@@ -323,7 +324,7 @@ enum AuditRenderFixture {
     let findings = AuditFindings(
       progress: progress, cleanup: input.summary, quickBytes: input.model.quickBytes,
       canClean: input.model.canClean, pressure: .checking, detachedCount: 0, detachedBytes: 0,
-      recoveryCount: 0)
+      recoveryCount: 0, personalFiles: .none)
     return OverviewCleanCard(
       presentation: .init(
         progress: progress, recommendations: findings.recommendations,
@@ -332,16 +333,6 @@ enum AuditRenderFixture {
         },
         isCleaning: input.model.isCleaning, cleaningCompleted: input.model.completed,
         cleaningTotal: input.model.total, isMutating: input.model.isBusy, historyError: nil),
-      vitals: vitals, onCheck: {}, onAction: { _ in }, onOpen: { _ in })
-  }
-
-  static var vitals: [MacVital] {
-    let gib: UInt64 = 1 << 30
-    let snapshot = SystemSnapshot(
-      .init(
-        diskAvailable: 26 * gib, diskTotal: 460 * gib, ramAvailable: 10 * gib,
-        ramTotal: 36 * gib, memoryPressure: .normal, cpuUsage: 0.22, thermalStatus: .nominal,
-        updatedAt: .now))
-    return MacVital.all(.init(snapshot: snapshot, memoryDisplay: .available, memoryTone: .good))
+      onCheck: {}, onAction: { _ in })
   }
 }

@@ -12,12 +12,12 @@ struct WorkspacePreference: Codable, Equatable, Identifiable, Sendable {
 enum WorkspacePreferences {
   static let key = "workspace.preferences.v1"
 
-  static func load() -> [WorkspacePreference] {
-    guard let data = UserDefaults.standard.data(forKey: key),
-      let result = try? JSONDecoder().decode([WorkspacePreference].self, from: data)
-    else { return [] }
-    return result
+  /// Nil when saved preferences exist but cannot be read; Keep running is then unknown.
+  static func read() -> [WorkspacePreference]? {
+    SavedSettings.list(.init(key: key, defaults: .standard))
   }
+
+  static func load() -> [WorkspacePreference] { read() ?? [] }
 
   static func canonical(_ path: String) -> String {
     URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath().path
@@ -34,9 +34,12 @@ enum WorkspacePreferences {
     return directory == root || directory.hasPrefix(root + "/")
   }
 
+  /// True when the folder is kept running, and also when saved preferences cannot be read, so
+  /// nothing is stopped or removed while its protection is unknown.
   static func isKeptRunning(_ directory: String?) -> Bool {
     guard let directory else { return false }
-    return load().contains {
+    guard let preferences = read() else { return true }
+    return preferences.contains {
       $0.keepRunning && contains(.init(directory: directory, root: $0.directory))
     }
   }
@@ -47,13 +50,41 @@ struct WorkspaceProject: Identifiable, Sendable {
   let preference: WorkspacePreference
   let resources: [ResourceProcess]
   let servers: [DevProcess]
+  var containers: [DockerProjectContainer] = []
   var id: String { directory }
-  var isRunning: Bool { !resources.isEmpty || !servers.isEmpty }
+  var isRunning: Bool {
+    !resources.isEmpty || !servers.isEmpty || containers.contains(where: \.running)
+  }
   var memoryBytes: UInt64 { resources.compactMap(\.memoryBytes).reduce(0, +) }
   var cpuPercent: Double { resources.reduce(0) { $0 + $1.cpuPercent } }
 }
 
 enum WorkspaceCatalog {
+  struct DockerInput {
+    let projects: [WorkspaceProject]
+    let containers: [DockerProjectContainer]
+  }
+
+  static func includingDocker(_ input: DockerInput) -> [WorkspaceProject] {
+    var projects = Dictionary(
+      input.projects.map { ($0.directory, $0) }, uniquingKeysWith: { a, _ in a })
+    for container in input.containers {
+      let root = container.directory ?? "docker:\(container.id)"
+      if projects[root] == nil {
+        projects[root] = WorkspaceProject(
+          directory: root,
+          preference: .init(
+            directory: root, name: container.projectName, keepRunning: false, startCommand: nil),
+          resources: [], servers: [])
+      }
+      projects[root]?.containers.append(container)
+    }
+    return projects.values.sorted {
+      if $0.isRunning != $1.isRunning { return $0.isRunning }
+      if $0.memoryBytes != $1.memoryBytes { return $0.memoryBytes > $1.memoryBytes }
+      return $0.preference.name.localizedStandardCompare($1.preference.name) == .orderedAscending
+    }
+  }
   struct Input {
     let resources: [ResourceProcess]
     let processes: [DevProcess]
@@ -73,15 +104,15 @@ enum WorkspaceCatalog {
     let directories = Set(
       input.resources.compactMap(\.directory) + input.processes.compactMap(\.workingDirectory))
     let directoryRoots = Dictionary(
-      uniqueKeysWithValues: directories.compactMap { directory in
+      directories.compactMap { directory in
         root(directory).map { (directory, $0) }
-      })
+      }, uniquingKeysWith: { first, _ in first })
     var parents = Dictionary(
       input.resources.map { ($0.id, $0.parentProcessID) }, uniquingKeysWith: { first, _ in first })
     var direct = Dictionary(
-      uniqueKeysWithValues: input.resources.compactMap { resource in
+      input.resources.compactMap { resource in
         resource.directory.flatMap { directoryRoots[$0] }.map { (resource.id, $0) }
-      })
+      }, uniquingKeysWith: { first, _ in first })
     for process in input.processes {
       parents[process.id] = process.parentProcessID
       if let directory = process.workingDirectory, let root = directoryRoots[directory] {

@@ -239,6 +239,7 @@ private struct CleanupItemRow: View {
         .toggleStyle(BlitzCheckboxStyle(showsLabel: false))
         .disabled(!isReady)
 
+        ApplicationIcon(source: .storage(item.path), size: 26, fallback: "shippingbox")
         VStack(alignment: .leading, spacing: 3) {
           Text(item.name).font(BlitzType.rowTitle).lineLimit(1)
           Text(item.path).font(BlitzType.caption).foregroundStyle(BlitzUI.tertiaryText)
@@ -503,7 +504,7 @@ struct DockerStorageView: View {
           if category.id != snapshot.categories.last?.id { BlitzRowDivider(leading: 52) }
         }
         Text(
-          "\(ByteText.full(snapshot.totalBytes)) allocated · updated \(snapshot.updatedAt.formatted(.relative(presentation: .named)))"
+          "\(ByteText.full(snapshot.totalBytes)) reported by Docker · updated \(snapshot.updatedAt.formatted(.relative(presentation: .named)))"
         )
         .font(BlitzType.caption).foregroundStyle(BlitzUI.tertiaryText)
         .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 16)
@@ -516,8 +517,8 @@ struct DockerStorageView: View {
       }
       if model.snapshot != nil || model.isCleaning || model.cleanupMessage != nil {
         StorageActionBar(
-          summary: "\(ByteText.full(reclaimable)) reclaimable",
-          progress: model.isCleaning ? "Deleting unused Docker images and build cache…" : nil,
+          summary: "Up to \(ByteText.full(reclaimable)) eligible · dangling images and build cache",
+          progress: model.isCleaning ? "Deleting dangling Docker images and build cache…" : nil,
           message: model.cleanupMessage, actionTitle: "Review Docker cleanup…",
           emphasis: .secondary,
           isDisabled: reclaimable == 0 || model.isCleaning || model.isRefreshing,
@@ -526,10 +527,10 @@ struct DockerStorageView: View {
       }
       if showsConfirmation {
         BlitzConfirmation(
-          title: "Delete unused Docker images and build cache?",
+          title: "Delete dangling Docker images and build cache?",
           message:
-            "\(ByteText.full(reclaimable)) of unused images and build cache will be deleted permanently. Containers and volumes will not be deleted.",
-          confirmTitle: "Delete unused images and cache",
+            "Up to \(ByteText.full(reclaimable)) is eligible. Tagged images, containers and database volumes are preserved. Actual free-space gain can differ.",
+          confirmTitle: "Delete dangling images and cache",
           onConfirm: {
             showsConfirmation = false
             model.cleanRebuildable()
@@ -558,7 +559,7 @@ private struct DockerCategoryRow: View {
       BlitzTrailingValue(
         value: ByteText.full(category.sizeBytes),
         detail: category.reclaimableBytes > 0
-          ? "\(ByteText.full(category.reclaimableBytes)) reclaimable" : nil
+          ? "\(ByteText.full(category.reclaimableBytes)) Docker estimate" : nil
       ).frame(width: 150, alignment: .trailing)
     }
     .padding(.horizontal, 16)

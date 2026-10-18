@@ -1,7 +1,7 @@
 import SwiftUI
 
 enum MemoryListingMode: String, CaseIterable {
-  case apps = "Apps & AI"
+  case apps = "By app"
   case processes = "Processes"
 }
 

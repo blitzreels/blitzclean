@@ -19,18 +19,20 @@ struct BlitzStorageView: View {
           selection: $navigation.storagePage, label: { $0.rawValue }
         ).frame(maxWidth: 320)
         Spacer()
-        StorageCapacityMeter(snapshot: monitor.snapshot).frame(width: 200)
+        if navigation.storagePage != .drive {
+          StorageCapacityMeter(snapshot: monitor.snapshot, drive: selectedDrive).frame(width: 200)
+        }
       }.padding(.horizontal, BlitzUI.pagePadding).padding(.vertical, 12)
       Rectangle().fill(BlitzUI.separator).frame(height: 1)
       switch navigation.storagePage {
-      case .mac:
-        MacStorageInventoryView(
-          model: storage,
+      case .drive:
+        DriveBreakdownView(
+          model: storage.drive, worktrees: worktrees.model, history: storage.overview,
           onBrowse: { path in
             folders.open(path)
             showsLargestFiles = false
             navigation.storagePage = .browse
-          })
+          }, onCleanup: openCleanup)
       case .browse:
         if !showsLargestFiles {
           HStack(spacing: 12) {
@@ -58,34 +60,70 @@ struct BlitzStorageView: View {
         if showsLargestFiles {
           LargeFileReviewView(
             model: storage.overview, monitor: monitor,
+            onCleanup: openCleanup,
             onBrowseFolders: {
               storage.overview.cancelScan()
               showsLargestFiles = false
             })
         } else {
           FolderExplorerView(
-            model: folders, onManageSimulators: { navigation.storagePage = .cleanup })
+            model: folders,
+            onManageSimulators: { openCleanup(.init(focus: .simulators, path: nil)) },
+            onCleanup: openCleanup)
         }
       case .cleanup:
         StorageCleanupView(
-          storage: storage, caches: cleanup, docker: docker, worktrees: worktrees)
+          storage: storage, caches: cleanup, docker: docker, worktrees: worktrees,
+          onSearchDrives: {
+            showsLargestFiles = true
+            navigation.storagePage = .browse
+          })
       }
     }
     .task { drives = StorageDrives.mounted() }
+    .onChange(of: storage.scannedAt) { drives = StorageDrives.mounted() }
+  }
+
+  private var selectedDrive: StorageDrive? {
+    let path =
+      navigation.storagePage == .browse
+      ? showsLargestFiles ? storage.overview.reviewRoots.first : folders.path
+      : nil
+    guard let path else { return nil }
+    return drives.filter { !$0.internalDisk }.first {
+      path == $0.path || path.hasPrefix($0.path + "/")
+    }
+  }
+
+  private func openCleanup(_ route: StorageCleanupRoute) {
+    if let root = route.projectRoot, root != storage.projectRoot {
+      storage.selectProjectRoot(root)
+    }
+    storage.cleanupFocus = route.focus
+    navigation.storagePage = .cleanup
   }
 }
 
 private struct StorageCapacityMeter: View {
   let snapshot: SystemSnapshot
+  let drive: StorageDrive?
 
   var body: some View {
     VStack(alignment: .trailing, spacing: 6) {
       HStack(alignment: .firstTextBaseline, spacing: 4) {
-        Text(ByteText.compact(snapshot.diskAvailable)).font(BlitzType.label)
-        Text("free of \(ByteText.compact(snapshot.diskTotal))").font(BlitzType.caption)
-          .foregroundStyle(BlitzUI.secondaryText)
+        Text(ByteText.compact(drive?.available ?? snapshot.diskAvailable)).font(BlitzType.label)
+        Text("free of \(ByteText.compact(drive?.total ?? snapshot.diskTotal))").font(
+          BlitzType.caption
+        )
+        .foregroundStyle(BlitzUI.secondaryText)
       }.monospacedDigit().lineLimit(1)
-      CapacityBar(usedRatio: snapshot.diskUsedRatio, tone: MenuBarTones.disk(snapshot))
+      CapacityBar(
+        usedRatio: drive.map { $0.total == 0 ? 0 : 1 - Double($0.available) / Double($0.total) }
+          ?? snapshot.diskUsedRatio,
+        tone: MetricTone.forDisk(
+          .init(
+            available: drive?.available ?? snapshot.diskAvailable,
+            total: drive?.total ?? snapshot.diskTotal)))
     }.accessibilityElement(children: .combine)
   }
 }
@@ -101,6 +139,7 @@ struct StorageCleanupView: View {
   @ObservedObject var caches: QuickCleanModel
   @ObservedObject var docker: DockerStorageModel
   let worktrees: WorktreeSources
+  let onSearchDrives: () -> Void
   @StateObject private var simulators = SimulatorDevicesModel()
   @State private var repeatPending: [RemovedEntry] = []
   @State private var worktreePending: DeveloperArtifact?
@@ -117,7 +156,13 @@ struct StorageCleanupView: View {
         LazyVStack(alignment: .leading, spacing: 12) {
           CleanupScanBar(
             storage: storage, caches: caches, docker: docker, simulators: simulators,
-            repeats: storage.repeats, worktrees: worktrees.model)
+            repeats: storage.repeats, oldFiles: storage.oldFiles, largeFiles: storage.largeFiles,
+            worktrees: worktrees.model)
+          OldFilesView(model: storage.oldFiles, history: storage.overview)
+            .id(StorageCleanupFocus.oldFiles)
+          LargeFilesView(
+            model: storage.largeFiles, history: storage.overview, onSearchDrives: onSearchDrives
+          ).id(StorageCleanupFocus.largeFiles)
           BlitzStorageSection(
             title: "System Data cleanup", symbol: "archivebox",
             detail: cacheDetail,
@@ -175,7 +220,8 @@ struct StorageCleanupView: View {
             + "\n\nGit checks again that it is merged, then removes the folder. The local branch stays.",
           confirmTitle: "Remove worktree",
           onConfirm: {
-            worktrees.model.remove(.init(artifact: artifact, history: storage.overview))
+            worktrees.model.remove(
+              .init(artifact: artifact, history: storage.overview, force: false))
             worktreePending = nil
           }, onCancel: { worktreePending = nil })
       } else if repeatPending.isEmpty {
@@ -201,23 +247,27 @@ private struct CleanupScanBar: View {
   @ObservedObject var docker: DockerStorageModel
   @ObservedObject var simulators: SimulatorDevicesModel
   @ObservedObject var repeats: RepeatCleanupModel
+  @ObservedObject var oldFiles: OldFilesModel
+  @ObservedObject var largeFiles: LargeFilesModel
   @ObservedObject var worktrees: DeveloperBrowserModel
 
   private var isScanning: Bool {
     storage.isScanning || caches.isScanning || docker.isRefreshing || simulators.isRefreshing
-      || repeats.isChecking || worktrees.isScanning
+      || repeats.isChecking || worktrees.isScanning || oldFiles.isScanning
+      || largeFiles.isScanning
   }
 
   private var isBusy: Bool {
     storage.isCleaning || caches.isCleaning || docker.isCleaning || simulators.busyID != nil
-      || !repeats.removing.isEmpty || !worktrees.deleting.isEmpty
+      || !repeats.removing.isEmpty || !worktrees.deleting.isEmpty || oldFiles.isTrashing
+      || !largeFiles.moving.isEmpty
   }
 
   var body: some View {
     HStack(spacing: 8) {
       if isScanning {
         ProgressView().controlSize(.small)
-        Text("Scanning devices, caches, projects, Docker, and worktrees…")
+        Text("Scanning personal files, devices, caches, projects, Docker, and worktrees…")
       } else if storage.incompleteMeasurements > 0 {
         Text("Some project folders are unmeasured · Scan again to finish")
       } else if let date = storage.scannedAt {
@@ -238,6 +288,8 @@ private struct CleanupScanBar: View {
     caches.scan()
     docker.refresh()
     repeats.check(force: true)
+    oldFiles.scan()
+    largeFiles.scan()
     worktrees.scan()
     Task { await simulators.refresh() }
   }

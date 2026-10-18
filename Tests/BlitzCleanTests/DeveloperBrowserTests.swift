@@ -29,7 +29,9 @@ struct DeveloperBrowserTests {
           keptDirectories: []))
     }
     #expect(artifacts.allSatisfy { $0.blocker == nil })
-    for artifact in artifacts { model.remove(.init(artifact: artifact, history: history)) }
+    for artifact in artifacts {
+      model.remove(.init(artifact: artifact, history: history, force: false))
+    }
     #expect(model.deleting.count == 2)
     while !model.deleting.isEmpty, Date.now < deadline {
       try await Task.sleep(for: .milliseconds(50))

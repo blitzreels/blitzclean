@@ -1,4 +1,3 @@
-import Darwin
 import Foundation
 
 struct DockerStorageCategory: Identifiable, Codable, Equatable, Sendable {
@@ -17,6 +16,7 @@ struct DockerStorageCategory: Identifiable, Codable, Equatable, Sendable {
 struct DockerStorageSnapshot: Codable, Equatable, Sendable {
   let categories: [DockerStorageCategory]
   let updatedAt: Date
+  var eligibleImageBytes: UInt64? = nil
 
   var totalBytes: UInt64 {
     categories.reduce(0) { result, category in
@@ -26,10 +26,10 @@ struct DockerStorageSnapshot: Codable, Equatable, Sendable {
 
   var rebuildableBytes: UInt64 {
     categories.filter { category in
-      category.id == "images" || category.id == "build-cache"
+      category.id == "build-cache"
     }.reduce(0) { result, category in
       result + category.reclaimableBytes
-    }
+    } + (eligibleImageBytes ?? 0)
   }
 }
 
@@ -44,7 +44,6 @@ enum DockerCleanupOutcome: Sendable {
 }
 
 struct DockerStorageService: Sendable {
-  private static let deadlines = DispatchQueue(label: "com.blitzreels.BlitzClean.docker-deadlines")
   struct Configuration: Sendable {
     let executablePath: String?
     let queryTimeout: TimeInterval
@@ -78,7 +77,18 @@ struct DockerStorageService: Sendable {
     )
     let categories = try DockerStorageParser.categories(output.standardOutput)
 
-    return DockerStorageSnapshot(categories: categories, updatedAt: .now)
+    let images = try? run(
+      .init(
+        arguments: [
+          "--host", host, "image", "ls", "--filter", "dangling=true",
+          "--format", "{{json .}}",
+        ], timeout: configuration.queryTimeout))
+    let eligible = images.map { DockerStorageParser.danglingBytes($0.standardOutput) }
+    return DockerStorageSnapshot(
+      categories: categories, updatedAt: .now,
+      eligibleImageBytes: eligible.map {
+        min($0, categories.first { $0.id == "images" }?.reclaimableBytes ?? 0)
+      })
   }
 
   func cleanRebuildable() throws -> String {
@@ -96,7 +106,7 @@ struct DockerStorageService: Sendable {
       .joined(separator: "\n")
   }
 
-  private func localEndpoint() throws -> String {
+  func localEndpoint() throws -> String {
     let environment = ProcessInfo.processInfo.environment
     if environment["DOCKER_CONTEXT", default: ""].isEmpty,
       let host = environment["DOCKER_HOST"], !host.isEmpty
@@ -108,64 +118,32 @@ struct DockerStorageService: Sendable {
     return try DockerLocalEndpoint.parse(output.standardOutput)
   }
 
-  private func run(_ request: DockerCommandRequest) throws -> DockerCommandOutput {
+  func run(_ request: DockerCommandRequest) throws -> DockerCommandOutput {
     guard let executablePath else {
       throw DockerStorageError.notInstalled
     }
 
-    let process = Process()
-    let stdout = Pipe()
-    let stderr = Pipe()
-    process.executableURL = URL(fileURLWithPath: executablePath)
-    process.arguments = request.arguments
-    if request.arguments.first == "--host" {
-      var environment = ProcessInfo.processInfo.environment
-      for key in [
-        "DOCKER_CONTEXT", "DOCKER_HOST", "DOCKER_TLS", "DOCKER_TLS_VERIFY", "DOCKER_CERT_PATH",
-      ] {
-        environment.removeValue(forKey: key)
-      }
-      process.environment = environment
-    }
-    process.standardInput = FileHandle.nullDevice
-    process.standardOutput = stdout
-    process.standardError = stderr
-    try process.run()
-    let deadline = DispatchWorkItem {
-      if process.isRunning { kill(process.processIdentifier, SIGKILL) }
-    }
-    Self.deadlines.asyncAfter(deadline: .now() + request.timeout, execute: deadline)
-    let errors = DockerErrorOutput()
-    let readers = DispatchGroup()
-    readers.enter()
-    DispatchQueue.global(qos: .utility).async {
-      errors.read(stderr.fileHandleForReading)
-      readers.leave()
-    }
-    let data = stdout.fileHandleForReading.readDataToEndOfFile()
-    process.waitUntilExit()
-    readers.wait()
-    deadline.cancel()
-    let output = String(decoding: data, as: UTF8.self).trimmingCharacters(
-      in: .whitespacesAndNewlines)
-    let error = errors.text.isEmpty ? output : errors.text
-    guard process.terminationReason == .exit, process.terminationStatus == 0 else {
+    let result = CommandRunner.run(
+      .init(
+        executable: executablePath, arguments: request.arguments, timeout: request.timeout,
+        maximumBytes: 32 * 1_024 * 1_024, input: nil,
+        environment: request.arguments.first == "--host"
+          ? .init(
+            set: [:],
+            removed: [
+              "DOCKER_CONTEXT", "DOCKER_HOST", "DOCKER_TLS", "DOCKER_TLS_VERIFY",
+              "DOCKER_CERT_PATH",
+            ]) : .inherited))
+    let output = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+    let errors = result.errors.trimmingCharacters(in: .whitespacesAndNewlines)
+    let error = errors.isEmpty ? output : errors
+    guard result.status == 0 else {
       throw DockerStorageError.commandFailed(
         error.isEmpty
           ? "Docker did not complete the request. Try again after opening Docker." : error)
     }
 
     return DockerCommandOutput(standardOutput: output)
-  }
-}
-
-private final class DockerErrorOutput: @unchecked Sendable {
-  private var data = Data()
-
-  func read(_ handle: FileHandle) { data = handle.readDataToEndOfFile() }
-
-  var text: String {
-    String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
   }
 }
 
@@ -225,6 +203,16 @@ enum DockerStorageError: LocalizedError, Equatable {
 }
 
 enum DockerStorageParser {
+  static func danglingBytes(_ output: String) -> UInt64 {
+    var seen: Set<String> = []
+    return output.split(separator: "\n").reduce(0) { total, line in
+      guard let object = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
+        let id = object["ID"] as? String, seen.insert(id).inserted,
+        let size = object["Size"] as? String
+      else { return total }
+      return total + DockerByteParser.bytes(size)
+    }
+  }
   static func categories(_ output: String) throws -> [DockerStorageCategory] {
     let rows = output.split(whereSeparator: \Character.isNewline)
     let categories = try rows.map { row in
@@ -406,9 +394,16 @@ final class DockerStorageModel: ObservableObject {
 
       isCleaning = false
       switch outcome {
-      case .success:
+      case .success(let output):
+        let reclaimed = output.components(separatedBy: "\n").filter {
+          $0.hasPrefix("Total reclaimed space:")
+        }
+        .map {
+          DockerByteParser.bytes($0.replacingOccurrences(of: "Total reclaimed space:", with: ""))
+        }
+        .reduce(0, +)
         cleanupMessage =
-          "Removed unused images and build cache. Containers and volumes were protected."
+          "Docker reported \(ByteText.full(reclaimed)) reclaimed. Containers and volumes were preserved."
         refresh()
       case .failure(let message):
         errorMessage = message

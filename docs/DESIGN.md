@@ -1,5 +1,146 @@
 # Product design
 
+## October 18 stable layouts
+
+The user asked for no layout shifts or disappearing items. A rescan keeps the last complete Drive breakdown and
+worktree list on screen and swaps the result in once; live partial results appear only on the very first scan.
+Groups and rows keep the order of the last complete scan, and a row emptied by a deletion stays in place with its
+action disabled. Controls that change state keep a fixed width, and spinners occupy a reserved slot. Pages no
+longer repeat the capacity bottleneck in a banner; the sidebar caption and the Overview header carry it.
+
+## October 18 buttons
+
+The user disliked flat gray buttons and the generic "Do it" label. Accent buttons use a mint gradient with a
+top highlight and a soft glow; secondary buttons are raised (light top edge, hairline border, drop shadow);
+destructive secondary buttons are tinted red. Labels name the action and carry its glyph through
+`BlitzActionLabel` (Stop, Pause, Delete, Review…); never use vague labels such as "Do it" or "OK".
+
+## October 18 tray and Projects follow the new language
+
+The tray drops the rings and alert banner: a header with a status dot, one issue row when capacity is at risk,
+Resources (Memory, CPU, Storage rows with their squircle, value and bar or sparkline, each opening its page), one
+Suggested fix the tray can run directly (pause a runaway task, stop the largest idle item), and the three largest
+memory users with Stop or Quit on hover. Emergency controls moved to a footer icon button with its shortcut in the
+tooltip; Open BlitzClean is the accent only when no fix is suggested.
+
+Projects show the project's own logo: an app it builds (matched by name in Applications or its dist folder), then
+apple-touch, app and asset-catalog icons, then logos and favicons anywhere in the repository or its monorepo apps,
+skipping dependencies, build output and fixtures; wordmarks are skipped. Framework badges remain the fallback.
+Terminal workloads on Memory, CPU and the tray use the same logo. Each running project states what Stop ends, the
+memory those processes hold, and that code, files and database volumes stay. Listening ports are localhost links.
+Revive rows for helper binaries such as chrome-headless-shell name their origin: the tool that installed them
+(Remotion, Puppeteer, Playwright), the project, the launcher, uptime, and whether the launcher already exited;
+hovering shows the parent chain.
+
+## October 18 Apple and Linear visual language
+
+The user found the interface ugly and asked for visuals, icons and an Apple/Linear feel. The app now uses
+System Settings–style colored squircles (`BlitzColorTile`) in the sidebar, page headers, Drive groups and Quick
+wins; each resource keeps one identity color (Storage blue, Memory purple, CPU orange) for its icon and chart.
+Cards share one surface (`blitzCard`: panel fill, hairline border, 12-point corners) with no tinted washes or glows.
+Large figures use the rounded face. Group labels are small uppercase text. One mint button per view at most marks
+the recommended fix; tile and row actions are secondary. This supersedes the mint-only chart rule and the earlier
+"dark utility" restraint on color, and replaces the October 12 Overview: a status header, three resource tiles
+(value, bar or sparkline, what drives it, one action) and a Quick wins list that acts directly, with the original
+checkup below as Deep checkup. The Overview rings the user rejected stay out; bars and sparklines replace them.
+
+Everything that shows storage can be clicked: a Drive bar segment or legend entry scrolls to its group, and a row
+opens its folder in Browse, where Delete permanently is available. Browse may delete app-managed data the user
+picks (Codex, Claude, app support folders) after a warning; macOS, Git history, credentials, app bundles and
+top-level Library folders stay protected, and automatic lists keep the stricter rule. Git worktrees from project
+folders and Codex/Claude sessions are listed on Drive and Overview; merged ones are removed through Git, and ones
+blocked only by local files can be removed anyway after a warning that the branch and its commits stay.
+
+## October 18 actionable Memory and CPU
+
+The user found Memory and CPU informative but not useful. Both pages now open with a verdict card: one state
+title that matches the sidebar (Memory uses the same pressure assessment), the numbers that explain it, and one
+recommended fix with its button (stop the largest idle item, or pause a runaway task). Below it, one ranked list
+replaces the separate AI and Apps sections: each row is a consumer the user recognizes (an AI session, an app with
+its helpers, a terminal tool grouped by program and project such as `node · fmx_ws`, or macOS services) with one
+primary action and a menu. Memory rows stop or quit; CPU rows pause, since pausing frees the CPU at once and keeps
+state. Every row also offers Run in background (Darwin background priority, reversible), Force Quit with
+confirmation, and Show in Finder. Consumers are tracked across refreshes and relaunches: no CPU for 30 minutes earns
+an Idle badge, sustained 80% CPU for 5 minutes earns a Busy badge. Free N GB stops every idle item after an inline
+review. macOS daemons get plain names and no buttons. History spike rows offer Stop or Pause while that program
+still runs. This supersedes the Suspend-others header action.
+
+## October 18 Drive breakdown and permanent delete
+
+The user could not see what filled the main drive, could not delete folders, and did not want to review
+simulators or caches file by file. Storage now opens on Drive (replacing Inventory): one bar for the whole
+Macintosh HD, then groups (your files, projects, caches, simulators, AI tools, Docker, apps, messages, app data,
+Trash, macOS and system) whose units are logical things such as "Simulator devices" or "App caches", never files.
+Groups plus macOS, swap and unreadable System Data add up to used space. The scan stays on the Data volume, so
+mounted iPhones (DeviceFS), simulator runtime images and disk images are never counted; folder measuring in
+Browse and Cleanup now also stops at mount points.
+Each unit has one action matching its consequence: Delete (permanent, for rebuildable data; open and recently used
+items are kept), Delete all for caches, Empty Trash, Delete devices through `simctl` (running ones shut down
+first), Delete per iOS simulator version (`simctl runtime delete`, or an administrator prompt for versions Xcode no
+longer lists), Move to Trash for apps,
+Review for project caches and Docker, and Browse for personal folders. Data an owning app manages (Messages, Mail,
+WhatsApp, Claude, Codex history) is shown with where to remove it, not deleted here. Every removal is confirmed
+inline with its size and written to the removal log. Browse adds Delete permanently beside Move to Trash and allows
+selecting rebuildable caches.
+
+## October 12 sidebar insights, simpler Overview, large personal files
+
+The user asked for a sidebar that shows what is slow and what needs attention, rejected the Overview rings
+("the rounded thing") and asked for a simpler Overview. Each sidebar page now has one live caption: the limiting
+resource on Overview, free RAM and its top app, CPU load and its top app, free disk, apps not responding, and
+running projects or leftovers. Warning and critical captions take their tone color and a dot; this replaces the
+Revive apps count badge. Overview drops the rings and the resource strip, since the sidebar now owns those values,
+and shows one headline, one line, Check my Mac and a progress bar while checks run. The tray keeps its rings.
+
+The user could not find big videos, images or folders to remove. Storage Cleanup adds Large personal files after
+old files: files over 50 MB and top-level Downloads, Desktop and Movies folders over 300 MB, filtered by type.
+Git working trees and apps are excluded. Each row has Move to Trash, with Undo, after an identity and open-file check.
+Search every drive links to Browse → Largest files, which still owns the all-drive ranking.
+
+## October 12 old files and spike causes
+
+The user could not tell what to delete or what caused CPU and RAM spikes, and asked to remove old downloads in one click.
+Storage Cleanup now opens with Old downloads and screenshots: top-level Downloads items and screenshots unused for
+3 months, 6 months (default) or 1 year. Added, changed (anywhere inside a folder) and last-opened dates all count as use.
+Move N to Trash is a single click without `BlitzConfirmation`, an exception to the bulk-review rule at the user's request:
+items go to the Trash, each is rechecked for identity, age and open files first, and Undo puts the batch back.
+Rows have Keep as their action; kept items persist and collapse to one caption line with Show again.
+Overview's check gains Old files and links its finding to this section; it never moves files from Overview.
+
+CPU and Memory show the biggest users for the chart's selected range below the chart. Each sample stores the top app
+by CPU and by RAM; helpers count toward their app, and command-line tools are split by repository (node · project).
+The seven-day archive keeps each five-minute bucket's peak and its cause rather than the last reading.
+
+## October 9 storage ownership and cleanup
+
+Storage rows show the owning app icon when known, including installed apps that are not running.
+Codex history, Claude VM data, Docker disks, Git history and system data are kept out of raw file deletion.
+Rows explain whether data is rebuildable, app-managed or needs personal review; size alone is never a safe-delete claim.
+Inventory offers direct review of checked rebuildable data and links other managed data to its cleanup flow.
+Inventory includes on-demand drive and folder scans. External scans are bounded and report partial results.
+The capacity display follows the selected external drive. Personal files retain the reviewed Trash flow.
+
+## October 9 resource recovery
+
+The user needs controls when memory pressure makes the dashboard unusable.
+Emergency controls therefore run in a separate process with a small native AppKit panel and a global
+Control–Option–Command–R shortcut, available from the tray and Tools menu.
+This is an intentional exception to the single-dashboard rule and SwiftUI component rules below:
+the recovery path must not depend on that dashboard's main thread, scans, or view graph.
+The panel uses one selection, Stop and a secondary action menu, with confirmation text inline.
+The user rejected the initial grey utility styling: the fallback shares BlitzClean's canvas,
+panel surfaces, mint action, type sizes and rounded controls. Normal work stays in Memory and Projects.
+Shared Codex app actions require confirmation and explicitly affect all chats.
+
+Memory rows make Stop primary while running and Resume primary while paused.
+The October 9 paused-Codex report exposed an unconditional Stop button; paused rows keep Stop in the menu.
+Running rows keep Suspend in the menu.
+Suspend keeps memory; Stop ends local work. Worker groups must not claim to cancel remote Codex turns.
+Projects include Docker-only workloads, with manual association for unlabeled containers.
+Project Stop preserves database volumes and reports incomplete shutdowns instead of forcing termination.
+Docker cleanup shows eligible dangling images and build cache, separately from Docker's broader estimates.
+These decisions supersede earlier Pause-first and single-window instructions for these controls.
+
 ## User requirements
 
 The September 26, 2026 redesign brief asks for Apple/Linear-level restraint,

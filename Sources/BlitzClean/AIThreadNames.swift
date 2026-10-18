@@ -10,6 +10,18 @@ struct AIThreadNamesInput {
 }
 
 enum AIThreadNames {
+  /// Claude Code's folder for a project: every UTF-16 unit that is not an ASCII letter or digit
+  /// becomes "-", so "/Users/me/Développement" maps to "-Users-me-D-veloppement".
+  static func claudeProjectFolder(_ directory: String) -> String {
+    String(
+      directory.utf16.map { unit -> Character in
+        guard unit < 128, let scalar = Unicode.Scalar(unit),
+          CharacterSet.alphanumerics.contains(scalar)
+        else { return "-" }
+        return Character(scalar)
+      })
+  }
+
   struct SessionArgument {
     let tool: AITool
     let arguments: [String]
@@ -76,7 +88,7 @@ enum AIThreadNames {
           thread.sessionTitle = cleanTitle(metadata["name"])
         }
         if thread.sessionTitle == nil, let session, let directory = thread.directory {
-          let project = directory.map { $0.isLetter || $0.isNumber ? String($0) : "-" }.joined()
+          let project = AIThreadNames.claudeProjectFolder(directory)
           let url = input.home.appendingPathComponent(
             ".claude/projects/\(project)/sessions-index.json")
           if let index = object(.init(url: url, limit: 2 * 1_024 * 1_024, tail: false)),

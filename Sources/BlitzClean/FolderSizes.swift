@@ -84,9 +84,15 @@ enum FolderListingSorter {
 struct FolderSizeCache {
   private static let key = "folder-size-listings-v1"
   private static let maxEntries = 60
+  /// Encoding a few hundred kilobytes of listings on every navigation stalls the UI, so saves run
+  /// here in order, and a save that a newer one replaces is skipped.
+  private static let writer = DispatchQueue(
+    label: "com.blitzreels.BlitzClean.folder-size-cache", qos: .utility)
+  private static let pending = PendingFolderSave()
   let defaults: UserDefaults
 
   func load() -> [String: FolderListing] {
+    Self.writer.sync {}
     guard let data = defaults.data(forKey: Self.key),
       let listings = try? JSONDecoder().decode([String: FolderListing].self, from: data)
     else {
@@ -111,12 +117,37 @@ struct FolderSizeCache {
   }
 
   func save(_ listings: [String: FolderListing]) {
-    guard let data = try? JSONEncoder().encode(Self.bounded(listings)) else {
-      return
+    let ticket = Self.pending.next(defaults)
+    let defaults = SendableDefaults(defaults)
+    Self.writer.async {
+      guard Self.pending.isLatest(ticket, for: defaults.value),
+        let data = try? JSONEncoder().encode(Self.bounded(listings))
+      else { return }
+      defaults.value.set(data, forKey: Self.key)
     }
-
-    defaults.set(data, forKey: Self.key)
   }
+}
+
+private final class PendingFolderSave: @unchecked Sendable {
+  private let lock = NSLock()
+  private var latest: [ObjectIdentifier: Int] = [:]
+
+  func next(_ store: UserDefaults) -> Int {
+    lock.withLock {
+      latest[ObjectIdentifier(store), default: 0] += 1
+      return latest[ObjectIdentifier(store), default: 0]
+    }
+  }
+
+  func isLatest(_ ticket: Int, for store: UserDefaults) -> Bool {
+    lock.withLock { latest[ObjectIdentifier(store)] == ticket }
+  }
+}
+
+/// UserDefaults is thread-safe; this only carries it into the writer queue.
+private struct SendableDefaults: @unchecked Sendable {
+  let value: UserDefaults
+  init(_ value: UserDefaults) { self.value = value }
 }
 
 struct FolderSizeScanner: Sendable {
@@ -300,7 +331,8 @@ final class FolderExplorerModel: ObservableObject {
     let scanner = scanner
     let scan = scan
     let scanPath = path
-    let previous = Dictionary(uniqueKeysWithValues: entries.map { ($0.path, $0) })
+    let previous = Dictionary(
+      entries.map { ($0.path, $0) }, uniquingKeysWith: { first, _ in first })
     isScanning = true
     statusMessage = nil
     visited = 0
@@ -398,28 +430,35 @@ final class FolderExplorerModel: ObservableObject {
       URL(fileURLWithPath: entry.path).deletingLastPathComponent().path != "/Volumes",
       entry.inode != nil, entry.device != nil
     else { return false }
-    return ReviewFileDeletion.canTrashPath(entry.path)
+    return ReviewFileDeletion.canDeleteWhenChosen(entry.path)
   }
 
-  func trash(_ items: [FolderEntry]) {
+  struct Removal {
+    let items: [FolderEntry]
+    /// Deletes immediately instead of moving to the Trash, so the space is free at once.
+    let permanently: Bool
+  }
+
+  func remove(_ removal: Removal) {
     guard !isTrashing else { return }
-    let allowed = items.filter(canTrash)
+    let permanently = removal.permanently
+    let allowed = removal.items.filter(canTrash)
     guard !allowed.isEmpty else { return }
+    let wasMeasuring = isScanning
+    let removalPath = path
     cancelScan()
     isTrashing = true
     Task {
       let results = await Task.detached(priority: .userInitiated) {
         allowed.map { entry -> (String, String?) in
           do {
-            var identity = stat()
-            guard lstat(entry.path, &identity) == 0,
-              identity.st_ino == entry.inode, identity.st_dev == entry.device,
-              ReviewFile.canonicalPath(
-                URL(fileURLWithPath: entry.path).deletingLastPathComponent().path)
-                == URL(fileURLWithPath: entry.path).deletingLastPathComponent().path
-            else { return (entry.path, "\(entry.name) changed. Scan again before removing it.") }
-            try FileManager.default.trashItem(
-              at: URL(fileURLWithPath: entry.path), resultingItemURL: nil)
+            guard let device = entry.device, let inode = entry.inode else {
+              return (entry.path, "\(entry.name) changed. Scan again before removing it.")
+            }
+            try RemovalGate.remove(
+              .init(
+                path: entry.path, expected: .init(device: device, inode: inode),
+                method: permanently ? .permanent : .trash))
             return (entry.path, nil)
           } catch { return (entry.path, "\(entry.name): \(error.localizedDescription)") }
         }
@@ -430,10 +469,13 @@ final class FolderExplorerModel: ObservableObject {
       for path in removed { invalidateAncestors(of: path) }
       if !removed.isEmpty { scannedAt = .distantPast }
       let errors = results.compactMap(\.1)
+      let noun = removed.count == 1 ? "item" : "items"
       statusMessage =
-        "Moved \(removed.count) \(removed.count == 1 ? "item" : "items") to Trash."
+        (permanently
+          ? "Deleted \(removed.count) \(noun)." : "Moved \(removed.count) \(noun) to Trash.")
         + (errors.isEmpty ? "" : " " + errors.prefix(3).joined(separator: " "))
       isTrashing = false
+      if wasMeasuring, path == removalPath { rescan() }
     }
   }
 
