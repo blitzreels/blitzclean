@@ -33,7 +33,7 @@ final class MemoryNotifications: NSObject, UNUserNotificationCenterDelegate {
   }
 
   private var isAppBundle: Bool {
-    Bundle.main.bundleIdentifier == AppBrand.bundleIdentifier
+    AppBrand.isInstalledApp
       && Bundle.main.bundleURL.pathExtension == "app"
   }
 

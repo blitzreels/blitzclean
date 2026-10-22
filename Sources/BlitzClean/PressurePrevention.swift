@@ -206,7 +206,7 @@ final class PressureSentinel: @unchecked Sendable {
   private var elevatedSince: Date?
   private var lastSaved = Date.distantPast
   private var events: [[String: String]] = []
-  private let installed = Bundle.main.bundleIdentifier == AppBrand.bundleIdentifier
+  private let installed = AppBrand.isInstalledApp
 
   deinit { timer?.cancel() }
 

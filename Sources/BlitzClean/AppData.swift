@@ -1,10 +1,11 @@
 import Foundation
 
-/// Where BlitzClean keeps its local files: `~/Library/Application Support/BlitzClean`.
+/// Where BlitzClean keeps its local files: `~/Library/Application Support/BlitzClean`, or `BlitzClean Dev` for
+/// the dev build, so testing never touches the released app's history and settings.
 enum AppData {
   static var directory: URL {
     FileManager.default.homeDirectoryForCurrentUser
-      .appendingPathComponent("Library/Application Support/BlitzClean", isDirectory: true)
+      .appendingPathComponent("Library/Application Support/\(AppBrand.name)", isDirectory: true)
   }
 
   /// Folder used by builds released before 1.2.0.

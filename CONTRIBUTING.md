@@ -31,7 +31,7 @@ Closing a PR is not a judgment on the contributor; it usually means the change d
 
 ## Setup
 
-Use macOS 14+ and a Swift 6 toolchain. Run `./script/build_and_run.sh` to build and install the native app.
+Use macOS 14+ and a Swift 6 toolchain. Run `./script/build_and_run.sh` to build and install `BlitzClean Dev`, which runs beside a released BlitzClean.
 Install FFmpeg/FFprobe with `brew install ffmpeg` to run the media integration tests.
 Run `./scripts/check.sh` before opening a pull request, followed by `./scripts/build-app.sh` for packaging changes.
 Without a local signing certificate, use `BLITZCLEAN_SIGNING_IDENTITY=-` for an ad-hoc development build.

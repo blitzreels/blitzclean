@@ -75,7 +75,7 @@ final class MemoryRescueModel: NSObject, ObservableObject {
   private var diskAlertGate = DiskAlertGate()
   private var isSendingDiskAlert = false
   private lazy var store = MemoryIncidentStore(url: historyURL)
-  private var persists: Bool { Bundle.main.bundleIdentifier == AppBrand.bundleIdentifier }
+  private var persists: Bool { AppBrand.isInstalledApp }
 
   override init() {
     pressure = MemoryPressureReader().current()

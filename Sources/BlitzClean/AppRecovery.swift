@@ -132,7 +132,7 @@ enum RecoveryAppPolicy {
   }
 
   private static func isOwnAppOrFinder(_ input: Input) -> Bool {
-    input.bundleIdentifier == AppBrand.bundleIdentifier
+    AppBrand.isBlitzClean(input.bundleIdentifier)
       || input.bundleIdentifier == "com.apple.finder"
   }
 }

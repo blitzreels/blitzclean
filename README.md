@@ -120,8 +120,10 @@ cd blitzclean
 ./script/build_and_run.sh
 ```
 
-This builds, installs, and opens `~/Applications/BlitzClean.app`, signed with your Apple Development identity
-so macOS permissions stay attached between builds. Without a signing identity, use an ad-hoc build:
+This builds, installs, and opens `~/Applications/BlitzClean Dev.app`, signed with your Apple Development identity
+so macOS permissions stay attached between builds. BlitzClean Dev has its own bundle id, settings, data folder and
+DEV icon, never updates itself, and runs beside an installed release without stopping it, so you can compare the
+two. Use `BLITZCLEAN_DEV=0 ./script/build_and_run.sh` to build a plain `BlitzClean.app` instead. Without a signing identity, use an ad-hoc build:
 
 ```sh
 BLITZCLEAN_SIGNING_IDENTITY=- ./script/build_and_run.sh

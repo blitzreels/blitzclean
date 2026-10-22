@@ -2,13 +2,23 @@ import AppKit
 import SwiftUI
 
 enum AppBrand {
-  static let name = "BlitzClean"
+  static var name: String { isDevelopmentBuild ? "BlitzClean Dev" : "BlitzClean" }
   static var version: String {
     Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
       ?? "Development"
   }
   static let accent = BlitzUI.mint
   static let bundleIdentifier = "com.blitzreels.BlitzClean"
+  /// The local build installed beside the released app by `./scripts/install-dev.sh`.
+  static let developmentBundleIdentifier = "com.blitzreels.BlitzClean.dev"
+  static let isDevelopmentBuild = Bundle.main.bundleIdentifier == developmentBundleIdentifier
+  /// The released app or the dev build, as opposed to tests or `swift run`.
+  static let isInstalledApp = isDevelopmentBuild || Bundle.main.bundleIdentifier == bundleIdentifier
+
+  /// Any copy of BlitzClean, released, dev or emergency helper. They never stop or revive each other.
+  static func isBlitzClean(_ identifier: String?) -> Bool {
+    identifier?.hasPrefix(bundleIdentifier) == true
+  }
   @MainActor static let icon = resourceImage("AppIcon.icns")
   @MainActor static let mark = resourceImage("Mark.svg")
   @MainActor static let makerWordmark = resourceImage("BlitzReelsWordmark.png")

@@ -336,7 +336,7 @@ final class AppRecoveryModel: ObservableObject {
       guard let identifier = report.bundleIdentifier,
         let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: identifier),
         !url.resolvingSymlinksInPath().path.hasPrefix("/System/"),
-        identifier != AppBrand.bundleIdentifier,
+        !AppBrand.isBlitzClean(identifier),
         !dismissedCrashes.contains(url.path), found[url.path] == nil,
         !apps.contains(where: {
           $0.bundleURL == url && ($0.launchDate ?? .distantPast) > report.date

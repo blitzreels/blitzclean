@@ -7,12 +7,12 @@ enum BlitzCleanEntry {
       return
     }
     if CommandLine.arguments.contains("--emergency-controls")
-      || Bundle.main.bundleIdentifier == "com.blitzreels.BlitzClean.Emergency"
+      || Bundle.main.bundleIdentifier?.hasSuffix(".Emergency") == true
     {
       EmergencyControls.run()
       return
     }
-    BrandMigration.run()
+    if !AppBrand.isDevelopmentBuild { BrandMigration.run() }
     EmergencyControlsLauncher.start()
     BlitzCleanApp.main()
   }

@@ -355,7 +355,7 @@ final class SystemMonitor: NSObject, ObservableObject {
     memoryHistory.append(snapshot: initialSnapshot)
     memorySamples = memoryHistory.samples
     super.init()
-    if Bundle.main.bundleIdentifier == AppBrand.bundleIdentifier {
+    if AppBrand.isInstalledApp {
       do {
         history.restore(try ResourceHistoryStore.application.load())
         resourceSamples = history.samples
@@ -392,7 +392,7 @@ final class SystemMonitor: NSObject, ObservableObject {
   }
 
   @objc private func persistResourceHistory() {
-    guard Bundle.main.bundleIdentifier == AppBrand.bundleIdentifier else { return }
+    guard AppBrand.isInstalledApp else { return }
     if historyLoadFailed,
       FileManager.default.fileExists(atPath: ResourceHistoryStore.application.url.path)
     {

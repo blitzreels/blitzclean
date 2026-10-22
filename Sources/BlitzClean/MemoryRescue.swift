@@ -72,6 +72,7 @@ enum MemoryAppProtection {
     if input.processID == input.currentProcessID
       || (input.currentBundleIdentifier != nil
         && input.bundleIdentifier == input.currentBundleIdentifier)
+      || AppBrand.isBlitzClean(input.bundleIdentifier)
     {
       return "\(AppBrand.name) stays running during rescue"
     }
