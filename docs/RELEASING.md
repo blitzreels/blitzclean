@@ -1,5 +1,19 @@
 # Releasing BlitzClean
 
+## One command
+
+Write the release notes under `## Unreleased` in `CHANGELOG.md`, commit, then run:
+
+```sh
+./scripts/release.sh 1.6.0
+```
+
+It sets the version and the next build number in `support/Info.plist`, dates the changelog section, runs
+`./scripts/check.sh`, signs with the Developer ID identity in the keychain, notarizes (with `NOTARY_PROFILE`, or the
+`asc` profile in `BLITZCLEAN_ASC_PROFILE`, default `blitzrecorder`), commits, tags, pushes, publishes the GitHub
+release, checks the uploaded checksum, and uploads `appcast.xml` last. A failure before the commit puts the version
+and changelog back. The steps below are what it does, for reference or for a release done by hand.
+
 ## Prepare
 
 1. Update `CFBundleShortVersionString` and increment `CFBundleVersion` in `support/Info.plist`.
