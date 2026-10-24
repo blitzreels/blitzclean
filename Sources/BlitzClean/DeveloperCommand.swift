@@ -21,18 +21,40 @@ enum DeveloperCommand {
   }
 
   /// Git runs in folders BlitzClean finds on its own, including repositories the user cloned but never
-  /// chose here. A repository's own config can name commands git runs during `status` (fsmonitor) or
-  /// other operations (hooks), so every call turns those off.
+  /// chose here. A repository's own config can name commands git runs during `status` (fsmonitor, clean
+  /// filters) or other operations (hooks), so every call turns those off.
   static let gitSafety = [
     "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "-c",
-    "core.untrackedCache=false",
+    "core.untrackedCache=false", "-c", "core.pager=cat",
   ]
 
-  static func git(_ request: GitRequest) -> CleanupCommandResult {
-    run(
+  /// `gitSafety` plus a blank override for every filter the repository itself defines; filters from the
+  /// user's own global config, such as Git LFS, keep working. Listing config runs nothing. Nil when a filter
+  /// name can't be overridden on the command line, so the caller runs no git at all.
+  static func gitArguments(_ directory: String) -> [String]? {
+    let listed = run(
       .init(
         executable: "/usr/bin/git",
-        arguments: gitSafety + ["--no-optional-locks", "-C", request.directory] + request.arguments,
+        arguments: gitSafety + [
+          "-C", directory, "config", "--includes", "--show-scope", "--get-regexp", "^filter\\.",
+        ], timeout: 12, maximumBytes: 262_144))
+    guard let names = GitFilters.repositoryNames(listed) else { return nil }
+    return gitSafety
+      + names.sorted().flatMap { name in
+        ["clean", "smudge", "process"].flatMap { ["-c", "filter.\(name).\($0)="] }
+          + ["-c", "filter.\(name).required=false"]
+      }
+  }
+
+  static func git(_ request: GitRequest) -> CleanupCommandResult {
+    guard let safety = gitArguments(request.directory) else {
+      let reason = "This repository defines a filter BlitzClean can't turn off safely."
+      return .init(status: -1, output: "", failure: reason)
+    }
+    return run(
+      .init(
+        executable: "/usr/bin/git",
+        arguments: safety + ["--no-optional-locks", "-C", request.directory] + request.arguments,
         timeout: 12, maximumBytes: 262_144))
   }
 
@@ -53,5 +75,29 @@ enum DiskUsage {
     FolderFootprint.measure(
       .init(path: request.path, deadline: .now.addingTimeInterval(request.timeout))
     )?.allocated
+  }
+}
+
+/// Filter names a repository's own config defines, read from `git config --show-scope --get-regexp`.
+enum GitFilters {
+  static func repositoryNames(_ listed: CleanupCommandResult) -> Set<String>? {
+    // Exit 1 with no output means the repository defines no filters.
+    if listed.status == 1, listed.output.isEmpty { return [] }
+    guard listed.status == 0 else { return nil }
+    var names: Set<String> = []
+    for line in listed.output.split(separator: "\n") {
+      let fields = line.split(separator: "\t", maxSplits: 1)
+      guard fields.count == 2 else { return nil }
+      if fields[0] == "global" || fields[0] == "system" { continue }
+      let key = fields[1].split(separator: " ", maxSplits: 1)[0]
+      guard key.hasPrefix("filter."), let dot = key.lastIndex(of: "."),
+        dot > key.index(key.startIndex, offsetBy: 7)
+      else { return nil }
+      let name = String(key[key.index(key.startIndex, offsetBy: 7)..<dot])
+      // `-c key=value` splits at the first "=", so such a name can't be overridden.
+      guard !name.contains("=") else { return nil }
+      names.insert(name)
+    }
+    return names
   }
 }

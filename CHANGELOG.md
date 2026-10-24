@@ -46,8 +46,9 @@
 - Background readers share one schedule that slows down while another app is in front and under memory
   pressure, so BlitzClean adds no load to a Mac that is already swapping.
 - Fix a hang when many commands ran at once.
-- Git runs with fsmonitor, hooks and the untracked cache turned off, so a cloned repository's own config can't
-  make BlitzClean run a command while it reads branches and changes.
+- Git runs with fsmonitor, hooks, the untracked cache and the repository's own clean and smudge filters turned
+  off, so a cloned repository's config can't make BlitzClean run a command while it reads branches and changes.
+  Filters from your global config, such as Git LFS, keep working.
 
 ### BlitzClean Dev
 

@@ -316,3 +316,47 @@ struct GitSafetyTests {
     #expect(!FileManager.default.fileExists(atPath: marker.path))
   }
 }
+
+struct GitFilterTests {
+  @Test func repositoryCleanFilterNeverRunsDuringStatus() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("filter-\(UUID())")
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let marker = root.appendingPathComponent("ran")
+    let file = root.appendingPathComponent("a.txt")
+    func git(_ arguments: [String]) -> Int32 {
+      DeveloperCommand.git(.init(directory: root.path, arguments: arguments)).status
+    }
+    #expect(git(["init", "-q"]) == 0)
+    try "hi\n".write(to: file, atomically: true, encoding: .utf8)
+    #expect(git(["add", "a.txt"]) == 0)
+    #expect(git(["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "x"]) == 0)
+    try "* filter=evil\n".write(
+      to: root.appendingPathComponent(".gitattributes"), atomically: true, encoding: .utf8)
+    #expect(git(["config", "filter.evil.clean", "touch '\(marker.path)'; cat"]) == 0)
+    try FileManager.default.setAttributes(
+      [.modificationDate: Date(timeIntervalSince1970: 1_577_836_800)], ofItemAtPath: file.path)
+    _ = git(["status", "--porcelain=v1"])
+    #expect(!FileManager.default.fileExists(atPath: marker.path))
+  }
+
+  @Test func onlyRepositoryScopedFiltersAreOverridden() {
+    let listed = CleanupCommandResult(
+      status: 0,
+      output: "global\tfilter.lfs.clean git-lfs clean -- %f\nlocal\tfilter.evil.clean x\n"
+        + "worktree\tfilter.a.b.smudge y\n",
+      failure: nil)
+    #expect(GitFilters.repositoryNames(listed) == ["evil", "a.b"])
+    #expect(
+      GitFilters.repositoryNames(.init(status: 1, output: "", failure: "git exited with status 1"))
+        == [])
+  }
+
+  @Test func unoverridableOrUnreadableFiltersStopGit() {
+    #expect(
+      GitFilters.repositoryNames(
+        .init(status: 0, output: "local\tfilter.a=b.clean x\n", failure: nil)) == nil)
+    #expect(
+      GitFilters.repositoryNames(.init(status: 128, output: "", failure: "fatal")) == nil)
+  }
+}

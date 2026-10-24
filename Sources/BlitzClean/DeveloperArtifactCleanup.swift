@@ -58,10 +58,13 @@ enum DeveloperArtifactCleanup {
       {
         return failed(reason)
       }
+      guard let safety = DeveloperCommand.gitArguments(expected.repository) else {
+        return failed("This repository defines a filter BlitzClean can't turn off safely.")
+      }
       let result = DeveloperCommand.run(
         .init(
           executable: "/usr/bin/git",
-          arguments: DeveloperCommand.gitSafety
+          arguments: safety
             + ["-C", expected.repository, "worktree", "remove", "--", artifact.path],
           timeout: 120, maximumBytes: 65_536))
       removed = result.status == 0 && !FileManager.default.fileExists(atPath: artifact.path)
@@ -136,10 +139,13 @@ enum DeveloperArtifactCleanup {
       return failed("Files are open in an app. Close the project and try again.")
     }
     let before = CleanupVolume.read(artifact.path)
+    guard let safety = DeveloperCommand.gitArguments(expected.repository) else {
+      return failed("This repository defines a filter BlitzClean can't turn off safely.")
+    }
     let result = DeveloperCommand.run(
       .init(
         executable: "/usr/bin/git",
-        arguments: DeveloperCommand.gitSafety + [
+        arguments: safety + [
           "-C", expected.repository, "worktree", "remove", "--force", "--", artifact.path,
         ],
         timeout: 180, maximumBytes: 65_536))
