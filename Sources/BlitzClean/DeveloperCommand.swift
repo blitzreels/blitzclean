@@ -28,17 +28,23 @@ enum DeveloperCommand {
     "core.untrackedCache=false", "-c", "core.pager=cat",
   ]
 
-  /// `gitSafety` plus a blank override for every filter the repository itself defines; filters from the
-  /// user's own global config, such as Git LFS, keep working. Listing config runs nothing. Nil when a filter
-  /// name can't be overridden on the command line, so the caller runs no git at all.
-  static func gitArguments(_ directory: String) -> [String]? {
-    let listed = run(
-      .init(
-        executable: "/usr/bin/git",
-        arguments: gitSafety + [
-          "-C", directory, "config", "--includes", "--show-scope", "--get-regexp", "^filter\\.",
-        ], timeout: 12, maximumBytes: 262_144))
-    guard let names = GitFilters.repositoryNames(listed) else { return nil }
+  /// `gitSafety` plus a blank override for every filter defined by the config of each directory git will
+  /// read: the repository, and for `worktree remove` the worktree too, whose own config git reads when it
+  /// checks that worktree. Filters from the user's global config, such as Git LFS, keep working. Listing
+  /// config runs nothing. Nil when any listing fails or a name can't be overridden, so no git runs at all.
+  /// Status calls also pass `--ignore-submodules=all`, since a submodule's config is never listed here.
+  static func gitArguments(_ directories: [String]) -> [String]? {
+    var names: Set<String> = []
+    for directory in directories {
+      let listed = run(
+        .init(
+          executable: "/usr/bin/git",
+          arguments: gitSafety + [
+            "-C", directory, "config", "--includes", "--show-scope", "--get-regexp", "^filter\\.",
+          ], timeout: 12, maximumBytes: 262_144))
+      guard let found = GitFilters.repositoryNames(listed) else { return nil }
+      names.formUnion(found)
+    }
     return gitSafety
       + names.sorted().flatMap { name in
         ["clean", "smudge", "process"].flatMap { ["-c", "filter.\(name).\($0)="] }
@@ -47,7 +53,7 @@ enum DeveloperCommand {
   }
 
   static func git(_ request: GitRequest) -> CleanupCommandResult {
-    guard let safety = gitArguments(request.directory) else {
+    guard let safety = gitArguments([request.directory]) else {
       let reason = "This repository defines a filter BlitzClean can't turn off safely."
       return .init(status: -1, output: "", failure: reason)
     }

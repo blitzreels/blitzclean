@@ -141,13 +141,20 @@ enum GitWorktrees {
     } else {
       blocker = "Could not verify running processes"
     }
+    // Git would read each submodule's own config, which may run commands, so their changes are not
+    // checked here and the worktree is left for a person to review.
+    if blocker == nil,
+      FileManager.default.fileExists(atPath: record.path + "/.gitmodules")
+    {
+      blocker = "Contains submodules. Review them by hand."
+    }
     if blocker == nil {
       let status = DeveloperCommand.git(
         .init(
           directory: record.path,
           arguments: [
             "status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignored=matching",
-            "--ignore-submodules=none",
+            "--ignore-submodules=all",
           ]))
       if status.status != 0 {
         blocker = "Could not verify every local file"

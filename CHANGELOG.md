@@ -48,7 +48,8 @@
 - Fix a hang when many commands ran at once.
 - Git runs with fsmonitor, hooks, the untracked cache and the repository's own clean and smudge filters turned
   off, so a cloned repository's config can't make BlitzClean run a command while it reads branches and changes.
-  Filters from your global config, such as Git LFS, keep working.
+  Filters from your global config, such as Git LFS, keep working. Filters are read from the worktree's own
+  config too, status never descends into submodules, and a worktree with submodules is left for you to review.
 
 ### BlitzClean Dev
 

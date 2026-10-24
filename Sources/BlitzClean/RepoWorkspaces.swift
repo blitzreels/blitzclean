@@ -63,7 +63,10 @@ enum GitCheckoutReader {
       DeveloperCommand.git(
         .init(
           directory: path,
-          arguments: ["status", "--porcelain=v1", "--branch", "--untracked-files=normal"])
+          arguments: [
+            "status", "--porcelain=v1", "--branch", "--untracked-files=normal",
+            "--ignore-submodules=all",
+          ])
       ).read { parse(.init(path: path, commonDirectory: commonDirectory, status: $0)) }
     }
   }

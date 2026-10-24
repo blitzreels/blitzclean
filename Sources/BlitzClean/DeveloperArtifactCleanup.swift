@@ -58,7 +58,7 @@ enum DeveloperArtifactCleanup {
       {
         return failed(reason)
       }
-      guard let safety = DeveloperCommand.gitArguments(expected.repository) else {
+      guard let safety = DeveloperCommand.gitArguments([expected.repository, artifact.path]) else {
         return failed("This repository defines a filter BlitzClean can't turn off safely.")
       }
       let result = DeveloperCommand.run(
@@ -139,7 +139,7 @@ enum DeveloperArtifactCleanup {
       return failed("Files are open in an app. Close the project and try again.")
     }
     let before = CleanupVolume.read(artifact.path)
-    guard let safety = DeveloperCommand.gitArguments(expected.repository) else {
+    guard let safety = DeveloperCommand.gitArguments([expected.repository, artifact.path]) else {
       return failed("This repository defines a filter BlitzClean can't turn off safely.")
     }
     let result = DeveloperCommand.run(

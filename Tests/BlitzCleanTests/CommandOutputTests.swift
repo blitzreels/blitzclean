@@ -360,3 +360,86 @@ struct GitFilterTests {
       GitFilters.repositoryNames(.init(status: 128, output: "", failure: "fatal")) == nil)
   }
 }
+
+struct GitScopeTests {
+  private struct Repository {
+    let root: URL
+    let repository: URL
+    let marker: URL
+
+    init() throws {
+      root = FileManager.default.temporaryDirectory.appendingPathComponent("git-scope-\(UUID())")
+      repository = root.appendingPathComponent("repo")
+      marker = root.appendingPathComponent("ran")
+      try FileManager.default.createDirectory(at: repository, withIntermediateDirectories: true)
+      try "hi\n".write(
+        to: repository.appendingPathComponent("a.txt"), atomically: true, encoding: .utf8)
+      try "* filter=evil\n".write(
+        to: repository.appendingPathComponent(".gitattributes"), atomically: true, encoding: .utf8)
+    }
+
+    func git(_ directory: URL, _ arguments: [String]) -> Int32 {
+      DeveloperCommand.git(.init(directory: directory.path, arguments: arguments)).status
+    }
+
+    func commit(_ directory: URL) {
+      _ = git(directory, ["add", "."])
+      _ = git(directory, ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "x"])
+    }
+
+    func makeStale(_ file: URL) throws {
+      try FileManager.default.setAttributes(
+        [.modificationDate: Date(timeIntervalSince1970: 1_577_836_800)], ofItemAtPath: file.path)
+    }
+  }
+
+  @Test func worktreeScopedFilterNeverRunsDuringRemove() throws {
+    let fixture = try Repository()
+    defer { try? FileManager.default.removeItem(at: fixture.root) }
+    let tree = fixture.root.appendingPathComponent("tree")
+    #expect(fixture.git(fixture.repository, ["init", "-q"]) == 0)
+    fixture.commit(fixture.repository)
+    #expect(fixture.git(fixture.repository, ["worktree", "add", "-q", tree.path]) == 0)
+    #expect(fixture.git(fixture.repository, ["config", "extensions.worktreeConfig", "true"]) == 0)
+    #expect(
+      fixture.git(
+        tree, ["config", "--worktree", "filter.evil.clean", "touch '\(fixture.marker.path)'; cat"])
+        == 0)
+    try fixture.makeStale(tree.appendingPathComponent("a.txt"))
+    let safety = try #require(
+      DeveloperCommand.gitArguments([fixture.repository.path, tree.path]))
+    _ = DeveloperCommand.run(
+      .init(
+        executable: "/usr/bin/git",
+        arguments: safety + ["-C", fixture.repository.path, "worktree", "remove", "--", tree.path],
+        timeout: 30, maximumBytes: 65_536))
+    #expect(!FileManager.default.fileExists(atPath: fixture.marker.path))
+  }
+
+  @Test func submoduleFilterNeverRunsDuringStatus() throws {
+    let fixture = try Repository()
+    defer { try? FileManager.default.removeItem(at: fixture.root) }
+    let parent = fixture.root.appendingPathComponent("parent")
+    try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
+    #expect(fixture.git(fixture.repository, ["init", "-q"]) == 0)
+    fixture.commit(fixture.repository)
+    #expect(fixture.git(parent, ["init", "-q"]) == 0)
+    #expect(
+      fixture.git(
+        parent,
+        [
+          "-c", "protocol.file.allow=always", "submodule", "add", "-q", fixture.repository.path,
+          "sub",
+        ])
+        == 0)
+    fixture.commit(parent)
+    let submodule = parent.appendingPathComponent("sub")
+    #expect(
+      fixture.git(
+        submodule, ["config", "filter.evil.clean", "touch '\(fixture.marker.path)'; cat"])
+        == 0)
+    try fixture.makeStale(submodule.appendingPathComponent("a.txt"))
+    _ = GitCheckoutReader.read(parent.path)
+    #expect(!FileManager.default.fileExists(atPath: fixture.marker.path))
+  }
+}
