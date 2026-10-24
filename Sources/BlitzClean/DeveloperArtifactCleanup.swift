@@ -61,7 +61,8 @@ enum DeveloperArtifactCleanup {
       let result = DeveloperCommand.run(
         .init(
           executable: "/usr/bin/git",
-          arguments: ["-C", expected.repository, "worktree", "remove", "--", artifact.path],
+          arguments: DeveloperCommand.gitSafety
+            + ["-C", expected.repository, "worktree", "remove", "--", artifact.path],
           timeout: 120, maximumBytes: 65_536))
       removed = result.status == 0 && !FileManager.default.fileExists(atPath: artifact.path)
     case .dependencies:
@@ -138,7 +139,7 @@ enum DeveloperArtifactCleanup {
     let result = DeveloperCommand.run(
       .init(
         executable: "/usr/bin/git",
-        arguments: [
+        arguments: DeveloperCommand.gitSafety + [
           "-C", expected.repository, "worktree", "remove", "--force", "--", artifact.path,
         ],
         timeout: 180, maximumBytes: 65_536))

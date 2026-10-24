@@ -297,3 +297,22 @@ struct DockerParserTests {
     #expect(throws: (any Error).self) { try DockerProjectService.parse(truncated(real)) }
   }
 }
+
+struct GitSafetyTests {
+  @Test func repositoryFsmonitorCommandNeverRuns() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("fsmonitor-\(UUID())")
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let marker = root.appendingPathComponent("ran")
+    #expect(
+      DeveloperCommand.git(.init(directory: root.path, arguments: ["init", "-q"])).status == 0)
+    #expect(
+      DeveloperCommand.git(
+        .init(
+          directory: root.path,
+          arguments: ["config", "core.fsmonitor", "touch '\(marker.path)'; false"])
+      ).status == 0)
+    _ = DeveloperCommand.git(.init(directory: root.path, arguments: ["status", "--porcelain=v1"]))
+    #expect(!FileManager.default.fileExists(atPath: marker.path))
+  }
+}

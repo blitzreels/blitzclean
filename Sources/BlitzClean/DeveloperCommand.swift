@@ -20,11 +20,19 @@ enum DeveloperCommand {
     let arguments: [String]
   }
 
+  /// Git runs in folders BlitzClean finds on its own, including repositories the user cloned but never
+  /// chose here. A repository's own config can name commands git runs during `status` (fsmonitor) or
+  /// other operations (hooks), so every call turns those off.
+  static let gitSafety = [
+    "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "-c",
+    "core.untrackedCache=false",
+  ]
+
   static func git(_ request: GitRequest) -> CleanupCommandResult {
     run(
       .init(
         executable: "/usr/bin/git",
-        arguments: ["--no-optional-locks", "-C", request.directory] + request.arguments,
+        arguments: gitSafety + ["--no-optional-locks", "-C", request.directory] + request.arguments,
         timeout: 12, maximumBytes: 262_144))
   }
 
