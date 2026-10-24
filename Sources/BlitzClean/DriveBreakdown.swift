@@ -779,6 +779,32 @@ struct DriveScanner: Sendable {
   }
 }
 
+/// One iOS simulator version registered with the simulator service, as `simctl runtime list -j` reports it.
+struct SimulatorRuntimeCopy: Decodable, Equatable, Sendable {
+  let identifier: String
+  let build: String
+  let path: String?
+  let parentImagePath: String?
+
+  /// Whether this registration was made from the download at `asset`, so deleting it deletes the download.
+  func uses(_ asset: String) -> Bool {
+    [path, parentImagePath].contains { $0?.hasPrefix(asset + "/") == true }
+  }
+}
+
+enum SimulatorRuntimeCopies {
+  /// Nil when the output is not the JSON object of runtimes, so a failed read never looks like "none installed".
+  static func read(_ json: String) -> [SimulatorRuntimeCopy]? {
+    let decoded = try? JSONDecoder().decode(
+      [String: SimulatorRuntimeCopy].self, from: Data(json.utf8))
+    return decoded.map { Array($0.values) }
+  }
+
+  static func list() -> Result<[SimulatorRuntimeCopy], CommandReadError> {
+    DriveRemover.simctl(["runtime", "list", "-j"]).read(read)
+  }
+}
+
 /// One downloaded iOS simulator version under `DriveCatalog.runtimeRoot`.
 struct SimulatorRuntimeAsset: Equatable, Sendable {
   let version: String

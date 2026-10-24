@@ -4,11 +4,14 @@ import SwiftUI
 struct WorkspaceProjectsView: View {
   @ObservedObject var processes: DevProcessModel
   @ObservedObject var controller: WorkspaceController
+  @ObservedObject var monitor: SystemMonitor
+  @StateObject var repos = RepoWorkspaceModel()
+  @State var expandedIdle: Set<String> = []
   @State private var query = ""
   @State private var editing: WorkspacePreference?
   @State private var pending: LeftoverAction?
   @State private var showsAllLeftovers = false
-  @StateObject private var docker = DockerProjectsModel()
+  @StateObject var docker = DockerProjectsModel()
 
   private static let leftoverLimit = 8
 
@@ -29,36 +32,11 @@ struct WorkspaceProjectsView: View {
         if let action = processes.projectAction {
           BlitzStatusLine(text: action, tone: .working)
         }
-        if let status = controller.status ?? processes.statusMessage {
+        if let status = controller.status ?? processes.statusMessage ?? repos.message {
           BlitzStatusLine(text: status, tone: .working)
         }
         if let message = docker.message { BlitzStatusLine(text: message, tone: .working) }
-        let projects = WorkspaceCatalog.includingDocker(
-          .init(
-            projects: processes.projects(controller.preferences),
-            containers: docker.snapshot?.containers ?? [])
-        ).filter { project in
-          query.isEmpty || project.preference.name.localizedCaseInsensitiveContains(query)
-            || project.directory.localizedCaseInsensitiveContains(query)
-            || project.servers.flatMap(\.listeningPorts).contains { String($0).contains(query) }
-        }
-        let running = projects.filter(\.isRunning)
-        let stopped = projects.filter { !$0.isRunning }
-        let leftovers = processes.visibleLeftovers.filter { query.isEmpty || $0.matches(query) }
-        if !running.isEmpty { section("Active projects", running) }
-        if let message = processes.leftoverMessage {
-          BlitzStatusLine(text: message, tone: .working)
-        }
-        if !leftovers.isEmpty { leftoverSection(leftovers) }
-        if !processes.hiddenLeftoverNames.isEmpty, query.isEmpty { hiddenLeftoversLine }
-        if !stopped.isEmpty { section("Saved projects", stopped) }
-        if projects.isEmpty && leftovers.isEmpty {
-          Text(
-            query.isEmpty
-              ? "No projects yet. Running projects appear here; use Add project to save one."
-              : "No projects match this search"
-          ).font(BlitzType.body).foregroundStyle(BlitzUI.secondaryText)
-        }
+        sections
       }.padding(BlitzUI.pagePadding)
     }
     .safeAreaInset(edge: .bottom, spacing: 0) {
@@ -75,16 +53,65 @@ struct WorkspaceProjectsView: View {
     .task {
       while !Task.isCancelled {
         docker.refresh()
-        try? await Task.sleep(for: .seconds(20))
+        try? await Task.sleep(for: .seconds(RefreshCadence.interval(.docker)))
       }
     }
     .onChange(of: controller.preferences) { processes.updateProjectTargets() }
+    .onChange(of: processes.scannedAt, initial: true) { readRepositories() }
     .safeAreaInset(edge: .top, spacing: 0) {
       HStack(spacing: 8) {
         BlitzSearchField(title: "Search projects, paths or ports", text: $query)
         Button("Add project", systemImage: "plus") { chooseProject() }.blitzButton(.secondary)
       }.padding(.horizontal, BlitzUI.pagePadding).padding(.vertical, 12)
         .background(BlitzUI.canvasBackground)
+    }
+  }
+
+  private var filteredProjects: [WorkspaceProject] {
+    WorkspaceCatalog.includingDocker(
+      .init(
+        projects: processes.projects(controller.preferences),
+        containers: docker.snapshot?.containers ?? [])
+    ).filter { project in
+      query.isEmpty || project.preference.name.localizedCaseInsensitiveContains(query)
+        || project.directory.localizedCaseInsensitiveContains(query)
+        || project.servers.flatMap(\.listeningPorts).contains { String($0).contains(query) }
+    }
+  }
+
+  @ViewBuilder private var sections: some View {
+    let projects = filteredProjects
+    let grouped = RepoGrouping.group(
+      .init(
+        projects: projects,
+        agents: processes.threads.filter { query.isEmpty || $0.matches(query) },
+        checkouts: repos.checkouts, worktrees: repos.worktrees))
+    let leftovers: [LeftoverProcess] = processes.visibleLeftovers.filter {
+      query.isEmpty || $0.matches(query)
+    }
+    let stopped = projects.filter { !$0.isRunning }
+    if query.isEmpty, !processes.threads.isEmpty {
+      AgentBudgetCard(
+        budget: AgentBudget.make(
+          .init(
+            agents: processes.threads, availableBytes: monitor.snapshot.ramAvailable,
+            pressure: processes.pressure.risk)),
+        pressure: processes.pressure.risk)
+    }
+    if !grouped.repos.isEmpty { repoSection(grouped.repos) }
+    if !grouped.others.isEmpty { section("Other running folders", grouped.others) }
+    if let message = processes.leftoverMessage {
+      BlitzStatusLine(text: message, tone: .working)
+    }
+    if !leftovers.isEmpty { leftoverSection(leftovers) }
+    if !processes.hiddenLeftoverNames.isEmpty, query.isEmpty { hiddenLeftoversLine }
+    if !stopped.isEmpty { section("Saved projects", stopped) }
+    if projects.isEmpty && leftovers.isEmpty {
+      Text(
+        query.isEmpty
+          ? "No projects yet. Running projects appear here; use Add project to save one."
+          : "No projects match this search"
+      ).font(BlitzType.body).foregroundStyle(BlitzUI.secondaryText)
     }
   }
 
@@ -129,29 +156,7 @@ struct WorkspaceProjectsView: View {
         )
         .font(BlitzType.caption).foregroundStyle(BlitzUI.secondaryText)
         .lineLimit(1).truncationMode(.middle)
-        let ports = project.servers.flatMap { server in
-          server.listeningPorts.map { (name: server.name, port: $0) }
-        }
-        if !ports.isEmpty {
-          HStack(spacing: 6) {
-            ForEach(ports.prefix(4), id: \.port) { item in
-              Button {
-                if let url = URL(string: "http://localhost:\(item.port)") {
-                  NSWorkspace.shared.open(url)
-                }
-              } label: {
-                HStack(spacing: 4) {
-                  Image(systemName: "globe").font(.system(size: 9, weight: .semibold))
-                  Text("localhost:\(String(item.port))").monospacedDigit()
-                }
-                .font(BlitzType.caption).foregroundStyle(BlitzUI.supportingText)
-                .padding(.horizontal, 7).padding(.vertical, 2)
-                .background(Color.white.opacity(0.06), in: .capsule)
-              }.buttonStyle(.plain).blitzPointingHand()
-                .help("Open \(item.name) at http://localhost:\(String(item.port))")
-            }
-          }
-        }
+        portLinks(project)
         if project.isRunning, let impact = stopImpact(project) {
           Text(impact).font(BlitzType.caption).foregroundStyle(BlitzUI.tertiaryText)
             .lineLimit(2).fixedSize(horizontal: false, vertical: true)
@@ -210,47 +215,77 @@ struct WorkspaceProjectsView: View {
         }
       }.frame(width: 96, height: 34)
       BlitzActionMenu(label: "Options for \(project.preference.name)") {
-        if let target = processes.projectTargets[project.directory] {
-          Button(target.isPaused ? "Resume workers" : "Suspend workers — keeps memory") {
-            processes.pauseProject(target)
-          }
-          .disabled(project.preference.keepRunning && !target.isPaused)
-          Divider()
-        }
-        let autoPause = processes.autoPauseDirectories.contains(project.directory)
-        Button {
-          processes.setAutoPause(.init(directory: project.directory, enabled: !autoPause))
-        } label: {
-          MenuCheckLabel(title: "Pause automatically under pressure", isOn: autoPause)
-        }
-        .disabled(
-          project.preference.keepRunning || processes.projectTargets[project.directory] == nil)
-        if !project.containers.isEmpty {
-          Button("Assign containers to project…") {
-            let panel = NSOpenPanel()
-            panel.canChooseFiles = false
-            panel.canChooseDirectories = true
-            panel.allowsMultipleSelection = false
-            if panel.runModal() == .OK, let url = panel.url {
-              docker.assign(.init(containers: project.containers, directory: url.path))
-            }
-          }
-        }
-        if !project.directory.hasPrefix("docker:") {
-          Button("Configure project…") { editing = project.preference }
-          Button {
-            controller.keep(
-              .init(preference: project.preference, keep: !project.preference.keepRunning))
-          } label: {
-            MenuCheckLabel(title: "Keep running", isOn: project.preference.keepRunning)
-          }
-        }
+        projectMenu(project)
       }.disabled(busy)
     }.blitzRow()
   }
 
+  @ViewBuilder func portLinks(_ project: WorkspaceProject) -> some View {
+    let ports = project.servers.flatMap { server in
+      server.listeningPorts.map { (name: server.name, port: $0) }
+    }
+    if !ports.isEmpty {
+      HStack(spacing: 6) {
+        ForEach(ports.prefix(4), id: \.port) { item in
+          Button {
+            if let url = URL(string: "http://localhost:\(item.port)") {
+              NSWorkspace.shared.open(url)
+            }
+          } label: {
+            HStack(spacing: 4) {
+              Image(systemName: "globe").font(.system(size: 9, weight: .semibold))
+              Text("localhost:\(String(item.port))").monospacedDigit()
+            }
+            .font(BlitzType.caption).foregroundStyle(BlitzUI.supportingText)
+            .padding(.horizontal, 7).padding(.vertical, 2)
+            .background(Color.white.opacity(0.06), in: .capsule)
+          }.buttonStyle(.plain).blitzPointingHand()
+            .help("Open \(item.name) at http://localhost:\(String(item.port))")
+        }
+      }
+    }
+  }
+
+  @ViewBuilder func projectMenu(_ project: WorkspaceProject) -> some View {
+    if let target = processes.projectTargets[project.directory] {
+      Button(target.isPaused ? "Resume workers" : "Suspend workers — keeps memory") {
+        processes.pauseProject(target)
+      }
+      .disabled(project.preference.keepRunning && !target.isPaused)
+      Divider()
+    }
+    let autoPause = processes.autoPauseDirectories.contains(project.directory)
+    Button {
+      processes.setAutoPause(.init(directory: project.directory, enabled: !autoPause))
+    } label: {
+      MenuCheckLabel(title: "Pause automatically under pressure", isOn: autoPause)
+    }
+    .disabled(
+      project.preference.keepRunning || processes.projectTargets[project.directory] == nil)
+    if !project.containers.isEmpty {
+      Button("Assign containers to project…") {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        if panel.runModal() == .OK, let url = panel.url {
+          docker.assign(.init(containers: project.containers, directory: url.path))
+        }
+      }
+    }
+    if !project.directory.hasPrefix("docker:") {
+      Button("Configure project…") { editing = project.preference }
+      Button {
+        controller.keep(
+          .init(preference: project.preference, keep: !project.preference.keepRunning))
+      } label: {
+        MenuCheckLabel(title: "Keep running", isOn: project.preference.keepRunning)
+      }
+    }
+  }
+
   /// Plain account of what Stop ends and what it leaves alone.
-  private func stopImpact(_ project: WorkspaceProject) -> String? {
+  func stopImpact(_ project: WorkspaceProject) -> String? {
     let processCount =
       processes.projectTargets[project.directory]?.identities.count ?? project.servers.count
     let containers = project.containers.filter(\.running).count
@@ -271,7 +306,7 @@ struct WorkspaceProjectsView: View {
       "Stop ends \(ends.joined(separator: " and "))\(frees). Code, files and database volumes stay."
   }
 
-  private func stopWorkspace(_ project: WorkspaceProject) {
+  func stopWorkspace(_ project: WorkspaceProject) {
     if let target = processes.projectTargets[project.directory] {
       processes.stopProjectWorkers(target)
     } else if !project.servers.isEmpty {
@@ -333,95 +368,6 @@ struct WorkspaceProjectsView: View {
     editing = WorkspacePreference(
       directory: WorkspacePreferences.canonical(path),
       name: URL(fileURLWithPath: path).lastPathComponent, keepRunning: false, startCommand: nil)
-  }
-}
-
-struct LeftoverProcessRow: View {
-  let process: LeftoverProcess
-  let isBusy: Bool
-  let onQuit: () -> Void
-  let onForceQuit: () -> Void
-  let onHide: () -> Void
-
-  var body: some View {
-    HStack(spacing: 12) {
-      ProjectIcon(
-        directory: process.workingDirectory, processName: process.executableName, size: 28,
-        fallbackSymbol: "terminal.fill")
-      VStack(alignment: .leading, spacing: 2) {
-        Text(process.title).font(BlitzType.rowTitle).lineLimit(1)
-        Text(detail).font(BlitzType.caption).foregroundStyle(BlitzUI.secondaryText)
-          .lineLimit(1).truncationMode(.middle)
-      }.frame(maxWidth: .infinity, alignment: .leading)
-        .help("Still running after the app or terminal that started it closed.")
-      BlitzTrailingValue(
-        value: process.memoryBytes.map(ByteText.full) ?? "—",
-        detail: "\(process.cpuPercent.formatted(.number.precision(.fractionLength(0))))% CPU"
-      ).frame(width: 80, alignment: .trailing)
-      BlitzProcessButton(
-        title: "Quit", label: "Quit \(process.title)", isBusy: isBusy, action: onQuit
-      )
-      .frame(width: 96, alignment: .trailing)
-      .help("Ask \(process.title) to quit.")
-      BlitzActionMenu(label: "More actions for \(process.title)") {
-        Button("Force Quit…", role: .destructive, action: onForceQuit)
-        if let directory = process.workingDirectory {
-          Button("Show folder in Finder") { Finder.reveal(directory) }
-        }
-        Button("Copy process ID") { Pasteboard.copy(String(process.processID)) }
-        Divider()
-        Button("Hide \(process.executableName)", action: onHide)
-      }.disabled(isBusy)
-    }.blitzRow()
-  }
-
-  private var detail: String {
-    let home = FileManager.default.homeDirectoryForCurrentUser.path
-    let directory = process.workingDirectory.map { path in
-      path == home || path.hasPrefix(home + "/") ? "~" + path.dropFirst(home.count) : path
-    }
-    return [
-      directory, "PID \(process.processID)",
-      "up \(MemoryControlView.uptime(since: process.startedAt))",
-    ].compactMap { $0 }.joined(separator: " · ")
-  }
-}
-
-private enum LeftoverAction {
-  case quit([LeftoverProcess])
-  case forceQuit(LeftoverProcess)
-
-  var processes: [LeftoverProcess] {
-    switch self {
-    case .quit(let processes): processes
-    case .forceQuit(let process): [process]
-    }
-  }
-
-  var force: Bool {
-    if case .forceQuit = self { return true }
-    return false
-  }
-
-  var title: String {
-    switch self {
-    case .quit(let processes): "Quit \(processes.count) leftover processes?"
-    case .forceQuit(let process): "Force quit \(process.title)?"
-    }
-  }
-
-  var message: String {
-    let memory = ByteText.full(processes.compactMap(\.memoryBytes).reduce(0, +))
-    return switch self {
-    case .quit(let processes):
-      "The app or terminal that started them already closed. Each one is asked to quit and can still save its work. \(processes.map(\.title).joined(separator: ", ")) · \(memory)."
-    case .forceQuit:
-      "It ends immediately and cannot save its work. \(memory)."
-    }
-  }
-
-  var confirmTitle: String {
-    force ? "Force Quit" : "Quit all"
   }
 }
 

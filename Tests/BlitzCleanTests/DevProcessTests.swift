@@ -33,11 +33,12 @@ struct DevProcessTests {
   }
 
   @Test
-  func parsesPSRows() {
-    let rows = RawProcessParser.records(
-      "86146 67252   501   1.1 353680    16:53:21 ttys002  /Users/me/.local/bin/claude --session-id abc\n"
-        + " 1907     1   501   0,0   8800 01-16:50:18 ??       npm run dev\n"
-    )
+  func parsesPSRows() throws {
+    let rows = try #require(
+      RawProcessParser.records(
+        "86146 67252   501   1.1 353680    16:53:21 ttys002  /Users/me/.local/bin/claude --session-id abc\n"
+          + " 1907     1   501   0,0   8800 01-16:50:18 ??       npm run dev\n"
+      ))
 
     #expect(rows.count == 2)
     #expect(rows[0].processID == 86146)

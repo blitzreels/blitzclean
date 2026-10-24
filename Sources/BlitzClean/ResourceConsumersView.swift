@@ -50,14 +50,28 @@ struct ConsumerCommands {
   }
 
   /// Stops several consumers in turn; app quits run one after another because each waits for its app.
+  /// Stops every consumer, waits for them to finish, then reports how many closed and what memory came back.
   func stopAll(_ consumers: [ResourceConsumer]) {
     let apps = consumers.compactMap { app($0)?.app }
+    let before = ResourceReading.now()
     for consumer in consumers where consumer.canSignal {
       processes.signal(.init(consumer: consumer, signal: .quit))
     }
+    let processes = processes
     Task {
       for app in apps { await memory.quit(app) }
+      for _ in 0..<60 where consumers.contains(where: { processes.actingConsumers.contains($0.id) })
+      {
+        try? await Task.sleep(for: .milliseconds(250))
+      }
+      let after = await ResourceReading.settled()
       processes.refresh()
+      let running = Set(
+        consumers.flatMap(\.processIDs).filter { kill($0, 0) == 0 || errno == EPERM })
+      let closed = consumers.filter { $0.processIDs.allSatisfy { !running.contains($0) } }.count
+      processes.report(
+        "Closed \(closed) of \(consumers.count). "
+          + MeasuredResult.memory(.init(before: before, after: after)))
     }
   }
 
@@ -333,14 +347,13 @@ struct ResourceVerdict {
 struct ResourceVerdictCard<Chart: View>: View {
   let verdict: ResourceVerdict
   let symbol: String
-  let color: Color
   let message: String?
   @ViewBuilder let chart: () -> Chart
 
   var body: some View {
     VStack(alignment: .leading, spacing: 16) {
       HStack(alignment: .center, spacing: 14) {
-        BlitzColorTile(symbol: symbol, color: color, size: 40)
+        BlitzIconTile(symbol: symbol, tone: verdict.tone, size: 40)
         VStack(alignment: .leading, spacing: 3) {
           HStack(spacing: 8) {
             Text(verdict.title).font(.system(size: 20, weight: .semibold))

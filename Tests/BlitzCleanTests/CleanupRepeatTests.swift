@@ -78,10 +78,7 @@ struct CleanupRepeatTests {
     history.record(win("folders", day: 1, paths: [folder.path, missing.path], bytes: 1024))
     let model = RepeatCleanupModel(history: history, home: root.path)
     model.check(.init(force: true, scope: .overview, measure: { _ in nil }))
-    for _ in 0..<1000 where model.isChecking {
-      try await Task.sleep(for: .milliseconds(10))
-    }
-    #expect(!model.isChecking)
+    #expect(await eventually { !model.isChecking })
     #expect(model.statuses[folder.path]?.bytes == nil)
     #expect(model.statuses[folder.path]?.blocker != nil)
     #expect(model.statuses[missing.path] == .init(bytes: nil, blocker: nil))
@@ -99,17 +96,11 @@ struct CleanupRepeatTests {
     history.record(win("project", day: 1, paths: [home + "/dev/app/.next"], bytes: 1024))
     let model = RepeatCleanupModel(history: history, home: home)
     model.check(.init(force: true, scope: .overview, measure: { _ in 2048 }))
-    for _ in 0..<1000 where model.isChecking {
-      try await Task.sleep(for: .milliseconds(10))
-    }
-    #expect(!model.isChecking)
+    #expect(await eventually { !model.isChecking })
     #expect(model.statuses[home + "/dev/app/.next"]?.bytes == 2048)
     #expect(model.statuses[home + "/Library/pnpm/store"] == nil)
     model.check(.init(force: false, scope: .all, measure: { _ in 4096 }))
-    for _ in 0..<1000 where model.isChecking {
-      try await Task.sleep(for: .milliseconds(10))
-    }
-    #expect(!model.isChecking)
+    #expect(await eventually { !model.isChecking })
     #expect(model.statuses[home + "/Library/pnpm/store"]?.bytes == 4096)
   }
 
@@ -125,10 +116,7 @@ struct CleanupRepeatTests {
     let model = RepeatCleanupModel(history: history, home: home)
     model.check(.init(force: true, scope: .overview, measure: { _ in 2048 }))
     model.check()
-    for _ in 0..<1000 where model.isChecking {
-      try await Task.sleep(for: .milliseconds(10))
-    }
-    #expect(!model.isChecking)
+    #expect(await eventually { !model.isChecking })
     #expect(model.statuses[home + "/Library/pnpm/store"]?.bytes == 2048)
   }
 

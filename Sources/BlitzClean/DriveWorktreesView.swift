@@ -20,9 +20,7 @@ struct DriveWorktreesSection: View {
     let shown = showsAll ? worktrees : Array(worktrees.prefix(Self.limit))
     VStack(spacing: 0) {
       HStack(spacing: 12) {
-        BlitzColorTile(
-          symbol: "arrow.triangle.branch", color: Color(red: 0.95, green: 0.42, blue: 0.20),
-          size: 28)
+        BlitzIconTile(symbol: "arrow.triangle.branch", tone: .muted, size: 28)
         VStack(alignment: .leading, spacing: 3) {
           Text("Git worktrees").font(.system(size: 14, weight: .semibold))
           Text(summary(count: worktrees.count, removable: removable.count))

@@ -38,11 +38,13 @@ struct SimulatorDeviceService: Sendable {
       .init(
         executable: "/usr/bin/xcrun", arguments: ["simctl", "list", "devices", "--json"],
         timeout: 8, maximumBytes: 2 * 1_024 * 1_024))
-    guard result.status == 0, let devices = Self.decode(result.output) else {
+    switch result.read(Self.decode) {
+    case .success(let devices): return devices
+    case .failure(let error):
       throw Failure.message(
-        "Could not read simulator devices. Check that Xcode is installed, then refresh.")
+        "Couldn't read simulator devices: \(error.reason). Check that Xcode is installed, then refresh."
+      )
     }
-    return devices
   }
 
   func execute(_ request: Request) throws -> Outcome {

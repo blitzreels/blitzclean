@@ -88,20 +88,19 @@ enum LeftoverProcessFinder {
     }
   }
 
-  static func find(_ input: Input) -> [LeftoverProcess]? {
+  /// Fails when launchd's job list could not be read, since any candidate might be a managed job.
+  static func find(_ input: Input) -> Result<[LeftoverProcess], CommandReadError> {
     let candidates = candidates(input)
-    guard !candidates.isEmpty else { return [] }
-    guard let jobs = managedProcessIDs() else { return nil }
-    return candidates.filter { !jobs.contains($0.processID) }
+    guard !candidates.isEmpty else { return .success([]) }
+    return managedProcessIDs().map { jobs in candidates.filter { !jobs.contains($0.processID) } }
   }
 
-  static func managedProcessIDs() -> Set<Int32>? {
-    let result = DeveloperCommand.run(
+  static func managedProcessIDs() -> Result<Set<Int32>, CommandReadError> {
+    DeveloperCommand.run(
       .init(
         executable: "/bin/launchctl", arguments: ["list"], timeout: 3,
-        maximumBytes: 1_024 * 1_024))
-    guard result.status == 0 else { return nil }
-    return launchdJobs(result.output)
+        maximumBytes: 1_024 * 1_024)
+    ).read(launchdJobs)
   }
 
   static func launchdJobs(_ output: String) -> Set<Int32>? {
@@ -190,16 +189,19 @@ struct LeftoverStopRequest: Sendable {
 
 enum LeftoverProcessStopper {
   static func signal(_ request: LeftoverStopRequest) -> Bool {
-    signals([request]).count == 1
+    (try? signals([request]).get())?.count == 1
   }
 
-  static func signals(_ requests: [LeftoverStopRequest]) -> [LeftoverStopRequest] {
-    guard !requests.isEmpty, let managedIDs = LeftoverProcessFinder.managedProcessIDs() else {
-      return []
-    }
-    let apps = LeftoverProcessFinder.RunningApps.current()
-    return requests.filter {
-      signalVerified(.init(request: $0, managedIDs: managedIDs, apps: apps))
+  /// The requests that were signalled. Fails, signalling nothing, when launchd's jobs could not be read.
+  static func signals(_ requests: [LeftoverStopRequest]) -> Result<
+    [LeftoverStopRequest], CommandReadError
+  > {
+    guard !requests.isEmpty else { return .success([]) }
+    return LeftoverProcessFinder.managedProcessIDs().map { managedIDs in
+      let apps = LeftoverProcessFinder.RunningApps.current()
+      return requests.filter {
+        signalVerified(.init(request: $0, managedIDs: managedIDs, apps: apps))
+      }
     }
   }
 

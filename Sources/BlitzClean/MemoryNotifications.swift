@@ -5,6 +5,7 @@ extension Notification.Name {
   static let openWorkspace = Notification.Name("BlitzClean.openWorkspace")
   static let openAppRecovery = Notification.Name("BlitzClean.openAppRecovery")
   static let openMemoryRescue = Notification.Name("BlitzClean.openMemoryRescue")
+  static let openProjects = Notification.Name("BlitzClean.openProjects")
   static let openStorageReview = Notification.Name("BlitzClean.openStorageReview")
 }
 
@@ -118,14 +119,36 @@ final class MemoryNotifications: NSObject, UNUserNotificationCenterDelegate {
   ) {
     if response.actionIdentifier != UNNotificationDismissActionIdentifier {
       let name: Notification.Name =
-        response.notification.request.content.categoryIdentifier == "storage"
-        ? .openStorageReview : .openMemoryRescue
+        switch response.notification.request.content.categoryIdentifier {
+        case "storage": .openStorageReview
+        case "agents": .openProjects
+        default: .openMemoryRescue
+        }
       Task { @MainActor in
         NotificationCenter.default.post(name: name, object: nil)
         NSApp.activate(ignoringOtherApps: true)
       }
     }
     completionHandler()
+  }
+
+  func sendAgents(_ budget: AgentBudget) async -> Bool {
+    guard isAppBundle, authorized else { return false }
+    let content = UNMutableNotificationContent()
+    content.title = "No memory left for another agent"
+    content.body =
+      "\(budget.sessions) agent sessions use \(ByteText.compact(budget.memoryBytes)). "
+      + "The newest one pushes memory to disk and slows every app. Finish or pause one first."
+    content.categoryIdentifier = "agents"
+    content.sound = .default
+    do {
+      try await UNUserNotificationCenter.current().add(
+        UNNotificationRequest(identifier: "agent-guard", content: content, trigger: nil))
+      return true
+    } catch {
+      status = "Agent notification could not be scheduled: \(error.localizedDescription)"
+      return false
+    }
   }
 
   func sendDisk(_ assessment: DiskAssessment) async -> Bool {

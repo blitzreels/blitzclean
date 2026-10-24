@@ -31,6 +31,20 @@ Memory owns pressure history and AI sessions, while Storage Browse owns director
 These tools share the dashboard instead of opening a separate developer window.
 Deeper scanners run on demand or under their own refresh policies.
 
+## Refresh cadence and measured results
+
+Every background reader takes its interval from `RefreshCadence` (system totals, process scan, per-app memory,
+Revive checks, Docker). Intervals grow while another app is in front and double or triple at warning and
+critical memory pressure, so BlitzClean slows down with the Mac instead of adding load. Pressure protection
+keeps its own 2-second sampler and the cleanup history sync stays at 3 seconds (one small file).
+
+Actions report what they changed, not what they expected to free: `ResourceReading` takes free disk and free
+memory before an action and again once macOS has settled, and `MeasuredResult` words the difference. Drive
+deletions, Quit and Stop, and Close idle use it.
+
+Overview's decisions live in `OverviewProblems.make`, a pure function of an `Input` snapshot that returns
+problems with an `OverviewFix`; the view only renders cards and performs the fix.
+
 ## Safety boundaries
 
 Cache trees are fingerprinted from file identity, size, type, and modification metadata.

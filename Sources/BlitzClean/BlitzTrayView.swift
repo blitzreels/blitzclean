@@ -91,9 +91,9 @@ struct BlitzTrayView: View {
       openWindow.dashboard()
     } label: {
       HStack(spacing: 12) {
-        BlitzColorTile(
+        BlitzIconTile(
           symbol: isDisk ? "internaldrive.fill" : "exclamationmark",
-          color: capacity.risk.tone.color, size: 28)
+          tone: capacity.risk.tone, size: 28)
         VStack(alignment: .leading, spacing: 2) {
           Text(capacity.title).font(BlitzType.rowTitle).foregroundStyle(BlitzUI.primaryText)
           Text(
@@ -134,7 +134,7 @@ struct BlitzTrayView: View {
       open(vital.page)
     } label: {
       HStack(spacing: 12) {
-        BlitzColorTile(symbol: vital.page.tileSymbol, color: vital.page.color, size: 26)
+        BlitzIconTile(symbol: vital.page.tileSymbol, tone: .muted, size: 26)
         VStack(alignment: .leading, spacing: 6) {
           HStack(alignment: .firstTextBaseline) {
             Text(vital.title).font(BlitzType.body).foregroundStyle(BlitzUI.secondaryText)
@@ -143,7 +143,7 @@ struct BlitzTrayView: View {
               .foregroundStyle(vital.alertColor ?? BlitzUI.primaryText)
               .contentTransition(.numericText())
           }
-          visual(vital.page)
+          visual(vital)
         }
         Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold))
           .foregroundStyle(BlitzUI.tertiaryText)
@@ -152,19 +152,20 @@ struct BlitzTrayView: View {
     }.buttonStyle(BlitzRowButtonStyle(radius: 0)).help("Open \(vital.title)")
   }
 
-  @ViewBuilder private func visual(_ page: CleanPage) -> some View {
-    switch page {
+  @ViewBuilder private func visual(_ vital: MacVital) -> some View {
+    let ink = vital.alertColor ?? BlitzPalette.data
+    switch vital.page {
     case .cpu:
       ResourcePlot(
-        samples: monitor.resourceSamples, kind: .cpu, color: page.color, seconds: 120
+        samples: monitor.resourceSamples, kind: .cpu, color: ink, seconds: 120
       ).frame(height: 20)
     case .memory:
       SegmentedBar(
-        segments: [.init(id: "used", color: page.color, fraction: snapshot.ramUsedRatio)],
+        segments: [.init(id: "used", color: ink, fraction: snapshot.ramUsedRatio)],
         height: 4)
     default:
       SegmentedBar(
-        segments: [.init(id: "used", color: page.color, fraction: snapshot.diskUsedRatio)],
+        segments: [.init(id: "used", color: ink, fraction: snapshot.diskUsedRatio)],
         height: 4)
     }
   }
@@ -175,7 +176,6 @@ struct BlitzTrayView: View {
     let title: String
     let detail: String
     let symbol: String
-    let color: Color
     let actionTitle: String
     let actionSymbol: String
     let perform: () -> Void
@@ -190,7 +190,7 @@ struct BlitzTrayView: View {
     }).max(by: { $0.cpuPercent < $1.cpuPercent }) {
       return Fix(
         title: busy.name, detail: "Using \(CPUText.cores(busy.cpuPercent)) for a while",
-        symbol: "cpu.fill", color: BlitzPalette.cpu, actionTitle: "Pause",
+        symbol: "cpu.fill", actionTitle: "Pause",
         actionSymbol: "pause.fill",
         perform: { processes.signal(.init(consumer: busy, signal: .pause)) })
     }
@@ -210,14 +210,14 @@ struct BlitzTrayView: View {
         detail: idleFor >= ConsumerActivity.idleAfter
           ? "Idle \(ResourceLeadersSection.duration(idleFor)) · frees \(ByteText.compact(target.memoryBytes))"
           : "Frees \(ByteText.compact(target.memoryBytes)) of memory",
-        symbol: "memorychip.fill", color: BlitzPalette.memory, actionTitle: stopTitle,
+        symbol: "memorychip.fill", actionTitle: stopTitle,
         actionSymbol: stopTitle == "Quit" ? "xmark" : "stop.fill",
         perform: { commands.stop(target) })
     }
     if memory.capacity.limit == .disk, memory.capacity.risk > .normal {
       return Fix(
         title: "Disk almost full", detail: "See what you can free on Overview",
-        symbol: "internaldrive.fill", color: BlitzPalette.storage, actionTitle: "Free up space",
+        symbol: "internaldrive.fill", actionTitle: "Free up space",
         actionSymbol: "sparkles", perform: { open(.overview) })
     }
     return nil
@@ -227,7 +227,7 @@ struct BlitzTrayView: View {
     VStack(alignment: .leading, spacing: 8) {
       BlitzGroupLabel(title: "Suggested").padding(.leading, 4)
       HStack(spacing: 12) {
-        BlitzColorTile(symbol: fix.symbol, color: fix.color, size: 26)
+        BlitzIconTile(symbol: fix.symbol, tone: .muted, size: 26)
         VStack(alignment: .leading, spacing: 2) {
           Text(fix.title).font(BlitzType.rowTitle).lineLimit(1).truncationMode(.middle)
           Text(fix.detail).font(BlitzType.caption).foregroundStyle(BlitzUI.secondaryText)
@@ -328,7 +328,7 @@ private struct TrayConsumerRow: View {
             SegmentedBar(
               segments: [
                 .init(
-                  id: "share", color: BlitzPalette.memory,
+                  id: "share", color: BlitzPalette.data,
                   fraction: total == 0 ? 0 : Double(consumer.memoryBytes) / Double(total))
               ], height: 3)
           }
@@ -406,7 +406,7 @@ struct BlitzSettingsView: View {
           "Check for updates automatically",
           isOn: Binding(get: { updates.automaticChecks }, set: { updates.setAutomaticChecks($0) }))
       }
-    }.panelCard(padding: 16)
+    }.blitzCard(padding: 16)
   }
 
   private var projectFolders: some View {
@@ -428,7 +428,7 @@ struct BlitzSettingsView: View {
             .blitzButton(.quiet).controlSize(.small)
         }
       }
-    }.panelCard(padding: 16)
+    }.blitzCard(padding: 16)
   }
 
   private func addRoot() {
@@ -453,12 +453,12 @@ struct BlitzSettingsView: View {
             "Closing the window or pressing ⌘Q keeps monitoring. To exit, choose Stop monitoring and quit from the menu bar’s gear menu."
           )
           .font(BlitzType.caption).foregroundStyle(BlitzUI.secondaryText)
-        }.panelCard(padding: 16)
+        }.blitzCard(padding: 16)
         Toggle(
           "Launch at login",
           isOn: Binding(get: { launchAtLogin.enabled }, set: { launchAtLogin.setEnabled($0) })
         )
-        .panelCard(padding: 16)
+        .blitzCard(padding: 16)
         MemoryGuardControls(model: memory)
         projectFolders
         updatesSection

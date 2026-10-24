@@ -31,7 +31,7 @@ enum MediaProcess {
     let buffer = MediaProcessBuffer()
     let reader = DispatchGroup()
     reader.enter()
-    DispatchQueue.global(qos: .utility).async {
+    BlockingThread.start {
       defer { reader.leave() }
       while let chunk = try? pipe.fileHandleForReading.read(upToCount: 16_384), !chunk.isEmpty {
         buffer.append(chunk)

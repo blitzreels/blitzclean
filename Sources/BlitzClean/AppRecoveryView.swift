@@ -6,6 +6,7 @@ struct AppRecoveryView: View {
   @ObservedObject var model: AppRecoveryModel
   @State private var search = ""
   @State private var liveApps: [MemoryApp] = []
+  @State private var regularIDs: Set<Int32> = []
   @State private var scanTask: Task<Void, Never>?
   @State private var forceQuitCandidate: MemoryApp?
   @StateObject private var forceQuit = ForceQuitModel()
@@ -24,7 +25,10 @@ struct AppRecoveryView: View {
   }
 
   private var listing: Listing {
-    let rows = eligibleApps.map { ReviveRow(app: $0, model: model) }
+    let rows = eligibleApps.map { ReviveRow(app: $0, model: model) }.filter {
+      RecoveryAppRoster.isListed(
+        .init(isRegular: regularIDs.contains($0.app.processID), needsAttention: $0.needsAttention))
+    }
     let visible =
       search.isEmpty ? rows : rows.filter { $0.app.name.localizedCaseInsensitiveContains(search) }
     return Listing(
@@ -106,7 +110,9 @@ struct AppRecoveryView: View {
         refreshLiveApps()
         await model.noteProcessStates(eligibleApps)
         scheduleScan(force: false)
-        do { try await Task.sleep(for: .seconds(2)) } catch { break }
+        do { try await Task.sleep(for: .seconds(RefreshCadence.interval(.recovery))) } catch {
+          break
+        }
       }
     }
     .onDisappear {
@@ -180,17 +186,20 @@ struct AppRecoveryView: View {
       BlitzProcessButton(title: "Revive", label: "Revive \(app.name)", isBusy: row.isReviving) {
         revive(app)
       }.disabled(forceQuit.activeApp?.id == app.id || memory.isActing(on: app))
-      Button("Force Quit…", role: .destructive) { forceQuitCandidate = app }
-        .blitzButton(.quiet)
-        .disabled(
-          !app.isTerminationEligible || row.isReviving || forceQuit.activeApp != nil
-            || memory.isActing(on: app)
-        )
-        .help(
-          app.isTerminationEligible
-            ? "Unsaved changes will be lost." : "This app is protected from Force Quit."
-        )
-        .accessibilityLabel("Force Quit \(app.name)")
+      // Force Quit only on a stuck app; a healthy row stays compact.
+      if row.needsAttention {
+        Button("Force Quit…", role: .destructive) { forceQuitCandidate = app }
+          .blitzButton(.quiet)
+          .disabled(
+            !app.isTerminationEligible || row.isReviving || forceQuit.activeApp != nil
+              || memory.isActing(on: app)
+          )
+          .help(
+            app.isTerminationEligible
+              ? "Unsaved changes will be lost." : "This app is protected from Force Quit."
+          )
+          .accessibilityLabel("Force Quit \(app.name)")
+      }
     }.blitzRow()
   }
 
@@ -217,6 +226,7 @@ struct AppRecoveryView: View {
   private func refreshLiveApps() {
     liveApps = RecoveryAppRoster.merge(
       .init(descriptors: MemoryAppProvider().descriptors(), measured: memory.apps))
+    regularIDs = RecoveryAppRoster.regularProcessIDs()
     model.refreshPermission()
   }
 
@@ -324,7 +334,7 @@ private struct ReviveRow: Identifiable {
   func help(accessibilityEnabled: Bool) -> String {
     if isReviving { return "Reviving and watching the app" }
     if isChecking { return "Checking whether the window responds" }
-    if health == .running && !accessibilityEnabled {
+    if health == .running && !accessibilityEnabled && !WindowServerHangProbe.isAvailable {
       return "The process is running. Allow Accessibility to detect frozen windows."
     }
     return detail ?? title

@@ -1,0 +1,18 @@
+{
+  "devices" : {
+    "com.apple.CoreSimulator.SimRuntime.iOS-26-5" : [
+      {
+        "dataPath" : "\/Users\/me\/Library\/Developer\/CoreSimulator\/Devices\/81D60F46-244C-4268-AA8F-64BAA0789309\/data",
+        "dataPathSize" : 4374339584,
+        "logPath" : "\/Users\/me\/Library\/Logs\/CoreSimulator\/81D60F46-244C-4268-AA8F-64BAA0789309",
+        "udid" : "81D60F46-244C-4268-AA8F-64BAA0789309",
+        "lastUsedAt" : "2026-10-22T13:51:39Z",
+        "isAvailable" : true,
+        "logPathSize" : 614400,
+        "deviceTypeIdentifier" : "com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro",
+        "state" : "Shutdown",
+        "name" : "Test iPhone 17 Pro"
+      }
+    ]
+  }
+}

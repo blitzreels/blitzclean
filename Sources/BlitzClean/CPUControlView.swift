@@ -59,7 +59,7 @@ struct CPUControlView: View {
     return ScrollView {
       VStack(alignment: .leading, spacing: 24) {
         ResourceVerdictCard(
-          verdict: verdict, symbol: "cpu.fill", color: BlitzPalette.cpu,
+          verdict: verdict, symbol: "cpu.fill",
           message: appResult ?? processes.consumerMessage ?? processes.threadMessage
         ) {
           VStack(spacing: 14) {
@@ -68,7 +68,7 @@ struct CPUControlView: View {
               HistoryRangePicker(seconds: $seconds)
             }
             ResourcePlot(
-              samples: monitor.resourceSamples, kind: .cpu, color: BlitzPalette.cpu,
+              samples: monitor.resourceSamples, kind: .cpu, color: BlitzPalette.data,
               seconds: seconds
             )
             .frame(height: 90)

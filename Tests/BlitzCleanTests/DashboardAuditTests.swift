@@ -27,9 +27,7 @@ struct DashboardAuditTests {
           return []
         }
       ]))
-    for _ in 0..<100 where model.progress.results.count < AuditCheck.allCases.count - 1 {
-      try await Task.sleep(for: .milliseconds(5))
-    }
+    await eventually { model.progress.results.count >= AuditCheck.allCases.count - 1 }
     var refreshCalls = 0
     let checks: [AuditCheck: DashboardAuditModel.Check] = Dictionary(
       uniqueKeysWithValues: AuditCheck.allCases.map { check in
@@ -43,8 +41,8 @@ struct DashboardAuditTests {
     model.recheck(.init(checks: checks))
     #expect(refreshCalls == 0)
     await gate.release()
-    for _ in 0..<100 where model.progress.isRunning || refreshCalls < AuditCheck.allCases.count {
-      try await Task.sleep(for: .milliseconds(5))
+    await eventually {
+      !model.progress.isRunning && refreshCalls >= AuditCheck.allCases.count
     }
     #expect(refreshCalls == AuditCheck.allCases.count)
     #expect(model.progress.completedAt != nil)
@@ -99,16 +97,12 @@ struct DashboardAuditTests {
       })
     model.start(.init(checks: checks))
     model.start(.init(checks: checks))
-    for _ in 0..<100 where model.progress.results.count < AuditCheck.allCases.count - 1 {
-      try await Task.sleep(for: .milliseconds(5))
-    }
+    await eventually { model.progress.results.count >= AuditCheck.allCases.count - 1 }
     #expect(model.progress.results.count == AuditCheck.allCases.count - 1)
     #expect(model.progress.isRunning)
     #expect(calls == AuditCheck.allCases.count)
     await gate.release()
-    for _ in 0..<100 where model.progress.isRunning {
-      try await Task.sleep(for: .milliseconds(5))
-    }
+    await eventually { !model.progress.isRunning }
     #expect(model.progress.completedAt != nil)
     #expect(model.progress.warnings == ["Docker: Docker is unavailable"])
   }
@@ -116,9 +110,7 @@ struct DashboardAuditTests {
   @Test func missingCheckIsExplicitlyUnavailable() async throws {
     let model = DashboardAuditModel()
     model.start(.init(checks: [:]))
-    for _ in 0..<100 where model.progress.isRunning {
-      try await Task.sleep(for: .milliseconds(5))
-    }
+    await eventually { !model.progress.isRunning }
     #expect(model.progress.warnings.count == AuditCheck.allCases.count)
   }
 
@@ -277,10 +269,16 @@ struct DashboardAuditTests {
   }
 }
 
-private actor AuditCheckGate {
+/// Holds an audit check until the test releases it; a check that arrives after release passes.
+actor AuditCheckGate {
+  private var released = false
   private var continuation: CheckedContinuation<Void, Never>?
-  func wait() async { await withCheckedContinuation { continuation = $0 } }
+  func wait() async {
+    guard !released else { return }
+    await withCheckedContinuation { continuation = $0 }
+  }
   func release() {
+    released = true
     continuation?.resume()
     continuation = nil
   }

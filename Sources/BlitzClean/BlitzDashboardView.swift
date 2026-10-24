@@ -27,19 +27,6 @@ enum CleanPage: String, CaseIterable, Identifiable {
     self == .recovery ? "waveform.path.ecg" : symbol + ".fill"
   }
 
-  /// Sidebar squircle color, as System Settings colors each pane.
-  var color: Color {
-    switch self {
-    case .overview: Color(red: 0.36, green: 0.38, blue: 0.92)
-    case .memory: BlitzPalette.memory
-    case .cpu: BlitzPalette.cpu
-    case .storage: BlitzPalette.storage
-    case .recovery: BlitzPalette.apps
-    case .projects: Color(red: 0.18, green: 0.70, blue: 0.82)
-    case .settings: Color(white: 0.48)
-    }
-  }
-
   static let main: [Self] = [.overview, .memory, .cpu, .storage, .recovery, .projects]
 
   static func destination(for window: String) -> Self? {
@@ -196,7 +183,7 @@ struct BlitzDashboardView: View {
     case .recovery:
       AppRecoveryView(memory: memory, model: services.recovery)
     case .projects:
-      WorkspaceProjectsView(processes: processes, controller: workspaces)
+      WorkspaceProjectsView(processes: processes, controller: workspaces, monitor: monitor)
     case .settings:
       BlitzSettingsView(
         memory: memory, launchAtLogin: services.launchAtLogin, storage: storage,
@@ -263,18 +250,20 @@ private struct BlitzSidebar: View {
       navigation.page = page
     } label: {
       HStack(spacing: 10) {
-        BlitzColorTile(symbol: page.tileSymbol, color: page.color, size: 22)
+        Image(systemName: selected ? page.tileSymbol : page.symbol)
+          .font(.system(size: 14, weight: .regular)).frame(width: 20)
+          .foregroundStyle(selected ? BlitzUI.primaryText : BlitzUI.secondaryText)
         VStack(alignment: .leading, spacing: 1) {
           Text(page.rawValue).font(BlitzType.callout).lineLimit(1)
           if let insight {
             Text(insight.text).font(BlitzType.caption).monospacedDigit().lineLimit(1)
-              .foregroundStyle(insight.needsAttention ? insight.tone.color : BlitzUI.tertiaryText)
+              .foregroundStyle(BlitzUI.tertiaryText)
               .contentTransition(.numericText())
           }
         }
         Spacer(minLength: 4)
         if insight?.needsAttention == true {
-          Circle().fill(insight?.tone.color ?? BlitzUI.warning).frame(width: 7, height: 7)
+          Circle().fill(insight?.tone.color ?? BlitzUI.warning).frame(width: 6, height: 6)
             .accessibilityHidden(true)
         }
         if page == .settings, missingPermissions > 0 {

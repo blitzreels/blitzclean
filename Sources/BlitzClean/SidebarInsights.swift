@@ -3,7 +3,7 @@ import Foundation
 /// One caption under a sidebar page: its live value and, when known, what is using it most.
 struct SidebarInsight: Equatable {
   let text: String
-  let tone: MetricTone
+  let tone: BlitzStatusTone
 
   var needsAttention: Bool { tone == .warning || tone == .critical }
 }
@@ -11,7 +11,7 @@ struct SidebarInsight: Equatable {
 enum SidebarInsights {
   struct Input {
     let snapshot: SystemSnapshot
-    let memoryTone: MetricTone
+    let memoryTone: BlitzStatusTone
     /// The most recent sample's top users; absent until process readings finish.
     let leads: ResourceLeads
     let pressure: PressureAssessment
@@ -29,7 +29,7 @@ enum SidebarInsights {
         ? .init(
           text: limitText(input.pressure.limit),
           tone: input.pressure.risk >= .critical ? .critical : .warning)
-        : .init(text: "Nothing urgent", tone: .neutral)
+        : .init(text: "Nothing urgent", tone: .muted)
     }
     if snapshot.ramTotal > 0 {
       result[.memory] = .init(
@@ -51,7 +51,7 @@ enum SidebarInsights {
       input.recoveryCount > 0
       ? .init(
         text: "\(input.recoveryCount) not responding", tone: .warning)
-      : .init(text: "All responding", tone: .neutral)
+      : .init(text: "All responding", tone: .muted)
     if input.leftoverCount > 0 {
       result[.projects] = .init(
         text: "\(input.leftoverCount) \(input.leftoverCount == 1 ? "leftover" : "leftovers")",
@@ -63,7 +63,7 @@ enum SidebarInsights {
         text: projects == 0
           ? "None running"
           : "\(projects) running · \(ByteText.compact(bytes))",
-        tone: .neutral)
+        tone: .muted)
     }
     return result
   }

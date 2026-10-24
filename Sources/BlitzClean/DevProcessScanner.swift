@@ -10,18 +10,29 @@ struct DevProcessScanner: Sendable {
   func snapshot() -> DevProcessSnapshot {
     let startedAt = Date().timeIntervalSince1970
     let currentUserID = Int(getuid())
-    let recordResult = DeveloperCommand.run(
-      .init(
-        executable: "/bin/ps", arguments: ["-axo", "pid=,ppid=,uid=,pcpu=,rss=,etime=,tty=,args="],
-        timeout: 3, maximumBytes: 4 * 1_024 * 1_024))
-    let records = RawProcessParser.records(recordResult.output).filter {
-      $0.userID == currentUserID && $0.processID != getpid()
+    var problems: [String] = []
+    func value<Value>(_ read: ProblemRead<Value>) -> Value {
+      switch read.result {
+      case .success(let value): return value
+      case .failure(let error):
+        problems.append("Couldn't read \(read.subject): \(error.reason).")
+        return read.fallback
+      }
     }
-    let portResult = DeveloperCommand.run(
+    let records = value(
       .init(
-        executable: "/usr/sbin/lsof", arguments: ["-nP", "-iTCP", "-sTCP:LISTEN", "-Fpcn"],
-        timeout: 3, maximumBytes: 4 * 1_024 * 1_024))
-    let portsByProcess = ProjectProcessParser.listeningPorts(portResult.output)
+        result: DeveloperCommand.run(
+          ProcessCommands.request(
+            .init(
+              executable: "/bin/ps",
+              arguments: ["-axo", "pid=,ppid=,uid=,pcpu=,rss=,etime=,tty=,args="]))
+        ).read(RawProcessParser.records), subject: "running processes", fallback: [])
+    ).filter { $0.userID == currentUserID && $0.processID != getpid() }
+    let portsByProcess = value(
+      .init(
+        result: DeveloperCommand.run(ProcessCommands.listeningPorts)
+          .readMatches(ProjectProcessParser.listeningPorts),
+        subject: "listening ports", fallback: [:]))
     let workingDirectories = Dictionary(
       records.compactMap { record in
         ProcessWorkingDirectory.read(record.processID).map { (record.processID, $0) }
@@ -106,8 +117,11 @@ struct DevProcessScanner: Sendable {
         .init(
           threads: threads, records: records,
           startTimes: startTimes, home: FileManager.default.homeDirectoryForCurrentUser)),
-      resources: resources, workspaceRoots: roots, leftovers: leftovers ?? [],
-      incomplete: recordResult.status != 0 || portResult.status < 0 || leftovers == nil)
+      resources: resources, workspaceRoots: roots,
+      leftovers: value(
+        .init(
+          result: leftovers, subject: "the background jobs macOS manages", fallback: [])),
+      problems: problems)
   }
 
   private func dedupeListeners(_ processes: [DevProcess]) -> [DevProcess] {
@@ -128,13 +142,13 @@ struct DevProcessScanner: Sendable {
     }
   }
 
-  private func commandOutput(_ request: ProcessCommandRequest) -> String {
-    DeveloperCommand.run(
-      .init(
-        executable: request.executable, arguments: request.arguments,
-        timeout: 3, maximumBytes: 4 * 1_024 * 1_024)
-    ).output
-  }
+}
+
+/// One listing read during a scan, with what to use and what to say when it could not be read.
+private struct ProblemRead<Value> {
+  let result: Result<Value, CommandReadError>
+  let subject: String
+  let fallback: Value
 }
 
 enum ProcessFootprint {

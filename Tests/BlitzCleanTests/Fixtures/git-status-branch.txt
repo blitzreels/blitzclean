@@ -1,0 +1,7 @@
+## worktree-agent-ac371e77832fff86a
+ M CHANGELOG.md
+ M Sources/BlitzClean/AppRecovery.swift
+ M Sources/BlitzClean/AppRecoveryModel.swift
+ M Sources/BlitzClean/AppRecoveryView.swift
+ M Sources/BlitzClean/BlitzCleanApp.swift
+?? Tests/BlitzCleanTests/Fixtures/

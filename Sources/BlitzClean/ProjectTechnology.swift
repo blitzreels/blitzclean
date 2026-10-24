@@ -100,8 +100,7 @@ struct ProjectIcon: View {
             RoundedRectangle(cornerRadius: size * 0.24, style: .continuous)
               .strokeBorder(Color.white.opacity(0.08), lineWidth: 0.5))
       } else if technology == .unknown {
-        Image(systemName: fallbackSymbol).font(.system(size: size * 0.6))
-          .foregroundStyle(AppBrand.accent).frame(width: size, height: size)
+        BlitzIconTile(symbol: fallbackSymbol, tone: .muted, size: size)
       } else {
         TechnologyIcon(technology: technology, size: size)
       }
@@ -133,7 +132,7 @@ struct TechnologyIcon: View {
     case .vite: .purple
     case .swift: .orange
     case .python: .blue
-    case .unknown: AppBrand.accent
+    case .unknown: BlitzUI.secondaryText
     }
   }
 

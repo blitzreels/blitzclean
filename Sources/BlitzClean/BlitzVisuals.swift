@@ -1,15 +1,14 @@
 import SwiftUI
 
-/// Colors that identify each resource across Overview, the sidebar pages and their icons.
+/// Chart colors. Data is drawn in one neutral ink; only warning and critical readings take a color,
+/// so color always means something needs attention (October 24 request: fewer colors).
 enum BlitzPalette {
-  static let storage = Color(red: 0.25, green: 0.52, blue: 0.98)
-  static let memory = Color(red: 0.58, green: 0.40, blue: 0.96)
-  static let cpu = Color(red: 0.98, green: 0.55, blue: 0.20)
-  static let apps = Color(red: 0.96, green: 0.32, blue: 0.42)
-  static let good = Color(red: 0.20, green: 0.78, blue: 0.47)
+  static let data = Color.white.opacity(0.82)
+  static let good = BlitzUI.mint
 
-  static func tone(_ tone: BlitzStatusTone) -> Color {
-    tone == .good || tone == .muted || tone == .working ? good : tone.color
+  /// The ink for a reading: neutral while it is fine, the tone's color when it needs attention.
+  static func ink(_ tone: BlitzStatusTone) -> Color {
+    tone == .warning || tone == .critical ? tone.color : data
   }
 }
 
@@ -20,20 +19,23 @@ enum BlitzNumberFont {
   }
 }
 
-/// A System Settings–style squircle: flat color, white glyph, a faint top highlight.
-struct BlitzColorTile: View {
+/// A quiet icon square, as Linear draws its icons: neutral fill and glyph, tinted only when its tone
+/// needs attention (warning, critical) or reports a finished fix (good).
+struct BlitzIconTile: View {
   let symbol: String
-  let color: Color
+  let tone: BlitzStatusTone
   let size: CGFloat
+
+  private var tinted: Bool { tone == .warning || tone == .critical }
 
   var body: some View {
     let shape = RoundedRectangle(cornerRadius: size * 0.26, style: .continuous)
     shape
-      .fill(color.gradient)
-      .overlay(shape.strokeBorder(Color.white.opacity(0.12), lineWidth: 0.5))
+      .fill(tinted ? tone.color.opacity(0.14) : Color.white.opacity(0.06))
+      .overlay(shape.strokeBorder(Color.white.opacity(0.08), lineWidth: 0.5))
       .overlay(
-        Image(systemName: symbol).font(.system(size: size * 0.5, weight: .medium))
-          .foregroundStyle(.white)
+        Image(systemName: symbol).font(.system(size: size * 0.46, weight: .medium))
+          .foregroundStyle(tinted || tone == .good ? tone.color : BlitzUI.supportingText)
       )
       .frame(width: size, height: size)
       .accessibilityHidden(true)
@@ -79,16 +81,19 @@ struct BlitzGroupLabel: View {
 }
 
 extension View {
-  /// The one card surface: panel fill, hairline border, 12-point corners.
+  /// The one surface for cards, tables and panels: panel fill, hairline border, 12-point corners.
+  func blitzSurface() -> some View {
+    let shape = RoundedRectangle(cornerRadius: BlitzUI.cardRadius, style: .continuous)
+    return background(BlitzUI.panelBackground, in: shape)
+      .clipShape(shape)
+      .overlay {
+        shape.strokeBorder(Color.white.opacity(0.07), lineWidth: 1).allowsHitTesting(false)
+      }
+  }
+
+  /// A padded card on the shared surface.
   func blitzCard(padding: CGFloat) -> some View {
-    self.padding(padding)
-      .frame(maxWidth: .infinity, alignment: .leading)
-      .background(
-        BlitzUI.panelBackground, in: RoundedRectangle(cornerRadius: 12, style: .continuous)
-      )
-      .overlay(
-        RoundedRectangle(cornerRadius: 12, style: .continuous)
-          .strokeBorder(Color.white.opacity(0.07), lineWidth: 1))
+    self.padding(padding).frame(maxWidth: .infinity, alignment: .leading).blitzSurface()
   }
 }
 

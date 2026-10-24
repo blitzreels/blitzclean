@@ -233,22 +233,18 @@ struct CleanupOverviewTests {
     ledger.record(win("background-import"))
     try fixture.configuration.store.save(ledger)
     try FileManager.default.removeItem(at: fixture.file)
-    let deadline = ContinuousClock.now + .seconds(5)
-    while model.ledger.wins.isEmpty || model.files.contains(where: { $0.path == fixture.file.path })
-    {
-      try #require(
-        ContinuousClock.now < deadline, "Background refresh should not require a window or restart")
-      try await Task.sleep(for: .milliseconds(25))
+    let synchronized = await eventually {
+      !model.ledger.wins.isEmpty && !model.files.contains { $0.path == fixture.file.path }
     }
+    try #require(synchronized, "Background refresh should not require a window or restart")
     #expect(model.ledger.wins.map(\.id) == ["background-import"])
   }
 
   private func waitForCompletion(_ model: CleanupOverviewModel) async throws {
-    let deadline = ContinuousClock.now + .seconds(15)
-    while model.deletingPath != nil || !model.queuedFiles.isEmpty || model.isScanning {
-      try #require(ContinuousClock.now < deadline, "Deletion should not remain stuck")
-      try await Task.sleep(for: .milliseconds(10))
+    let finished = await eventually {
+      model.deletingPath == nil && model.queuedFiles.isEmpty && !model.isScanning
     }
+    try #require(finished, "Deletion should not remain stuck")
   }
 
   @Test func deletedFileCannotReturnFromAnOlderScan() throws {

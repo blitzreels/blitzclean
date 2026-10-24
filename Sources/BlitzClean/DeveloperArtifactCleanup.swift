@@ -110,10 +110,16 @@ enum DeveloperArtifactCleanup {
     guard canForce(artifact), let expected = artifact.worktree,
       CleanupVolume.read(artifact.path)?.isInternal == true
     else { return failed(artifact.blocker ?? "This worktree is protected") }
+    let records: [GitWorktreeRecord]
+    switch GitWorktrees.list(expected.repository) {
+    case .success(let value): records = value
+    case .failure(let error):
+      return failed(
+        "Couldn't read this repository's worktrees: \(error.reason). Nothing was removed.")
+    }
     guard let identity = artifact.identity, DirectoryIdentity.read(artifact.path) == identity,
-      let current = GitWorktrees.list(expected.repository)?.first(where: {
-        $0.path == expected.record.path
-      }), current == expected.record
+      let current = records.first(where: { $0.path == expected.record.path }),
+      current == expected.record
     else { return failed("Worktree changed. Refresh and review it again.") }
     let assessment = GitWorktrees.inspect(
       .init(

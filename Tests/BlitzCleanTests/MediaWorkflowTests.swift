@@ -264,17 +264,19 @@ struct MediaExportTests {
   @Test func terminatesTimedOutAndCancelledProcesses() async throws {
     let root = try root()
     defer { try? FileManager.default.removeItem(at: root) }
+    let short = TestProcesses.guarded(.init(executable: "/bin/sleep", arguments: ["5"]))
     #expect(throws: MediaOperationError.self) {
       try MediaProcess.run(
         .init(
-          executable: "/bin/sleep", arguments: ["5"], directory: root, timeout: 0.1, diskGuard: nil)
-      )
+          executable: short.executable, arguments: short.arguments, directory: root, timeout: 0.1,
+          diskGuard: nil))
     }
+    let long = TestProcesses.guarded(.init(executable: "/bin/sleep", arguments: ["30"]))
     let worker = Task.detached {
       try MediaProcess.run(
         .init(
-          executable: "/bin/sleep", arguments: ["30"], directory: root, timeout: 40, diskGuard: nil)
-      )
+          executable: long.executable, arguments: long.arguments, directory: root, timeout: 40,
+          diskGuard: nil))
     }
     try await Task.sleep(for: .milliseconds(100))
     worker.cancel()

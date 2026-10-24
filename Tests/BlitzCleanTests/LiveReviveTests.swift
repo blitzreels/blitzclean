@@ -34,6 +34,23 @@ struct LiveReviveTests {
     #expect(crashed.crashReport?.pathExtension == "ips")
   }
 
+  /// `BLITZCLEAN_LIVE_HANG` names the bundle ID of a running app whose main thread is blocked
+  /// and that has been sent input, so WindowServer has flagged it.
+  @Test func hungAppIsReportedNotRespondingWithoutAccessibility() async throws {
+    guard let identifier = ProcessInfo.processInfo.environment["BLITZCLEAN_LIVE_HANG"] else {
+      return
+    }
+    let app = try #require(runningApp(identifier))
+    let engine = AppRecoveryEngine(driver: NativeAppRecoveryDriver())
+    #expect(await engine.processState(app) == .unresponsive)
+    #expect(await engine.check(app) == .unresponsive)
+    let model = AppRecoveryModel(defaults: TestDefaults("live-hang").defaults)
+    await model.noteProcessStates([app])
+    #expect(model.check(for: app)?.health == .unresponsive)
+    #expect(model.attentionCount == 1)
+    print("live hang: AX trusted \(AXIsProcessTrusted()), flagged \(model.attentionCount)")
+  }
+
   private func runningApp(_ identifier: String) -> MemoryApp? {
     MemoryAppProvider().descriptors().first { $0.bundleIdentifier == identifier }.map {
       MemoryApp(

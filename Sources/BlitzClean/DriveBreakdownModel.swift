@@ -8,6 +8,11 @@ final class DriveBreakdownModel: ObservableObject {
   @Published private(set) var isScanning = false
   @Published private(set) var visited = 0
   @Published private(set) var busyID: String?
+  /// The removal in progress, step by step; nil when nothing is being deleted.
+  @Published private(set) var removal: DriveRemovalProgress?
+  /// iOS downloads no longer registered with the simulator service. macOS protects them, and removing one
+  /// means registering it again, which macOS refuses while the disk is nearly full.
+  @Published private(set) var protectedRuntimePaths: Set<String> = []
   @Published private(set) var message: BlitzStatusMessage?
   /// Display order from the last complete scan, so rows keep their place while sizes change.
   @Published private(set) var rank: [String: Int] = [:]
@@ -31,6 +36,36 @@ final class DriveBreakdownModel: ObservableObject {
     {
       breakdown = saved
       rank = Self.rank(saved)
+    }
+    refreshRuntimes()
+  }
+
+  /// Marks which iOS downloads the simulator service still lists, so only those count as deletable.
+  func refreshRuntimes() {
+    let paths = (breakdown?.units ?? []).filter { $0.removal == .simulatorRuntime }
+      .compactMap(\.paths.first)
+    guard !paths.isEmpty else { return }
+    Task {
+      let protected = await Task.detached(priority: .utility) {
+        SimulatorRuntimeCopies.list().map { copies in
+          let builds = Set(copies.map(\.build))
+          return Set(
+            paths.filter { path in
+              SimulatorRuntimeAsset.read(path).map { !builds.contains($0.build) } ?? false
+            })
+        }
+      }.value
+      switch protected {
+      case .success(let protected):
+        if protected != protectedRuntimePaths { protectedRuntimePaths = protected }
+      case .failure(let error):
+        // Keep the last known protection rather than marking every version protected or deletable.
+        if message == nil {
+          message = .init(
+            text: "Couldn't read installed iOS simulator versions: \(error.reason).",
+            tone: .warning)
+        }
+      }
     }
   }
 
@@ -77,6 +112,7 @@ final class DriveBreakdownModel: ObservableObject {
       isScanning = false
       self.progress = nil
       save()
+      refreshRuntimes()
     }
   }
 
@@ -131,7 +167,12 @@ final class DriveBreakdownModel: ObservableObject {
 
   /// Frees the units' space one after another. Every path is re-validated against the catalog first.
   func remove(_ units: [DriveUnit]) {
-    guard busyID == nil, !isScanning else { return }
+    guard busyID == nil else { return }
+    if isScanning {
+      progress?.cancel()
+      progress = nil
+      isScanning = false
+    }
     let valid = units.filter { unit in
       let spec = catalog.describe(unit.id)
       return unit.removal.isDestructive && spec.removal == unit.removal && spec.paths == unit.paths
@@ -139,12 +180,14 @@ final class DriveBreakdownModel: ObservableObject {
     guard let first = valid.first else { return }
     busyID = first.id
     message = nil
+    let before = ResourceReading.now()
     Task {
       var total: UInt64 = 0
       var combined = DriveRemovalOutcome()
       var last: BlitzStatusMessage?
-      for unit in valid {
+      for (index, unit) in valid.enumerated() {
         busyID = unit.id
+        removal = .init(current: unit.title, done: index, total: valid.count, freed: total)
         let result = await perform(unit)
         total += result.freed
         combined.removed += result.outcome.removed
@@ -165,7 +208,15 @@ final class DriveBreakdownModel: ObservableObject {
                 id: "batch", title: "\(valid.count) caches", detail: "", bytes: 0)),
             freed: total))
       }
+      if let result = message {
+        let after = await ResourceReading.settled()
+        message = .init(
+          text: result.text + " " + MeasuredResult.disk(.init(before: before, after: after)),
+          tone: result.tone)
+      }
       busyID = nil
+      removal = nil
+      refreshRuntimes()
     }
   }
 
@@ -198,6 +249,7 @@ final class DriveBreakdownModel: ObservableObject {
     }
     update(.init(id: unit.id, bytes: measured.bytes, partial: measured.partial))
     if unit.removal == .uninstall { remeasure("trash") }
+    if unit.removal == .simulatorRuntime { remeasure("simulators.runtimes") }
     return .init(outcome: outcome, freed: freed)
   }
 
@@ -245,6 +297,14 @@ final class DriveBreakdownModel: ObservableObject {
 struct BlitzStatusMessage: Equatable {
   let text: String
   let tone: BlitzStatusTone
+}
+
+/// Where a removal batch is: the item being deleted, how many are done and what they freed so far.
+struct DriveRemovalProgress: Equatable, Sendable {
+  let current: String
+  let done: Int
+  let total: Int
+  let freed: UInt64
 }
 
 struct DriveRemovalOutcome: Sendable {
@@ -305,11 +365,13 @@ enum DriveRemover {
     var outcome = DriveRemovalOutcome()
     let open: Set<String>
     if request.checksOpenFiles {
-      guard let files = openFiles(under: request.unit.paths) else {
-        outcome.note = "Could not check which files apps have open, so nothing was deleted."
+      switch openFiles(under: request.unit.paths) {
+      case .success(let files): open = files
+      case .failure(let error):
+        outcome.note =
+          "Couldn't check which files apps have open: \(error.reason). Nothing was deleted."
         return outcome
       }
-      open = files
     } else {
       open = []
     }
@@ -347,15 +409,28 @@ enum DriveRemover {
     return outcome
   }
 
-  /// Top-level items under the roots that any of the user's processes has open; nil when lsof fails.
-  private static func openFiles(under roots: [String]) -> Set<String>? {
-    let result = DeveloperCommand.run(
+  /// Top-level items under the roots that any of the user's processes has open; fails when lsof does.
+  private static func openFiles(under roots: [String]) -> Result<Set<String>, CommandReadError> {
+    DeveloperCommand.run(
       .init(
         executable: "/usr/sbin/lsof", arguments: ["-nP", "-Fn", "-u", String(getuid())],
-        timeout: 20, maximumBytes: 96 * 1_024 * 1_024))
-    guard result.status == 0, !result.output.isEmpty else { return nil }
+        timeout: 20, maximumBytes: 96 * 1_024 * 1_024)
+    ).read { output in
+      // This app always has files open, so an empty list means lsof did not really answer.
+      guard !output.isEmpty, LsofFields.isWellFormed(output) else { return nil }
+      return openItems(.init(output: output, roots: roots))
+    }
+  }
+
+  struct OpenItemsInput {
+    let output: String
+    let roots: [String]
+  }
+
+  static func openItems(_ input: OpenItemsInput) -> Set<String> {
+    let roots = input.roots
     var open: Set<String> = []
-    for line in result.output.split(separator: "\n") where line.first == "n" {
+    for line in input.output.split(separator: "\n") where line.first == "n" {
       let path = line.dropFirst()
       for root in roots where path.hasPrefix(root + "/") {
         let rest = path.dropFirst(root.count + 1)
@@ -429,7 +504,7 @@ enum DriveRemover {
     return outcome
   }
 
-  private static func simctl(_ arguments: [String]) -> CleanupCommandResult {
+  static func simctl(_ arguments: [String]) -> CleanupCommandResult {
     DeveloperCommand.run(
       .init(
         executable: "/usr/bin/xcrun", arguments: ["simctl"] + arguments, timeout: 300,
@@ -449,52 +524,64 @@ enum DriveRemover {
       outcome.note = "This iOS version changed since the scan. Scan again."
       return outcome
     }
-    struct Registered: Decodable {
-      let identifier: String
-      let build: String
+    // The same version can be installed twice: once from this download and once from a copy Xcode
+    // fetched itself. Every copy goes, or the version stays listed and its space stays used.
+    // Without the list, every next step would be a guess, so nothing is deleted or registered.
+    let listed: [SimulatorRuntimeCopy]
+    switch SimulatorRuntimeCopies.list() {
+    case .success(let copies): listed = copies
+    case .failure(let error):
+      outcome.note =
+        "Couldn't read installed iOS simulator versions: \(error.reason). Nothing was deleted."
+      return outcome
     }
-    let listing = simctl(["runtime", "list", "-j"])
-    let registered =
-      (try? JSONDecoder().decode([String: Registered].self, from: Data(listing.output.utf8)))?
-      .values.first { $0.build == runtime.build }
-    if let registered {
-      let devices = (try? SimulatorDeviceService().list()) ?? []
-      for device in devices
-      where device.runtime == "iOS " + runtime.version && device.state != "Shutdown" {
-        _ = simctl(["shutdown", device.id])
-      }
-      if simctl(["runtime", "delete", registered.identifier]).status == 0 {
-        outcome.removed = [path]
-      } else {
+    let copies = listed.filter { $0.build == runtime.build }
+    for copy in copies { _ = simctl(["runtime", "delete", copy.identifier]) }
+    let ownsDownload = copies.contains { $0.uses(path) }
+    if !(ownsDownload && waitUntilGone(path)), let image = diskImage(in: path) {
+      // An unregistered download is protected by macOS. Registering it again hands it to the
+      // simulator service, which deletes the download together with its registration.
+      let added = simctl(["runtime", "add", image])
+      let registered: [SimulatorRuntimeCopy]
+      switch SimulatorRuntimeCopies.list() {
+      case .success(let copies): registered = copies
+      case .failure(let error):
+        outcome.note =
+          "macOS kept iOS \(runtime.version). Couldn't read installed iOS simulator versions "
+          + "after registering it again: \(error.reason)."
         outcome.failed = [path]
+        return outcome
       }
-      return outcome
+      for copy in registered where copy.build == runtime.build {
+        _ = simctl(["runtime", "delete", copy.identifier])
+      }
+      if !waitUntilGone(path) {
+        outcome.note =
+          added.output.localizedCaseInsensitiveContains("almost full")
+          ? "macOS protects iOS \(runtime.version). Removing it needs about "
+            + "\(ByteText.compact(request.unit.bytes)) of free space first. Free some space, then try again."
+          : "macOS kept iOS \(runtime.version). Remove it in Xcode › Settings › Components."
+        outcome.failed = [path]
+        return outcome
+      }
     }
-    guard let image = diskImage(in: path) else {
+    if FileManager.default.fileExists(atPath: path) {
       outcome.note =
-        "iOS \(runtime.version) has no disk image to hand to Xcode. Remove it in Xcode › Settings › Components."
-      return outcome
-    }
-    let added = simctl(["runtime", "add", image])
-    let relisted = simctl(["runtime", "list", "-j"])
-    guard
-      let readded =
-        (try? JSONDecoder().decode([String: Registered].self, from: Data(relisted.output.utf8)))?
-        .values.first(where: { $0.build == runtime.build })
-    else {
-      outcome.note =
-        added.output.localizedCaseInsensitiveContains("almost full")
-        ? "macOS protects iOS \(runtime.version). Xcode can remove it only after copying it back in, "
-          + "which needs about \(ByteText.compact(request.unit.bytes)) of free space. Free some space, then try again."
-        : "macOS protects iOS \(runtime.version). Remove it in Xcode › Settings › Components."
-      return outcome
-    }
-    if simctl(["runtime", "delete", readded.identifier]).status == 0 {
-      outcome.removed = [path]
-    } else {
+        "macOS kept iOS \(runtime.version). Remove it in Xcode › Settings › Components."
       outcome.failed = [path]
+    } else {
+      outcome.removed = [path]
     }
     return outcome
+  }
+
+  /// The simulator service deletes in the background after `simctl` returns.
+  private static func waitUntilGone(_ path: String) -> Bool {
+    for _ in 0..<60 {
+      if !FileManager.default.fileExists(atPath: path) { return true }
+      Thread.sleep(forTimeInterval: 0.5)
+    }
+    return !FileManager.default.fileExists(atPath: path)
   }
 
   /// The runtime's disk image inside its MobileAsset folder.

@@ -19,11 +19,7 @@ struct WorkspaceControlTests {
     let controller = WorkspaceController()
     #expect(!FileManager.default.fileExists(atPath: marker.path))
     controller.start(.init(preference: preference, existingServers: []))
-    let deadline = Date.now.addingTimeInterval(10)
-    while !FileManager.default.fileExists(atPath: marker.path) && Date.now < deadline {
-      try await Task.sleep(for: .milliseconds(100))
-    }
-    #expect(FileManager.default.fileExists(atPath: marker.path))
+    #expect(await eventually { FileManager.default.fileExists(atPath: marker.path) })
   }
   @Test
   func incidentByteBudgetKeepsRecentEventsReadable() throws {
@@ -44,12 +40,13 @@ struct WorkspaceControlTests {
   }
   @Test
   func separatesWorkersFromTheirHostWithoutLeakingArguments() throws {
-    let records = RawProcessParser.records(
-      "10 1 501 0 100 01:00 ?? ChatGPT\n"
-        + "11 10 501 0 100 01:00 ?? codex app-server\n"
-        + "12 11 501 0 100 01:00 ?? node tool-mcp.js --token super-secret-value\n"
-        + "13 11 501 0 100 01:00 ?? java maestro.cli.AppKt mcp\n"
-        + "14 11 501 0 100 01:00 ?? zsh -c echo mcp\n")
+    let records = try #require(
+      RawProcessParser.records(
+        "10 1 501 0 100 01:00 ?? ChatGPT\n"
+          + "11 10 501 0 100 01:00 ?? codex app-server\n"
+          + "12 11 501 0 100 01:00 ?? node tool-mcp.js --token super-secret-value\n"
+          + "13 11 501 0 100 01:00 ?? java maestro.cli.AppKt mcp\n"
+          + "14 11 501 0 100 01:00 ?? zsh -c echo mcp\n"))
     let resources = ResourceOwnership.processes(
       .init(
         records: records, directories: [11: "/dev/product"],
@@ -82,10 +79,11 @@ struct WorkspaceControlTests {
   }
 
   @Test
-  func ownershipTraversalHandlesCyclesAndDoesNotCrossUsers() {
-    let records = RawProcessParser.records(
-      "10 11 501 0 100 01:00 ?? node mcp\n11 10 501 0 100 01:00 ?? node mcp\n12 10 502 0 100 01:00 ?? node mcp"
-    )
+  func ownershipTraversalHandlesCyclesAndDoesNotCrossUsers() throws {
+    let records = try #require(
+      RawProcessParser.records(
+        "10 11 501 0 100 01:00 ?? node mcp\n11 10 501 0 100 01:00 ?? node mcp\n12 10 502 0 100 01:00 ?? node mcp"
+      ))
     let result = ResourceOwnership.processes(
       .init(
         records: records, directories: [10: "/dev/private"], footprints: [:],

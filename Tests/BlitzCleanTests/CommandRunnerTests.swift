@@ -17,8 +17,8 @@ struct CommandRunnerTests {
   @Test
   func stopsCommandsAndTheirChildrenAtTheDeadline() {
     let started = Date.now
-    let output = run(
-      .init(executable: "/bin/sh", arguments: ["-c", "sleep 30 & sleep 30; wait"], timeout: 0.5))
+    let script = TestProcesses.guardLine + "\nsleep 30 & sleep 30; wait"
+    let output = run(.init(executable: "/bin/sh", arguments: ["-c", script], timeout: 0.5))
     #expect(output.ending == .timedOut)
     #expect(output.status == -1)
     #expect(Date.now.timeIntervalSince(started) < 5)
@@ -26,7 +26,9 @@ struct CommandRunnerTests {
 
   @Test
   func stopsCommandsThatExceedTheOutputLimit() {
-    let output = run(.init(executable: "/usr/bin/yes", arguments: [], maximumBytes: 100_000))
+    let yes = TestProcesses.guarded(.init(executable: "/usr/bin/yes", arguments: []))
+    let output = run(
+      .init(executable: yes.executable, arguments: yes.arguments, maximumBytes: 100_000))
     #expect(output.ending == .outputLimit)
     #expect(output.data.count <= 100_000)
   }

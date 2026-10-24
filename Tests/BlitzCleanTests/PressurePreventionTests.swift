@@ -40,17 +40,9 @@ struct PressurePreventionTests {
   }
 
   @Test func stopHandlesPausedWorkersAndRejectsStaleOrChangedIdentities() async throws {
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: "/bin/sleep")
-    process.arguments = ["30"]
-    try process.run()
-    defer {
-      if process.isRunning {
-        kill(process.processIdentifier, SIGCONT)
-        process.terminate()
-      }
-    }
-    let identity = try #require(DevProcessIdentity.read(process.processIdentifier))
+    let child = try TestProcesses.start(.init(executable: "/bin/sleep", arguments: ["30"]))
+    defer { child.stop() }
+    let identity = try #require(DevProcessIdentity.read(child.processID))
     let root = "/tmp/stop-fixture-\(UUID())"
     let target = ProjectPauseTarget(
       directory: root, name: "Fixture", cpuPercent: 0, memoryBytes: 0,
@@ -67,12 +59,9 @@ struct PressurePreventionTests {
       identities: [.init(process: identity.process, executable: "/different")], capturedAt: .now)
     #expect(ProjectPausePolicy.stop(replaced) == 0)
     #expect(ProjectPausePolicy.signal(.init(target: target, resume: false)) == 1)
-    try await Task.sleep(for: .milliseconds(50))
+    #expect(await eventually { DevProcessIdentity.read(child.processID)?.process.stopped == true })
     #expect(ProjectPausePolicy.stop(target) == 1)
-    for _ in 0..<30 where ProjectPausePolicy.remaining(target) > 0 {
-      try await Task.sleep(for: .milliseconds(50))
-    }
-    #expect(ProjectPausePolicy.remaining(target) == 0)
+    #expect(await eventually { ProjectPausePolicy.remaining(target) == 0 })
   }
 
   @Test func backgroundWorkersAreRunningProjectsWithoutPorts() {
@@ -198,9 +187,11 @@ struct PressurePreventionTests {
 
   @Test func hungInspectionCommandHasADeadline() {
     let start = Date.now
+    let sleep = TestProcesses.guarded(.init(executable: "/bin/sleep", arguments: ["20"]))
     let result = DeveloperCommand.run(
       .init(
-        executable: "/bin/sleep", arguments: ["20"], timeout: 0.2, maximumBytes: 1_024))
+        executable: sleep.executable, arguments: sleep.arguments, timeout: 0.2,
+        maximumBytes: 1_024))
     #expect(result.status == -1)
     #expect(Date.now.timeIntervalSince(start) < 3)
   }
@@ -214,24 +205,17 @@ struct PressurePreventionTests {
   }
 
   @Test func pauseResumeRevalidatesIdentityAndDoesNotResumeChangedPID() async throws {
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: "/bin/sleep")
-    process.arguments = ["30"]
-    try process.run()
-    defer {
-      kill(process.processIdentifier, SIGCONT)
-      if process.isRunning { process.terminate() }
-    }
-    let identity = try #require(DevProcessIdentity.read(process.processIdentifier))
+    let child = try TestProcesses.start(.init(executable: "/bin/sleep", arguments: ["30"]))
+    defer { child.stop() }
+    let identity = try #require(DevProcessIdentity.read(child.processID))
     let target = ProjectPauseTarget(
       directory: "/tmp/pressure-fixture-\(UUID())", name: "Fixture", cpuPercent: 0,
       memoryBytes: 0, identities: [identity], capturedAt: .now)
     #expect(ProjectPausePolicy.signal(.init(target: target, resume: false)) == 1)
-    try await Task.sleep(for: .milliseconds(100))
-    #expect(DevProcessIdentity.read(process.processIdentifier)?.process.stopped == true)
+    #expect(await eventually { DevProcessIdentity.read(child.processID)?.process.stopped == true })
     #expect(ProjectPausePolicy.signal(.init(target: target, resume: true)) == 1)
-    try await Task.sleep(for: .milliseconds(100))
-    #expect(DevProcessIdentity.read(process.processIdentifier)?.process.stopped == false)
+    #expect(
+      await eventually { DevProcessIdentity.read(child.processID)?.process.stopped == false })
     let wrong = DevProcessIdentity(process: identity.process, executable: "/wrong/process")
     let changed = ProjectPauseTarget(
       directory: target.directory, name: target.name, cpuPercent: 0, memoryBytes: 0,
@@ -244,12 +228,8 @@ struct PressurePreventionTests {
       directory: target.directory, name: target.name, cpuPercent: 0, memoryBytes: 0,
       identities: [identity], capturedAt: .now.addingTimeInterval(-60))
     #expect(ProjectPausePolicy.signal(.init(target: stale, resume: false)) == 0)
-    process.terminate()
-    let deadline = Date.now.addingTimeInterval(3)
-    while ProjectPausePolicy.remaining(target) > 0, Date.now < deadline {
-      try await Task.sleep(for: .milliseconds(25))
-    }
-    #expect(ProjectPausePolicy.remaining(target) == 0)
+    child.process?.terminate()
+    #expect(await eventually { ProjectPausePolicy.remaining(target) == 0 })
   }
 
   @Test func scanIncludesNestedBackgroundWorkersWithoutPorts() async throws {
@@ -258,19 +238,16 @@ struct PressurePreventionTests {
     let child = root.appendingPathComponent("node_modules/worker")
     try FileManager.default.createDirectory(at: child, withIntermediateDirectories: true)
     try Data("{}".utf8).write(to: root.appendingPathComponent("package.json"))
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: "/bin/sleep")
-    process.arguments = ["30"]
-    process.currentDirectoryURL = child
-    try process.run()
+    let sleep = try TestProcesses.start(
+      .init(executable: "/bin/sleep", arguments: ["30"], directory: child))
     defer {
-      if process.isRunning { process.terminate() }
+      sleep.stop()
       try? FileManager.default.removeItem(at: root)
     }
     let start = Date.now
     let snapshot = DevProcessScanner().snapshot()
     let elapsed = Date.now.timeIntervalSince(start)
-    let worker = try #require(snapshot.resources.first { $0.id == process.processIdentifier })
+    let worker = try #require(snapshot.resources.first { $0.id == sleep.processID })
     #expect(worker.directory != nil)
     #expect(
       snapshot.workspaceRoots[worker.id]

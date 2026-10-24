@@ -62,12 +62,12 @@ struct LargeFileReviewView: View {
           filterControls
           if let error = model.reviewPersistenceError {
             Label(error, systemImage: "exclamationmark.triangle").font(.callout).foregroundStyle(
-              .orange)
+              BlitzUI.warning)
           }
           scanProgress
           if let status = result ?? media.status ?? model.scanStatus {
             Text(status).font(.system(size: 12)).textSelection(.enabled)
-              .frame(maxWidth: .infinity, alignment: .leading).panelCard()
+              .frame(maxWidth: .infinity, alignment: .leading).blitzCard(padding: 16)
           }
           HStack {
             Text("\(visibleFiles.count.formatted()) files").font(BlitzType.section)
@@ -254,7 +254,7 @@ struct LargeFileReviewView: View {
       kindAndSizeFilters
       dateAndSortFilters
       formatFilter
-    }.panelCard()
+    }.blitzCard(padding: 16)
   }
 
   private var kindAndSizeFilters: some View {

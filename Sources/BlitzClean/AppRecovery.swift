@@ -36,8 +36,28 @@ struct RecoveryTarget: Sendable {
 enum RecoveryResponse: String, Sendable {
   case responding = "Window responded"
   case noReply = "Window did not reply"
+  /// WindowServer flagged the app after it left input unhandled, as the Force Quit window shows.
+  case reportedHung = "macOS reports it is not responding"
+  /// WindowServer has no hang on record; an idle app is only flagged once it ignores input.
+  case noHangReported = "macOS reports no hang"
   case permissionNeeded = "Accessibility permission needed to check the window"
   case unsupported = "Window check unavailable"
+
+  struct Signals {
+    /// nil when the WindowServer check is unavailable.
+    let windowServerHang: Bool?
+    /// nil when the accessibility window probe was not run.
+    let window: RecoveryResponse?
+  }
+
+  /// WindowServer is the primary signal and needs no permission; the accessibility window probe
+  /// adds a direct answer when it can run.
+  static func combine(_ signals: Signals) -> Self {
+    if signals.windowServerHang == true { return .reportedHung }
+    if let window = signals.window, window == .responding || window == .noReply { return window }
+    if signals.windowServerHang == false { return .noHangReported }
+    return signals.window ?? .unsupported
+  }
 }
 
 struct RecoveryObservation: Sendable {
@@ -59,7 +79,8 @@ enum RecoveryHealth: Equatable, Sendable {
     if latest.process.stopped { return .stopped }
     switch latest.response {
     case .responding: return .responsive
-    case .permissionNeeded, .unsupported: return .running
+    case .reportedHung: return .unresponsive
+    case .noHangReported, .permissionNeeded, .unsupported: return .running
     case .noReply:
       return observations.count >= 2 && observations.allSatisfy { $0.response == .noReply }
         ? .unresponsive : .unknown
@@ -172,6 +193,8 @@ enum RecoverySafety {
 
 protocol AppRecoveryDriver: Sendable {
   func resolve(_ app: MemoryApp) async throws -> RecoveryTarget
+  /// Whether WindowServer currently marks the app as not responding; nil when it can't be asked.
+  func hangReported(_ target: RecoveryTarget) async -> Bool?
   func observe(_ target: RecoveryTarget) async throws -> RecoveryObservation
   func resume(_ target: RecoveryTarget) async throws
   func pause(_ duration: Duration) async throws
@@ -182,10 +205,17 @@ struct AppRecoveryEngine: Sendable {
   let driver: any AppRecoveryDriver
   var crashReportWaits = 6
 
+  /// Reads the process state and the WindowServer hang flag, both cheap and permission-free.
+  /// Returns `.running` when WindowServer reports no hang, nil when neither signal is available.
   func processState(_ app: MemoryApp) async -> RecoveryHealth? {
     do {
       let target = try await driver.resolve(app)
-      return target.process.stopped ? .stopped : nil
+      if target.process.stopped { return .stopped }
+      switch await driver.hangReported(target) {
+      case true?: return .unresponsive
+      case false?: return .running
+      case nil: return nil
+      }
     } catch is RecoveryExit {
       return .exited
     } catch {
@@ -241,12 +271,16 @@ struct AppRecoveryEngine: Sendable {
         switch observation.response {
         case .responding:
           return report(.revived, "Resumed. Its window responds again.")
+        case .noHangReported:
+          return first.process.stopped || first.response == .reportedHung
+            ? report(.revived, "Resumed. macOS no longer reports it as not responding.")
+            : report(.alreadyRunning, "The process is running and macOS reports no hang.")
         case .permissionNeeded, .unsupported:
           return first.process.stopped
             ? report(.revived, "The process resumed. Window responsiveness could not be checked.")
             : report(
               .alreadyRunning, "The process is running. Allow Accessibility to check its window.")
-        case .noReply:
+        case .noReply, .reportedHung:
           continue
         }
       }
@@ -297,11 +331,25 @@ struct NativeAppRecoveryDriver: AppRecoveryDriver {
     if initial.stopped {
       return RecoveryObservation(process: initial, response: .noReply)
     }
-    let response = await Task.detached(priority: .userInitiated) {
-      windowResponse(target.app.processID)
-    }.value
+    let processID = target.app.processID
+    let (hang, isRegular) = await MainActor.run {
+      (
+        WindowServerHangProbe.isUnresponsive(processID),
+        NSRunningApplication(processIdentifier: processID)?.activationPolicy == .regular
+      )
+    }
+    // Menu bar and background agents often have no window to answer, so only regular apps get
+    // the accessibility probe; WindowServer still reports their hangs.
+    let window: RecoveryResponse? =
+      hang != true && isRegular
+      ? await Task.detached(priority: .userInitiated) { windowResponse(processID) }.value : nil
     let current = try await MainActor.run { try validate(target) }
-    return RecoveryObservation(process: current, response: response)
+    return RecoveryObservation(
+      process: current, response: .combine(.init(windowServerHang: hang, window: window)))
+  }
+
+  func hangReported(_ target: RecoveryTarget) async -> Bool? {
+    await MainActor.run { WindowServerHangProbe.isUnresponsive(target.app.processID) }
   }
 
   func resume(_ target: RecoveryTarget) async throws {
@@ -386,6 +434,46 @@ struct NativeAppRecoveryDriver: AppRecoveryDriver {
     case .apiDisabled: return .permissionNeeded
     default: return .unsupported
     }
+  }
+}
+
+/// The WindowServer's own not-responding flag, the signal behind the Force Quit window and
+/// Activity Monitor. It needs no permission. An app is flagged a few seconds after it leaves an
+/// input event unhandled, so a hung app nobody has touched yet is not flagged. The private
+/// functions are looked up at runtime so a macOS release without them only loses this signal.
+enum WindowServerHangProbe {
+  private typealias MainConnection = @convention(c) () -> Int32
+  private typealias IsUnresponsive =
+    @convention(c) (Int32, UnsafePointer<ProcessSerialNumber>) -> UInt8
+  private typealias ProcessForPID =
+    @convention(c) (pid_t, UnsafeMutablePointer<ProcessSerialNumber>) -> OSStatus
+
+  private struct Functions: @unchecked Sendable {
+    let mainConnection: MainConnection
+    let isUnresponsive: IsUnresponsive
+    let processForPID: ProcessForPID
+  }
+
+  private static let functions: Functions? = {
+    let everywhere = UnsafeMutableRawPointer(bitPattern: -2)  // RTLD_DEFAULT
+    guard let connection = dlsym(everywhere, "CGSMainConnectionID"),
+      let unresponsive = dlsym(everywhere, "CGSEventIsAppUnresponsive"),
+      let process = dlsym(everywhere, "GetProcessForPID")
+    else { return nil }
+    return Functions(
+      mainConnection: unsafeBitCast(connection, to: MainConnection.self),
+      isUnresponsive: unsafeBitCast(unresponsive, to: IsUnresponsive.self),
+      processForPID: unsafeBitCast(process, to: ProcessForPID.self))
+  }()
+
+  static var isAvailable: Bool { functions != nil }
+
+  /// nil when the functions are missing or the process has no WindowServer identity.
+  static func isUnresponsive(_ processID: Int32) -> Bool? {
+    guard processID > 1, let functions else { return nil }
+    var serial = ProcessSerialNumber()
+    guard functions.processForPID(processID, &serial) == noErr else { return nil }
+    return functions.isUnresponsive(functions.mainConnection(), &serial) != 0
   }
 }
 

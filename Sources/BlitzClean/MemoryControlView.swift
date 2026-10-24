@@ -37,7 +37,7 @@ struct MemoryControlView: View {
     return ScrollView {
       VStack(alignment: .leading, spacing: 24) {
         ResourceVerdictCard(
-          verdict: verdict(idle), symbol: "memorychip.fill", color: BlitzPalette.memory,
+          verdict: verdict(idle), symbol: "memorychip.fill",
           message: appResult ?? processes.threadMessage
             ?? processes.consumerMessage ?? model.statusMessage
         ) {
@@ -47,7 +47,7 @@ struct MemoryControlView: View {
               HistoryRangePicker(seconds: $seconds)
             }
             ResourcePlot(
-              samples: monitor.resourceSamples, kind: .memory, color: BlitzPalette.memory,
+              samples: monitor.resourceSamples, kind: .memory, color: BlitzPalette.data,
               seconds: seconds
             ).frame(height: 90)
             HStack(spacing: 24) {
@@ -136,7 +136,7 @@ struct MemoryControlView: View {
       let total = idle.reduce(0) { $0 + $1.memoryBytes }
       let idleFor = processes.activity.idle(.init(id: first.id, now: .now))
       return ResourceVerdict(
-        title: title, tone: tone(risk), summary: summary, explanation: explanation,
+        title: title, tone: risk.tone, summary: summary, explanation: explanation,
         recommendation:
           "\(first.name) has been idle \(ResourceLeadersSection.duration(idleFor)) and holds \(ByteText.compact(first.memoryBytes)).",
         primary: .init(title: "\(commands.stopTitle(first)) \(short(first.name))") {
@@ -157,7 +157,7 @@ struct MemoryControlView: View {
       let top = processes.consumers.first(where: { commands.canStop($0) && !$0.isPaused })
     {
       return ResourceVerdict(
-        title: title, tone: tone(risk), summary: summary, explanation: explanation,
+        title: title, tone: risk.tone, summary: summary, explanation: explanation,
         recommendation:
           "\(top.name) uses the most memory: \(ByteText.compact(top.memoryBytes)).",
         primary: .init(title: "\(commands.stopTitle(top)) \(short(top.name))") {
@@ -165,17 +165,8 @@ struct MemoryControlView: View {
         }, secondary: nil)
     }
     return ResourceVerdict(
-      title: title, tone: tone(risk), summary: summary, explanation: explanation,
+      title: title, tone: risk.tone, summary: summary, explanation: explanation,
       recommendation: nil, primary: nil, secondary: nil)
-  }
-
-  private func tone(_ risk: MemoryRisk) -> BlitzStatusTone {
-    switch risk {
-    case .normal: .good
-    case .growing: .working
-    case .warning: .warning
-    case .critical: .critical
-    }
   }
 
   private func short(_ name: String) -> String {
@@ -364,5 +355,17 @@ struct AIThreadRow: View {
       parts.append("\(thread.cpuPercent.formatted(.number.precision(.fractionLength(0))))% CPU")
     }
     return parts.joined(separator: " · ")
+  }
+}
+
+extension MemoryRisk {
+  /// Rising memory is reported in gray; amber and red start at warning.
+  var tone: BlitzStatusTone {
+    switch self {
+    case .normal: .good
+    case .growing: .working
+    case .warning: .warning
+    case .critical: .critical
+    }
   }
 }

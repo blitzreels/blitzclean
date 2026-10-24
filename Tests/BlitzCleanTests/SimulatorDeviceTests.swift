@@ -94,7 +94,8 @@ struct SimulatorDeviceTests {
       lock.withLock {
         calls.append(request.arguments)
         return .init(
-          status: outputs.isEmpty ? -1 : 0, output: outputs.isEmpty ? "" : outputs.removeFirst())
+          status: outputs.isEmpty ? -1 : 0, output: outputs.isEmpty ? "" : outputs.removeFirst(),
+          failure: outputs.isEmpty ? "xcrun simctl did not answer in time" : nil)
       }
     }
   }

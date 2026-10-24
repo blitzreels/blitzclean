@@ -7,12 +7,14 @@ import Testing
 
 struct ProcessActivityTests {
   @Test
-  func ranksBuildWorkersAndSystemProcessesAndKeepsAppNames() {
-    let records = RawProcessParser.records(
-      "10 1 501 0 100 01:00 ?? node\n"
-        + "11 10 501 240 100 00:10 ?? next-build (v16.3.3)\n"
-        + "12 1 88 140 100 01:00 ?? /System/Library/WindowServer\n"
-        + "13 1 501 10 100 01:00 ?? /Applications/Google Chrome.app/Contents/MacOS/Google Chrome\n")
+  func ranksBuildWorkersAndSystemProcessesAndKeepsAppNames() throws {
+    let records = try #require(
+      RawProcessParser.records(
+        "10 1 501 0 100 01:00 ?? node\n"
+          + "11 10 501 240 100 00:10 ?? next-build (v16.3.3)\n"
+          + "12 1 88 140 100 01:00 ?? /System/Library/WindowServer\n"
+          + "13 1 501 10 100 01:00 ?? /Applications/Google Chrome.app/Contents/MacOS/Google Chrome\n"
+      ))
     let ranked = CPUProcessRanking.ranked(
       .init(records: records, workingDirectories: [10: "/Users/me/dev/blitzreels"]))
     #expect(ranked.map(\.processID) == [11, 12, 13])
@@ -23,11 +25,12 @@ struct ProcessActivityTests {
 
   @Test
   func projectStopExcludesAgentsToolsAndOtherProjects() throws {
-    let records = RawProcessParser.records(
-      "10 1 501 0 100 01:00 ?? node /app/node_modules/vite/bin/vite.js\n"
-        + "11 1 501 0 100 01:00 ?? claude\n"
-        + "12 1 501 0 100 01:00 ?? java -classpath /maestro/lib/* maestro.cli.AppKt mcp\n"
-        + "13 1 501 0 100 01:00 ?? next-server (v16.3.3)\n")
+    let records = try #require(
+      RawProcessParser.records(
+        "10 1 501 0 100 01:00 ?? node /app/node_modules/vite/bin/vite.js\n"
+          + "11 1 501 0 100 01:00 ?? claude\n"
+          + "12 1 501 0 100 01:00 ?? java -classpath /maestro/lib/* maestro.cli.AppKt mcp\n"
+          + "13 1 501 0 100 01:00 ?? next-server (v16.3.3)\n"))
     let processes = records.compactMap { record in
       DevProcessClassifier.classify(
         .init(
@@ -42,11 +45,9 @@ struct ProcessActivityTests {
 
   @Test
   func rejectsStaleIdentityThenStopsOnlyItsOwnFixture() throws {
-    let child = Process()
-    child.executableURL = URL(fileURLWithPath: "/bin/sleep")
-    child.arguments = ["30"]
-    try child.run()
-    defer { if child.isRunning { child.terminate() } }
+    let sleep = try TestProcesses.start(.init(executable: "/bin/sleep", arguments: ["30"]))
+    defer { sleep.stop() }
+    let child = try #require(sleep.process)
     let identity = try #require(DevProcessIdentity.read(child.processIdentifier))
     let process = DevProcess(
       processID: child.processIdentifier, parentProcessID: getpid(), kind: .devServer,

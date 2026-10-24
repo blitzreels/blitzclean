@@ -83,7 +83,7 @@ struct DockerStorageService: Sendable {
           "--host", host, "image", "ls", "--filter", "dangling=true",
           "--format", "{{json .}}",
         ], timeout: configuration.queryTimeout))
-    let eligible = images.map { DockerStorageParser.danglingBytes($0.standardOutput) }
+    let eligible = images.flatMap { DockerStorageParser.danglingBytes($0.standardOutput) }
     return DockerStorageSnapshot(
       categories: categories, updatedAt: .now,
       eligibleImageBytes: eligible.map {
@@ -140,7 +140,8 @@ struct DockerStorageService: Sendable {
     guard result.status == 0 else {
       throw DockerStorageError.commandFailed(
         error.isEmpty
-          ? "Docker did not complete the request. Try again after opening Docker." : error)
+          ? "Docker did not complete the request (\(result.failure("docker") ?? "no answer")). Try again after opening Docker."
+          : error)
     }
 
     return DockerCommandOutput(standardOutput: output)
@@ -203,15 +204,18 @@ enum DockerStorageError: LocalizedError, Equatable {
 }
 
 enum DockerStorageParser {
-  static func danglingBytes(_ output: String) -> UInt64 {
+  /// Total size of the dangling images in `docker image ls --format '{{json .}}'`; nil when any line is not an
+  /// image row, so an unreadable list is never reported as nothing to remove.
+  static func danglingBytes(_ output: String) -> UInt64? {
     var seen: Set<String> = []
-    return output.split(separator: "\n").reduce(0) { total, line in
+    var total: UInt64 = 0
+    for line in output.split(whereSeparator: \.isNewline) {
       guard let object = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
-        let id = object["ID"] as? String, seen.insert(id).inserted,
-        let size = object["Size"] as? String
-      else { return total }
-      return total + DockerByteParser.bytes(size)
+        let id = object["ID"] as? String, let size = object["Size"] as? String
+      else { return nil }
+      if seen.insert(id).inserted { total += DockerByteParser.bytes(size) }
     }
+    return total
   }
   static func categories(_ output: String) throws -> [DockerStorageCategory] {
     let rows = output.split(whereSeparator: \Character.isNewline)

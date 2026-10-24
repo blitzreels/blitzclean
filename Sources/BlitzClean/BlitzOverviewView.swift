@@ -43,18 +43,21 @@ struct BlitzOverviewView: View {
           navigation: navigation, storage: storage, drive: drive, history: history,
           worktrees: worktrees,
           pending: $pending)
-        if let message = drive.message?.text ?? processes.consumerMessage ?? processes.threadMessage
-        {
-          BlitzStatusLine(text: message, tone: .working)
+        if audit.progress.startedAt == nil {
+          Button("Run a full checkup") { audit.check(models) }
+            .blitzButton(.quiet).controlSize(.small)
+            .help(
+              "Looks for everything you can remove and everything slowing your Mac. Nothing changes until you choose."
+            )
+        } else {
+          OverviewCleanCard(
+            presentation: .init(
+              progress: audit.progress, recommendations: findings.recommendations,
+              cleanupResult: audit.cleanupResult, isCleaning: cleanup.isCleaning,
+              cleaningCompleted: cleanup.completed, cleaningTotal: cleanup.total,
+              isMutating: models.isMutating, historyError: history.historyError),
+            onCheck: { audit.check(models) }, onAction: perform)
         }
-        BlitzGroupLabel(title: "Deep checkup").padding(.bottom, -14)
-        OverviewCleanCard(
-          presentation: .init(
-            progress: audit.progress, recommendations: findings.recommendations,
-            cleanupResult: audit.cleanupResult, isCleaning: cleanup.isCleaning,
-            cleaningCompleted: cleanup.completed, cleaningTotal: cleanup.total,
-            isMutating: models.isMutating, historyError: history.historyError),
-          onCheck: { audit.check(models) }, onAction: perform)
         if let error = monitor.historyPersistenceError {
           BlitzStatusLine(text: error, tone: .warning)
         }

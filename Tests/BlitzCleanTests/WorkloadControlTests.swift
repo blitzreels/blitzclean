@@ -6,21 +6,15 @@ import Testing
 
 struct WorkloadControlTests {
   @Test func terminationFailureIsReportedWithoutAutomaticForceKill() async throws {
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: "/bin/sh")
-    process.arguments = ["-c", "trap '' TERM; sleep 30 & wait"]
-    try process.run()
-    defer {
-      for pid in LiveProcessTree.read().descendants([process.processIdentifier]) {
-        _ = kill(pid, SIGKILL)
-      }
-    }
-    try await Task.sleep(for: .milliseconds(100))
-    let identity = try #require(DevProcessIdentity.read(process.processIdentifier))
+    let shell = try TestProcesses.start(
+      .init(executable: "/bin/sh", arguments: ["-c", "trap '' TERM; sleep 30 & wait"]))
+    defer { shell.stop() }
+    #expect(await eventually { LiveProcessTree.read().descendants([shell.processID]).count > 1 })
+    let identity = try #require(DevProcessIdentity.read(shell.processID))
     let result = await WorkloadControl.execute(.init(identities: [identity], signal: .quit))
     #expect(!result.completed)
     #expect(result.remaining >= 1)
-    #expect(process.isRunning)
+    #expect(shell.isRunning)
     let forced = await WorkloadControl.execute(
       .init(identities: result.identities, signal: .forceQuit))
     #expect(forced.completed)
@@ -35,18 +29,11 @@ struct WorkloadControlTests {
   }
 
   @Test func pauseIncludesChildrenCreatedAfterTheOriginalSnapshot() async throws {
-    let parent = Process()
-    parent.executableURL = URL(fileURLWithPath: "/bin/sh")
-    parent.arguments = ["-c", "sleep 30 & wait"]
-    try parent.run()
-    defer {
-      for pid in LiveProcessTree.read().descendants([parent.processIdentifier]) {
-        _ = kill(pid, SIGCONT)
-        _ = kill(pid, SIGTERM)
-      }
-    }
-    try await Task.sleep(for: .milliseconds(100))
-    let identity = try #require(DevProcessIdentity.read(parent.processIdentifier))
+    let parent = try TestProcesses.start(
+      .init(executable: "/bin/sh", arguments: ["-c", "sleep 30 & wait"]))
+    defer { parent.stop() }
+    #expect(await eventually { LiveProcessTree.read().descendants([parent.processID]).count > 1 })
+    let identity = try #require(DevProcessIdentity.read(parent.processID))
     let paused = await WorkloadControl.execute(.init(identities: [identity], signal: .pause))
     #expect(paused.completed)
     #expect(paused.affected >= 2)
@@ -60,15 +47,12 @@ struct WorkloadControlTests {
   }
 
   @Test func changedIdentityDoesNotClaimItsChildren() async throws {
-    let child = Process()
-    child.executableURL = URL(fileURLWithPath: "/bin/sleep")
-    child.arguments = ["30"]
-    try child.run()
-    defer { if child.isRunning { child.terminate() } }
-    let identity = try #require(DevProcessIdentity.read(child.processIdentifier))
+    let child = try TestProcesses.start(.init(executable: "/bin/sleep", arguments: ["30"]))
+    defer { child.stop() }
+    let identity = try #require(DevProcessIdentity.read(child.processID))
     let changed = DevProcessIdentity(process: identity.process, executable: "/changed")
     let result = await WorkloadControl.execute(.init(identities: [changed], signal: .pause))
     #expect(result.affected == 0)
-    #expect(DevProcessIdentity.read(child.processIdentifier)?.process.stopped == false)
+    #expect(DevProcessIdentity.read(child.processID)?.process.stopped == false)
   }
 }

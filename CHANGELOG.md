@@ -1,5 +1,57 @@
 # Changelog
 
+## Unreleased
+
+### Overview
+
+- Overview shows only what is wrong, one card per problem, worst first, each with one button that fixes it:
+  Free 32 GB (old iOS simulators, caches and Trash after one confirmation), Close idle apps, See agents, Pause,
+  Revive. When nothing is wrong it says so.
+- While deleting, the disk card shows each step, the space freed so far and the free space now. Caches read
+  "Free up to", since items apps have open or used recently are kept.
+- Every removal and stop reports what it measured afterwards, such as "Free disk space went from 12 GB to 26 GB",
+  instead of the size it expected to free.
+- The delete review is a floating card with a table of what goes, a note on what stays and a red confirm button.
+
+### Revive apps
+
+- Frozen apps are detected without Accessibility permission, from the same flag the Force Quit window uses.
+- The list shows regular apps plus any app that is paused or not responding, never a BlitzClean copy, and offers
+  Force Quit only on rows with a problem.
+
+### Projects
+
+- Projects groups running work by Git repository: each worktree shows its branch, uncommitted and unpushed
+  changes, the agents working in it (Claude Code, Codex, Cursor), its programs such as `node ×4`, its ports and
+  its memory, with Stop and agent Pause or Quit. Idle worktrees are listed by branch under their repository.
+- An agent card counts every agent session, the memory they hold and how many more fit before macOS starts
+  moving memory to disk. A notification warns when a new session starts with no room left.
+
+### Storage
+
+- Delete old iOS simulators now removes every installed copy of that version, waits for the simulator service
+  to finish, and reports a version macOS kept instead of claiming success. A deletion started during a scan
+  stops the scan instead of being ignored.
+
+### Design
+
+- One neutral icon style replaces the colored squares in the sidebar, page headers, Overview and the tray.
+  Charts are drawn in one ink and only turn amber or red when a reading needs attention.
+- The drive bar uses muted colors of similar lightness, with a matching dot beside each group.
+
+### Reliability
+
+- Commands that fail, time out or print something unexpected now say "Couldn't read …" with the reason instead
+  of looking empty, and nothing is stopped or deleted on a reading that could not be checked.
+- Background readers share one schedule that slows down while another app is in front and under memory
+  pressure, so BlitzClean adds no load to a Mac that is already swapping.
+- Fix a hang when many commands ran at once.
+
+### BlitzClean Dev
+
+- While the released app runs, the dev build's menu bar item shrinks to its mark and a DEV tag, so the two
+  never show the same readings side by side.
+
 ## 1.5.0 - 2026-10-18
 
 ### Storage

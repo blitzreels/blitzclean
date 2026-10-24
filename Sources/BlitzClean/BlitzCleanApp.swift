@@ -28,6 +28,13 @@ struct BlitzCleanApp: App {
         snapshot: monitor.snapshot, risk: max(memoryRescue.risk, memoryRescue.capacity.risk)
       )
       .environmentObject(cleanNavigation)
+      .onReceive(devProcesses.$threads) { threads in
+        memoryRescue.noteAgents(
+          .make(
+            .init(
+              agents: threads, availableBytes: monitor.snapshot.ramAvailable,
+              pressure: devProcesses.pressure.risk)))
+      }
     }
     .menuBarExtraStyle(.window)
 

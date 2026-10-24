@@ -24,47 +24,50 @@ struct ProcessInspectionOutput: Sendable {
 }
 
 struct ProjectProcessScanner: Sendable {
-  /// Nil when a command failed or was cut short: a partial list would make busy projects look idle.
+  /// Nil when a command failed or printed something unexpected: a partial list would make busy projects look idle.
   func processes() -> [ProjectProcessInfo]? {
     guard
-      let workingDirectories = commandOutput(
-        .init(
-          executable: "/usr/sbin/lsof", arguments: ["-d", "cwd", "-Fpcn"], allowsNoMatch: false)),
-      let listeningPorts = commandOutput(
-        .init(
-          executable: "/usr/sbin/lsof", arguments: ["-nP", "-iTCP", "-sTCP:LISTEN", "-Fpcn"],
-          allowsNoMatch: true)),
-      let processParents = commandOutput(
-        .init(executable: "/bin/ps", arguments: ["-axo", "pid=,ppid="], allowsNoMatch: false))
+      case .success(let workingDirectories) = DeveloperCommand.run(
+        ProcessCommands.workingDirectories
+      ).read({ $0 }),
+      case .success(let listeningPorts) = DeveloperCommand.run(ProcessCommands.listeningPorts)
+        .readMatches({ $0 }),
+      case .success(let processParents) = DeveloperCommand.run(ProcessCommands.parents).read({ $0 })
     else { return nil }
     return ProjectProcessParser.processes(
       .init(
         workingDirectories: workingDirectories, listeningPorts: listeningPorts,
         processParents: processParents, identify: DevProcessIdentity.read))
   }
+}
 
-  private func commandOutput(_ request: ProcessCommandRequest) -> String? {
-    let result = DeveloperCommand.run(
-      .init(
-        executable: request.executable, arguments: request.arguments,
-        timeout: 3, maximumBytes: 4 * 1_024 * 1_024))
-    if result.status == 0 { return result.output }
-    if request.allowsNoMatch, result.status == 1, result.output.isEmpty { return "" }
-    return nil
+/// The process listings both process scanners read.
+enum ProcessCommands {
+  static let workingDirectories = request(
+    .init(executable: "/usr/sbin/lsof", arguments: ["-d", "cwd", "-Fpcn"]))
+  static let listeningPorts = request(
+    .init(executable: "/usr/sbin/lsof", arguments: ["-nP", "-iTCP", "-sTCP:LISTEN", "-Fpcn"]))
+  static let parents = request(.init(executable: "/bin/ps", arguments: ["-axo", "pid=,ppid="]))
+
+  struct Command {
+    let executable: String
+    let arguments: [String]
+  }
+
+  static func request(_ command: Command) -> DeveloperCommand.Request {
+    .init(
+      executable: command.executable, arguments: command.arguments, timeout: 3,
+      maximumBytes: 4 * 1_024 * 1_024)
   }
 }
 
-struct ProcessCommandRequest: Sendable {
-  let executable: String
-  let arguments: [String]
-  /// lsof exits 1 when nothing matches, such as no listening ports.
-  let allowsNoMatch: Bool
-}
-
 enum ProjectProcessParser {
-  static func processes(_ output: ProcessInspectionOutput) -> [ProjectProcessInfo] {
-    let portsByProcess = listeningPorts(output.listeningPorts)
-    let parentsByProcess = processParents(output.processParents)
+  /// Nil when any listing is not in the format the scan asked for.
+  static func processes(_ output: ProcessInspectionOutput) -> [ProjectProcessInfo]? {
+    guard LsofFields.isWellFormed(output.workingDirectories),
+      let portsByProcess = listeningPorts(output.listeningPorts),
+      let parentsByProcess = processParents(output.processParents)
+    else { return nil }
     var processID: Int32?
     var processName = "Process"
     var expectsWorkingDirectory = false
@@ -128,7 +131,8 @@ enum ProjectProcessParser {
     }
   }
 
-  static func workingDirectories(_ output: String) -> [Int32: String] {
+  static func workingDirectories(_ output: String) -> [Int32: String]? {
+    guard LsofFields.isWellFormed(output) else { return nil }
     var processID: Int32?
     var result: [Int32: String] = [:]
 
@@ -150,7 +154,8 @@ enum ProjectProcessParser {
     return result
   }
 
-  static func listeningPorts(_ output: String) -> [Int32: [Int]] {
+  static func listeningPorts(_ output: String) -> [Int32: [Int]]? {
+    guard LsofFields.isWellFormed(output) else { return nil }
     var processID: Int32?
     var result: [Int32: Set<Int>] = [:]
 
@@ -174,19 +179,14 @@ enum ProjectProcessParser {
     }
   }
 
-  private static func processParents(_ output: String) -> [Int32: Int32] {
-    Dictionary(
-      output.split(separator: "\n").compactMap { line in
-        let values = line.split(whereSeparator: \Character.isWhitespace)
-        guard values.count == 2,
-          let processID = Int32(values[0]),
-          let parentProcessID = Int32(values[1])
-        else {
-          return nil
-        }
-
-        return (processID, parentProcessID)
-      }, uniquingKeysWith: { first, _ in first })
+  static func processParents(_ output: String) -> [Int32: Int32]? {
+    guard let rows = ProcessTable.rows(.init(output: output, columns: 2)) else { return nil }
+    var parents: [Int32: Int32] = [:]
+    for row in rows {
+      guard let processID = Int32(row[0]), let parentProcessID = Int32(row[1]) else { return nil }
+      if parents[processID] == nil { parents[processID] = parentProcessID }
+    }
+    return parents
   }
 
   private static func port(_ endpoint: String) -> Int? {

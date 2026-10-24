@@ -4,9 +4,6 @@ import Foundation
 /// Runs a short-lived command with a deadline, bounded output, and no inherited terminal.
 /// On timeout or overflow the command and every process it started are stopped.
 enum CommandRunner {
-  private static let deadlines = DispatchQueue(
-    label: "com.blitzreels.BlitzClean.command-deadlines", qos: .userInitiated)
-
   struct Environment: Sendable {
     let set: [String: String]
     let removed: [String]
@@ -64,21 +61,23 @@ enum CommandRunner {
     }
     let processID = process.processIdentifier
     let stop = CommandStop()
-    let timeout = DispatchWorkItem {
-      guard process.isRunning, stop.mark(.timedOut) else { return }
+    let finished = DispatchSemaphore(value: 0)
+    BlockingThread.start {
+      guard finished.wait(timeout: .now() + request.timeout) == .timedOut,
+        process.isRunning, stop.mark(.timedOut)
+      else { return }
       stopTree(.init(root: processID, signal: SIGTERM))
-      deadlines.asyncAfter(deadline: .now() + 1) {
-        if process.isRunning { stopTree(.init(root: processID, signal: SIGKILL)) }
+      if finished.wait(timeout: .now() + 1) == .timedOut, process.isRunning {
+        stopTree(.init(root: processID, signal: SIGKILL))
       }
     }
-    deadlines.asyncAfter(deadline: .now() + request.timeout, execute: timeout)
 
     let workers = DispatchGroup()
     if let input, let data = request.input {
       let handle = input.fileHandleForWriting
       _ = fcntl(handle.fileDescriptor, F_SETNOSIGPIPE, 1)
       workers.enter()
-      DispatchQueue.global(qos: .utility).async {
+      BlockingThread.start {
         try? handle.write(contentsOf: data)
         try? handle.close()
         workers.leave()
@@ -86,7 +85,7 @@ enum CommandRunner {
     }
     let diagnostics = CommandBuffer(limit: 65_536)
     workers.enter()
-    DispatchQueue.global(qos: .utility).async {
+    BlockingThread.start {
       diagnostics.drain(errors.fileHandleForReading)
       workers.leave()
     }
@@ -100,7 +99,7 @@ enum CommandRunner {
     }
     process.waitUntilExit()
     workers.wait()
-    timeout.cancel()
+    finished.signal()
     let ending: Ending =
       stop.reason
       ?? (process.terminationReason == .exit ? .exited(process.terminationStatus) : .signaled)
@@ -152,4 +151,13 @@ private final class CommandBuffer: @unchecked Sendable {
   }
 
   var text: String { lock.withLock { String(decoding: data, as: UTF8.self) } }
+}
+
+/// Runs blocking pipe I/O and deadlines on a thread of their own. Queued on global dispatch queues
+/// instead, they never started once concurrent callers had blocked every pool thread waiting on
+/// their own commands, and those callers then waited forever.
+enum BlockingThread {
+  static func start(_ work: @escaping @Sendable () -> Void) {
+    Thread(block: work).start()
+  }
 }

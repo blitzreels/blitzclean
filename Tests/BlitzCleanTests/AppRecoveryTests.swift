@@ -1,3 +1,4 @@
+import AppKit
 import Darwin
 import Foundation
 import Testing
@@ -195,15 +196,13 @@ struct AppRecoveryTests {
     let defaults = TestDefaults("recovery").defaults
     let model = AppRecoveryModel(driver: driver, defaults: defaults)
     let scan = Task { await model.scan([app, slow]) }
-    for _ in 0..<100 where model.check(for: app)?.health != .stopped {
-      try await Task.sleep(for: .milliseconds(10))
-    }
-    #expect(model.check(for: app)?.health == .stopped)
+    #expect(await eventually { model.check(for: app)?.health == .stopped })
     #expect(model.isScanning)
     #expect(model.activity(for: slow) == .checking)
     let report = try #require(await model.revive(app))
     #expect(report.outcome == .revived)
     #expect(model.isScanning)
+    await driver.releaseSlow()
     await scan.value
     #expect(model.check(for: slow)?.health == .unresponsive)
   }
@@ -313,6 +312,109 @@ struct AppRecoveryTests {
           ownUserID: 501)) != nil)
   }
 
+  @Test func windowServerHangLeadsAndWindowProbeOnlyAddsADirectAnswer() {
+    let combine = { (hang: Bool?, window: RecoveryResponse?) in
+      RecoveryResponse.combine(.init(windowServerHang: hang, window: window))
+    }
+    #expect(combine(true, nil) == .reportedHung)
+    #expect(combine(true, .responding) == .reportedHung)
+    #expect(combine(false, .responding) == .responding)
+    #expect(combine(false, .noReply) == .noReply)
+    #expect(combine(false, .permissionNeeded) == .noHangReported)
+    #expect(combine(false, nil) == .noHangReported)
+    #expect(combine(nil, .permissionNeeded) == .permissionNeeded)
+    #expect(combine(nil, nil) == .unsupported)
+    let observe = { (response: RecoveryResponse) in
+      RecoveryObservation(process: process(), response: response)
+    }
+    #expect(RecoveryHealth.assess([observe(.reportedHung)]) == .unresponsive)
+    #expect(RecoveryHealth.assess([observe(.noHangReported)]) == .running)
+  }
+
+  @Test func reportedHangNeedsOneObservation() async {
+    let driver = ScriptedRecoveryDriver([42: [running(.reportedHung)]])
+    #expect(await engine(driver).check(app) == .unresponsive)
+    #expect(await driver.observations == 1)
+  }
+
+  @Test func processStateReadsTheWindowServerFlagWithoutWindowChecks() async {
+    let driver = ScriptedRecoveryDriver(
+      [42: [running(.noHangReported)], 43: [running(.noHangReported)]],
+      hangReports: [42: true, 43: false])
+    let quiet = MemoryApp(
+      processID: 43, name: "Quiet", bundleIdentifier: "com.example.quiet",
+      bundleURL: URL(fileURLWithPath: "/Applications/Quiet.app"), memoryBytes: 0,
+      protectionReason: nil, isActive: false, launchDate: app.launchDate, childProcessCount: 0)
+    #expect(await engine(driver).processState(app) == .unresponsive)
+    #expect(await engine(driver).processState(quiet) == .running)
+    #expect(await driver.observations == 0)
+  }
+
+  @Test func hungAppThatRecoversAfterResumeIsRevived() async {
+    let recovers = ScriptedRecoveryDriver(
+      [42: [running(.reportedHung), running(.noHangReported)]])
+    #expect(await engine(recovers).revive(app).outcome == .revived)
+    let stuck = ScriptedRecoveryDriver([42: [running(.reportedHung)]])
+    #expect(await engine(stuck).revive(app).outcome == .notResponding)
+    let healthy = ScriptedRecoveryDriver([42: [running(.noHangReported)]])
+    #expect(await engine(healthy).revive(app).outcome == .alreadyRunning)
+  }
+
+  @MainActor
+  @Test func backgroundStateLoopFlagsAndHoldsAWindowServerHang() async {
+    let driver = ScriptedRecoveryDriver(
+      [42: [running(.noHangReported)]], hangReports: [42: true])
+    let model = AppRecoveryModel(driver: driver, defaults: TestDefaults("recovery").defaults)
+    await model.noteProcessStates([app])
+    #expect(model.check(for: app)?.health == .unresponsive)
+    #expect(model.attentionCount == 1)
+    await driver.reportHang((processID: 42, hung: false))
+    await model.noteProcessStates([app])
+    #expect(model.check(for: app)?.health == .unresponsive)
+    #expect(await driver.observations == 0)
+  }
+
+  @Test func onlyRecognisableAppsAreListedUnlessTheyAreStuck() {
+    #expect(RecoveryAppRoster.isListed(.init(isRegular: true, needsAttention: false)))
+    #expect(RecoveryAppRoster.isListed(.init(isRegular: true, needsAttention: true)))
+    #expect(RecoveryAppRoster.isListed(.init(isRegular: false, needsAttention: true)))
+    #expect(!RecoveryAppRoster.isListed(.init(isRegular: false, needsAttention: false)))
+  }
+
+  @Test func everyBlitzCleanCopyIsLeftOutOfTheRoster() {
+    let copies = [
+      ("BlitzClean", "com.blitzreels.BlitzClean", "/Applications/BlitzClean.app"),
+      ("BlitzClean Dev", "com.blitzreels.BlitzClean.dev", "/Applications/BlitzClean Dev.app"),
+      (
+        "BlitzClean Emergency", "com.blitzreels.BlitzClean.Emergency",
+        "/Applications/BlitzClean.app/Contents/Helpers/BlitzClean Emergency.app"
+      ),
+      (
+        "BlitzClean Emergency", "com.blitzreels.BlitzClean.dev.Emergency",
+        "/Applications/BlitzClean Dev.app/Contents/Helpers/BlitzClean Emergency.app"
+      ),
+      ("ChatGPT", "com.openai.chat", "/Applications/ChatGPT.app"),
+    ].enumerated().map { index, copy in
+      MemoryAppDescriptor(
+        processID: Int32(1_000 + index), name: copy.0, bundleIdentifier: copy.1,
+        bundleURL: URL(fileURLWithPath: copy.2), protectionReason: nil, isActive: false,
+        launchDate: app.launchDate)
+    }
+    let roster = RecoveryAppRoster.merge(.init(descriptors: copies, measured: []))
+    #expect(roster.map(\.name) == ["ChatGPT"])
+  }
+
+  @MainActor
+  @Test func windowServerProbeLoadsOnThisMacOS() {
+    #expect(WindowServerHangProbe.isAvailable)
+    #expect(WindowServerHangProbe.isUnresponsive(0) == nil)
+    if let finder = NSRunningApplication.runningApplications(
+      withBundleIdentifier: "com.apple.finder"
+    ).first {
+      #expect(WindowServerHangProbe.isUnresponsive(finder.processIdentifier) == false)
+    }
+  }
+
   @Test func nativeIdentityMatchesTheCurrentProcess() throws {
     let native = try #require(NativeAppRecoveryDriver.readProcess(getpid()))
     #expect(native.processID == getpid())
@@ -335,20 +437,32 @@ private actor ScriptedRecoveryDriver: AppRecoveryDriver {
   private let steps: [Int32: [RecoveryStep]]
   private let crash: URL?
   private let refusesResume: Bool
+  /// Checks of these apps hold until `releaseSlow()`, so a test can act while they are in flight.
   private let slowIDs: Set<Int32>
+  private var slowReleased = false
+  private var hangReports: [Int32: Bool]
   private var afterResume: [Int32: Int] = [:]
   private(set) var resumedIDs: [Int32] = []
   private(set) var observations = 0
 
   init(
     _ steps: [Int32: [RecoveryStep]], crash: URL? = nil, refusesResume: Bool = false,
-    slowIDs: Set<Int32> = []
+    slowIDs: Set<Int32> = [], hangReports: [Int32: Bool] = [:]
   ) {
     self.steps = steps
     self.crash = crash
     self.refusesResume = refusesResume
     self.slowIDs = slowIDs
+    self.hangReports = hangReports
   }
+
+  func releaseSlow() { slowReleased = true }
+
+  func reportHang(_ report: (processID: Int32, hung: Bool?)) {
+    hangReports[report.processID] = report.hung
+  }
+
+  func hangReported(_ target: RecoveryTarget) -> Bool? { hangReports[target.app.processID] }
 
   private func current(_ id: Int32) throws -> RecoveryObservation {
     guard let script = steps[id], !script.isEmpty else {
@@ -375,7 +489,7 @@ private actor ScriptedRecoveryDriver: AppRecoveryDriver {
 
   func observe(_ target: RecoveryTarget) async throws -> RecoveryObservation {
     observations += 1
-    if slowIDs.contains(target.app.processID) { try await Task.sleep(for: .milliseconds(400)) }
+    if slowIDs.contains(target.app.processID) { await eventually { slowReleased } }
     return try current(target.app.processID)
   }
 

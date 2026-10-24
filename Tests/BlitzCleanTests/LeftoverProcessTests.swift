@@ -24,8 +24,9 @@ struct LeftoverProcessTests {
       directory: root.path, name: "Fixture", keepRunning: true, startCommand: nil)
     UserDefaults.standard.set(
       try JSONEncoder().encode([preference]), forKey: WorkspacePreferences.key)
-    let processID = try startLeftover(root)
-    defer { kill(processID, SIGKILL) }
+    let leftover = try startLeftover(root)
+    defer { leftover.stop() }
+    let processID = leftover.processID
     let identity = try #require(DevProcessIdentity.read(processID))
     #expect(!LeftoverProcessStopper.signal(request(.init(identity: identity, force: true))))
     #expect(DevProcessIdentity.read(processID) != nil)
@@ -33,13 +34,11 @@ struct LeftoverProcessTests {
 
   @Test @MainActor
   func confirmationCannotAdoptTheIdentityFromANewerScan() async throws {
-    let processID = try startLeftover()
-    defer { kill(processID, SIGKILL) }
+    let leftover = try startLeftover(nil)
+    defer { leftover.stop() }
+    let processID = leftover.processID
     let model = DevProcessModel()
-    let deadline = Date.now.addingTimeInterval(10)
-    while !model.leftovers.contains(where: { $0.processID == processID }), Date.now < deadline {
-      try await Task.sleep(for: .milliseconds(50))
-    }
+    await eventually { model.leftovers.contains { $0.processID == processID } }
     let current = try #require(model.leftovers.first { $0.processID == processID })
     let earlier = DevProcessIdentity(
       process: .init(
@@ -53,9 +52,7 @@ struct LeftoverProcessTests {
       workingDirectory: current.workingDirectory, memoryBytes: current.memoryBytes,
       cpuPercent: current.cpuPercent)
     model.quitLeftovers(.init(targets: [selected], force: true))
-    while model.stoppingLeftovers.contains(processID), Date.now < deadline {
-      try await Task.sleep(for: .milliseconds(50))
-    }
+    #expect(await eventually { !model.stoppingLeftovers.contains(processID) })
     #expect(DevProcessIdentity.read(processID) != nil)
   }
 
@@ -240,7 +237,8 @@ struct LeftoverProcessTests {
         == "Quit 1 of 3 leftover processes · 1 still running · 1 exited, changed, or protected")
   }
 
-  private func startLeftover(_ directory: URL? = nil) throws -> Int32 {
+  /// Starts `sleep` as a background job of a shell that exits at once, so launchd adopts it.
+  private func startLeftover(_ directory: URL?) throws -> TestChild {
     let shell = Process()
     let pipe = Pipe()
     shell.executableURL = URL(fileURLWithPath: "/bin/sh")
@@ -251,15 +249,15 @@ struct LeftoverProcessTests {
     shell.waitUntilExit()
     let output = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
     let processID = try #require(Int32(output.trimmingCharacters(in: .whitespacesAndNewlines)))
-    for _ in 0..<40 {
-      if DevProcessIdentity.read(processID)?.executable.hasSuffix("/sleep") == true {
-        return processID
-      }
-      usleep(5_000)
+    let started = eventuallyBlocking {
+      DevProcessIdentity.read(processID)?.executable.hasSuffix("/sleep") == true
     }
-    kill(processID, SIGKILL)
-    throw CocoaError(.executableLoad)
-
+    let leftover = TestProcesses.adopt(processID)
+    guard started else {
+      leftover.stop()
+      throw CocoaError(.executableLoad)
+    }
+    return leftover
   }
 
   private struct RequestInput {
@@ -275,17 +273,14 @@ struct LeftoverProcessTests {
   }
 
   private func waitForExit(_ processID: Int32) async -> Bool {
-    for _ in 0..<40 {
-      if DevProcessIdentity.read(processID) == nil { return true }
-      try? await Task.sleep(for: .milliseconds(50))
-    }
-    return false
+    await eventually { DevProcessIdentity.read(processID) == nil }
   }
 
   @Test
   func quitsAVerifiedLeftover() async throws {
-    let processID = try startLeftover()
-    defer { kill(processID, SIGKILL) }
+    let leftover = try startLeftover(nil)
+    defer { leftover.stop() }
+    let processID = leftover.processID
     let identity = try #require(DevProcessIdentity.read(processID))
 
     #expect(LeftoverProcessStopper.signal(request(.init(identity: identity, force: false))))
@@ -294,8 +289,9 @@ struct LeftoverProcessTests {
 
   @Test
   func refusesAReusedProcessID() async throws {
-    let processID = try startLeftover()
-    defer { kill(processID, SIGKILL) }
+    let leftover = try startLeftover(nil)
+    defer { leftover.stop() }
+    let processID = leftover.processID
     let identity = try #require(DevProcessIdentity.read(processID))
     let earlier = DevProcessIdentity(
       process: .init(
@@ -310,12 +306,9 @@ struct LeftoverProcessTests {
 
   @Test
   func refusesAProcessWhoseParentIsRunning() throws {
-    let child = Process()
-    child.executableURL = URL(fileURLWithPath: "/bin/sleep")
-    child.arguments = ["30"]
-    try child.run()
-    defer { child.terminate() }
-    let identity = try #require(DevProcessIdentity.read(child.processIdentifier))
+    let child = try TestProcesses.start(.init(executable: "/bin/sleep", arguments: ["30"]))
+    defer { child.stop() }
+    let identity = try #require(DevProcessIdentity.read(child.processID))
 
     #expect(!LeftoverProcessStopper.signal(request(.init(identity: identity, force: false))))
     #expect(child.isRunning)

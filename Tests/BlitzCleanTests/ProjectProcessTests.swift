@@ -5,38 +5,39 @@ import Testing
 
 struct ProjectProcessTests {
   @Test
-  func joinsWorkingDirectoriesWithListeningPorts() {
-    let processes = ProjectProcessParser.processes(
-      ProcessInspectionOutput(
-        workingDirectories: """
-          p4776
-          cnode
-          fcwd
-          n/Users/me/dev/project
-          p9012
-          cvite
-          fcwd
-          n/Users/me/dev/other
-          """,
-        listeningPorts: """
-          p4776
-          cnode
-          f19
-          n*:3333
-          f20
-          n127.0.0.1:61078
-          p9012
-          cvite
-          f21
-          n[::1]:5173
-          """,
-        processParents: """
-          4776 1
-          9012 400
-          """,
-        identify: { _ in nil }
-      )
-    )
+  func joinsWorkingDirectoriesWithListeningPorts() throws {
+    let processes = try #require(
+      ProjectProcessParser.processes(
+        ProcessInspectionOutput(
+          workingDirectories: """
+            p4776
+            cnode
+            fcwd
+            n/Users/me/dev/project
+            p9012
+            cvite
+            fcwd
+            n/Users/me/dev/other
+            """,
+          listeningPorts: """
+            p4776
+            cnode
+            f19
+            n*:3333
+            f20
+            n127.0.0.1:61078
+            p9012
+            cvite
+            f21
+            n[::1]:5173
+            """,
+          processParents: """
+            4776 1
+            9012 400
+            """,
+          identify: { _ in nil }
+        )
+      ))
 
     #expect(processes.count == 2)
     #expect(processes[0].name == "node")
@@ -55,12 +56,9 @@ struct ProjectProcessTests {
 
   @Test
   func refusesReusedProcessIDs() throws {
-    let child = Process()
-    child.executableURL = URL(fileURLWithPath: "/bin/sleep")
-    child.arguments = ["30"]
-    try child.run()
-    defer { child.terminate() }
-    let live = try #require(DevProcessIdentity.read(child.processIdentifier))
+    let child = try TestProcesses.start(.init(executable: "/bin/sleep", arguments: ["30"]))
+    defer { child.stop() }
+    let live = try #require(DevProcessIdentity.read(child.processID))
     let earlier = DevProcessIdentity(
       process: .init(
         processID: live.process.processID, owner: live.process.owner,
@@ -75,10 +73,9 @@ struct ProjectProcessTests {
 
   @Test
   func stopsTheScannedInstance() throws {
-    let child = Process()
-    child.executableURL = URL(fileURLWithPath: "/bin/sleep")
-    child.arguments = ["30"]
-    try child.run()
+    let sleep = try TestProcesses.start(.init(executable: "/bin/sleep", arguments: ["30"]))
+    defer { sleep.stop() }
+    let child = try #require(sleep.process)
     let identity = try #require(DevProcessIdentity.read(child.processIdentifier))
     let result = ProjectProcessController().stop(.init(processes: [process(identity: identity)]))
     child.waitUntilExit()

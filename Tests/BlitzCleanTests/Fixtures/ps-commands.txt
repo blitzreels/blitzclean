@@ -1,0 +1,22 @@
+    1 /sbin/launchd
+  267 /usr/bin/ssh-agent
+  592 /usr/libexec/logd
+  667 /usr/sbin/cfprefsd
+  844 /usr/sbin/distnoted
+ 1002 /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
+ 1121 /System/Library/PrivateFrameworks/UniversalAccess.framework/Versions/A/Resources/universalAccessAuthWarn.app/Contents/MacOS/universalAccessAuthWarn
+ 4993 /System/Library/ExtensionKit/Extensions/ScreenTimeAppIntentsExtension.appex/Contents/MacOS/ScreenTimeAppIntentsExtension
+ 6508 /Applications/cmux.app/Contents/Resources/bin/cmux
+ 9369 postgres: checkpointer 
+14704 /System/Library/PrivateFrameworks/KerberosHelper/Helpers/DiskUnmountWatcher
+22635 /Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node
+23743 /Users/me/Applications/BlitzClean Dev.app/Contents/Helpers/BlitzClean Emergency.app/Contents/MacOS/BlitzRescue
+26694 node
+32617 /Users/me/Library/Application Support/cmux/cmux-cua/helper/com.cmuxterm.app/cmux Computer Use.app/Contents/MacOS/cmux-cua
+37487 /System/Library/PrivateFrameworks/IMDPersistence.framework/XPCServices/IMDPersistenceAgent.xpc/Contents/MacOS/IMDPersistenceAgent
+39636 postgres: me code_reels 127.0.0.1(54348) idle
+52838 /System/Library/Frameworks/Contacts.framework/Support/contactsd
+58140 /System/Applications/Mail.app/Contents/PlugIns/com.apple.mail.SpotlightIndexExtension.appex/Contents/MacOS/com.apple.mail.SpotlightIndexExtension
+77003 /Applications/Jiggler.app/Contents/MacOS/Jiggler
+37776 /Users/me/.local/bin/claude
+90356 -/bin/zsh

@@ -135,7 +135,8 @@ struct DevProcessSnapshot: Sendable {
   let resources: [ResourceProcess]
   var workspaceRoots: [Int32: String] = [:]
   var leftovers: [LeftoverProcess] = []
-  var incomplete = false
+  /// "Couldn't read X: reason." for each listing the scan could not read; empty when it read everything.
+  var problems: [String] = []
 }
 
 enum ProcessWorkingDirectory {

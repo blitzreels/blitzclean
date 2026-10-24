@@ -21,7 +21,6 @@ struct DeveloperBrowserTests {
         scanRequest: .init(roots: [], minimumBytes: 1, maxEntries: 1),
         synchronizesInBackground: false))
     let model = DeveloperBrowserModel()
-    let deadline = Date.now.addingTimeInterval(25)
     let artifacts = ["one", "two"].map {
       DeveloperArtifactScanner.dependency(
         .init(
@@ -33,10 +32,7 @@ struct DeveloperBrowserTests {
       model.remove(.init(artifact: artifact, history: history, force: false))
     }
     #expect(model.deleting.count == 2)
-    while !model.deleting.isEmpty, Date.now < deadline {
-      try await Task.sleep(for: .milliseconds(50))
-    }
-    #expect(model.deleting.isEmpty)
+    #expect(await eventually { model.deleting.isEmpty })
     #expect(model.artifacts.isEmpty)
     #expect(history.ledger.wins.count == 2)
     #expect(FileManager.default.fileExists(atPath: fixture.root + "/one/package-lock.json"))
@@ -84,10 +80,11 @@ struct DeveloperBrowserTests {
   }
 
   @Test
-  func parsesNullDelimitedWorktreesWithSpacesAndNewlines() {
-    let result = GitWorktrees.parse(
-      "worktree /tmp/main\0HEAD abc\0branch refs/heads/main\0\0worktree /tmp/topic with\nnewline\0HEAD def\0detached\0locked user reason\0\0"
-    )
+  func parsesNullDelimitedWorktreesWithSpacesAndNewlines() throws {
+    let result = try #require(
+      GitWorktrees.parse(
+        "worktree /tmp/main\0HEAD abc\0branch refs/heads/main\0\0worktree /tmp/topic with\nnewline\0HEAD def\0detached\0locked user reason\0\0"
+      ))
     #expect(result.count == 2)
     #expect(result[0].primary)
     #expect(result[1].path == "/tmp/topic with\nnewline")
@@ -143,7 +140,7 @@ struct DeveloperBrowserTests {
     #expect(
       GitWorktrees.validateRemoval(
         .init(expected: assessment, activeDirectories: [], keptDirectories: [])) != nil)
-    let current = try #require(GitWorktrees.list(fixture.root)?.first { !$0.primary })
+    let current = try #require(try GitWorktrees.list(fixture.root).get().first { !$0.primary })
     #expect(fixture.inspect(current).merge == .unverified)
   }
 
@@ -152,7 +149,7 @@ struct DeveloperBrowserTests {
     let fixture = try DeveloperFixture()
     defer { fixture.remove() }
     let assessment = try fixture.worktree()
-    let primary = try #require(GitWorktrees.list(fixture.root)?.first)
+    let primary = try #require(try GitWorktrees.list(fixture.root).get().first)
     #expect(fixture.inspect(primary).blocker == "Primary checkout")
     #expect(
       GitWorktrees.inspect(
@@ -175,12 +172,12 @@ struct DeveloperBrowserTests {
       ).blocker != nil)
     try fixture.git(
       .init(directory: fixture.root, arguments: ["worktree", "lock", assessment.record.path]))
-    let locked = try #require(GitWorktrees.list(fixture.root)?.first { !$0.primary })
+    let locked = try #require(try GitWorktrees.list(fixture.root).get().first { !$0.primary })
     #expect(fixture.inspect(locked).blocker == "Worktree is locked")
     try fixture.git(
       .init(directory: fixture.root, arguments: ["worktree", "unlock", assessment.record.path]))
     try fixture.git(.init(directory: assessment.record.path, arguments: ["checkout", "--detach"]))
-    let detached = try #require(GitWorktrees.list(fixture.root)?.first { !$0.primary })
+    let detached = try #require(try GitWorktrees.list(fixture.root).get().first { !$0.primary })
     #expect(fixture.inspect(detached).blocker == "Detached HEAD. Save its commits first.")
   }
 
@@ -242,8 +239,10 @@ struct DeveloperBrowserTests {
 
   @Test
   func commandOutputIsBounded() {
+    let yes = TestProcesses.guarded(.init(executable: "/usr/bin/yes", arguments: []))
     let result = DeveloperCommand.run(
-      .init(executable: "/usr/bin/yes", arguments: [], timeout: 2, maximumBytes: 1_024))
+      .init(
+        executable: yes.executable, arguments: yes.arguments, timeout: 2, maximumBytes: 1_024))
     #expect(result.status == -1)
     #expect(result.output.utf8.count <= 1_024)
   }
@@ -290,7 +289,7 @@ private struct DeveloperFixture {
     try git(.init(directory: root, arguments: ["commit", "-m", "initial"]))
     try git(
       .init(directory: root, arguments: ["worktree", "add", "-b", "topic", root + "/linked"]))
-    let record = try #require(GitWorktrees.list(root)?.first { !$0.primary })
+    let record = try #require(try GitWorktrees.list(root).get().first { !$0.primary })
     return inspect(record)
   }
 

@@ -18,7 +18,9 @@ struct PressureRenderTests {
     }
     let controller = WorkspaceController()
     for width in [CGFloat(708), CGFloat(868)] {
-      let view = WorkspaceProjectsView(processes: processes, controller: controller).blitzTheme()
+      let view = WorkspaceProjectsView(
+        processes: processes, controller: controller, monitor: SystemMonitor()
+      ).blitzTheme()
       let host = NSHostingView(rootView: view.frame(width: width, height: 780))
       host.frame = NSRect(x: 0, y: 0, width: width, height: 780)
       let window = NSWindow(

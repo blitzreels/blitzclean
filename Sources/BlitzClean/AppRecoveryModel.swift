@@ -39,6 +39,24 @@ enum RecoveryAppRoster {
       $0.name.localizedStandardCompare($1.name) == .orderedAscending
     }
   }
+
+  struct Visibility {
+    /// A Dock app with menus and windows, as opposed to a menu bar or background agent.
+    let isRegular: Bool
+    let needsAttention: Bool
+  }
+
+  /// Every eligible app is watched, but only apps a person would recognise are listed: Dock apps,
+  /// plus any agent while it is stopped or not responding.
+  static func isListed(_ visibility: Visibility) -> Bool {
+    visibility.isRegular || visibility.needsAttention
+  }
+
+  @MainActor static func regularProcessIDs() -> Set<Int32> {
+    Set(
+      NSWorkspace.shared.runningApplications.filter { $0.activationPolicy == .regular }
+        .map(\.processIdentifier))
+  }
 }
 
 extension MemoryApp {
@@ -77,6 +95,9 @@ final class AppRecoveryModel: ObservableObject {
   private var lastCrashScan = Date.distantPast
   private var loadingCrashes = false
   static let refreshInterval: TimeInterval = 2
+  /// A frozen-window result from the accessibility probe outlives one WindowServer "no hang"
+  /// reading, so the two-second process-state loop doesn't flicker it away between window checks.
+  static let hangHoldInterval: TimeInterval = 6
   private var permissionWait: Task<Void, Never>?
   private var dismissedCrashes: Set<String>
 
@@ -138,17 +159,22 @@ final class AppRecoveryModel: ObservableObject {
   func noteProcessStates(_ apps: [MemoryApp]) async {
     prune(to: apps)
     for app in apps where activity[app.processID] == nil {
-      switch await engine.processState(app) {
-      case .stopped?:
-        store(app, .stopped)
-      case nil where check(for: app)?.health == .stopped:
-        checks[app.processID] = nil
-        results[app.processID] = nil
+      let state = await engine.processState(app)
+      let previous = check(for: app)
+      switch state {
+      case let state? where state.needsAttention:
+        store(app, state)
       case .exited?:
         checks[app.processID] = nil
         results[app.processID] = nil
       default:
-        break
+        if previous?.health == .stopped
+          || (previous?.health == .unresponsive && state == .running
+            && Date.now.timeIntervalSince(previous?.date ?? .distantPast) >= Self.hangHoldInterval)
+        {
+          checks[app.processID] = nil
+          results[app.processID] = nil
+        }
       }
     }
   }
@@ -201,8 +227,8 @@ final class AppRecoveryModel: ObservableObject {
     var windowChecks: [MemoryApp] = []
     for app in pending {
       switch await engine.processState(app) {
-      case .stopped?:
-        store(app, .stopped)
+      case let state? where state.needsAttention:
+        store(app, state)
         finishCheck(app)
       case .exited?:
         checks[app.processID] = nil

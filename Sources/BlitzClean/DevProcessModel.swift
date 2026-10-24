@@ -86,7 +86,7 @@ final class DevProcessModel: ObservableObject {
 
   func refreshIfStale() {
     guard !isRefreshing else { return }
-    let interval: TimeInterval = pressure.risk >= .warning ? 12 : NSApp?.isActive == true ? 5 : 15
+    let interval = RefreshCadence.interval(.processes)
     if let scannedAt, Date().timeIntervalSince(scannedAt) < interval {
       return
     }
@@ -136,9 +136,7 @@ final class DevProcessModel: ObservableObject {
       scannedAt = .now
       isRefreshing = false
       scanDuration = Date.now.timeIntervalSince(started)
-      statusMessage =
-        scanned.incomplete
-        ? "Process scan incomplete; some processes or ports could not be read." : nil
+      statusMessage = scanned.problems.isEmpty ? nil : scanned.problems.joined(separator: " ")
       updateProjectTargets()
       if pressure.risk < .warning { probeStalePorts() }
       if refreshRequested {
@@ -376,10 +374,12 @@ final class DevProcessModel: ObservableObject {
     consumerMessage = nil
     let expected = consumer.processIDs.compactMap { identities[$0] }
     let signal = request.signal
+    let before = ResourceReading.now()
     Task { [weak self] in
       let result = await Task.detached(priority: .userInitiated) {
         await WorkloadControl.execute(.init(identities: expected, signal: signal))
       }.value
+      let after = signal == .quit || signal == .forceQuit ? await ResourceReading.settled() : before
       guard let self else { return }
       let name = consumer.name
       consumerMessage =
@@ -395,12 +395,17 @@ final class DevProcessModel: ObservableObject {
             "\(name) paused · CPU stopped, \(ByteText.full(consumer.memoryBytes)) still held."
           case .resume: "\(name) resumed."
           case .quit, .forceQuit:
-            "\(name) stopped · \(ByteText.full(consumer.memoryBytes)) released."
+            "\(name) stopped. " + MeasuredResult.memory(.init(before: before, after: after))
           }
         }
       actingConsumers.remove(consumer.id)
       refresh()
     }
+  }
+
+  /// The result of a batch action that spans several consumers, measured by the caller.
+  func report(_ text: String) {
+    consumerMessage = text
   }
 
   struct ConsumerPriority {
@@ -547,17 +552,26 @@ final class DevProcessModel: ObservableObject {
     leftoverMessage = nil
     Task { [weak self] in
       let outcome = await Task.detached(priority: .userInitiated) {
-        () async -> (signaled: [LeftoverStopRequest], running: Int) in
-        let signaled = LeftoverProcessStopper.signals(requests)
-        for _ in 0..<12 {
-          if !signaled.contains(where: LeftoverProcessStopper.isCurrent) { break }
-          try? await Task.sleep(for: .milliseconds(250))
+        () async -> Result<(signaled: [LeftoverStopRequest], running: Int), CommandReadError> in
+        switch LeftoverProcessStopper.signals(requests) {
+        case .failure(let error): return .failure(error)
+        case .success(let signaled):
+          for _ in 0..<12 {
+            if !signaled.contains(where: LeftoverProcessStopper.isCurrent) { break }
+            try? await Task.sleep(for: .milliseconds(250))
+          }
+          return .success((signaled, signaled.filter(LeftoverProcessStopper.isCurrent).count))
         }
-        return (signaled, signaled.filter(LeftoverProcessStopper.isCurrent).count)
       }.value
       guard let self else { return }
-      leftoverMessage = Self.leftoverMessage(
-        .init(requested: requests, signaled: outcome.signaled, running: outcome.running))
+      switch outcome {
+      case .success(let outcome):
+        leftoverMessage = Self.leftoverMessage(
+          .init(requested: requests, signaled: outcome.signaled, running: outcome.running))
+      case .failure(let error):
+        leftoverMessage =
+          "Nothing was quit. Couldn't read the background jobs macOS manages: \(error.reason)."
+      }
       stoppingLeftovers.subtract(ids)
       refresh()
     }

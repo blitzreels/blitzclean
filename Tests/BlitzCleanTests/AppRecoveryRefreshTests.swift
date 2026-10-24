@@ -21,7 +21,7 @@ struct AppRecoveryRefreshTests {
     await model.scan([app])
     #expect(model.check(for: app)?.health == .responsive)
     await driver.set(.unresponsive)
-    try await Task.sleep(for: .milliseconds(2_100))
+    try await Task.sleep(for: .seconds(AppRecoveryModel.refreshInterval + 0.1))
     await model.scan([app])
     #expect(model.check(for: app)?.health == .unresponsive)
   }
@@ -89,17 +89,11 @@ struct AppRecoveryRefreshTests {
     let model = AppRecoveryModel(
       driver: driver, defaults: TestDefaults("recovery-refresh").defaults)
     let first = Task { await model.scan([app]) }
-    for _ in 0..<100 {
-      if await driver.observations > 0 { break }
-      try await Task.sleep(for: .milliseconds(10))
-    }
+    #expect(await eventually { await driver.observations > 0 })
     await driver.set(.unresponsive)
     await model.scan([app], force: true)
     await first.value
-    for _ in 0..<100 where model.check(for: app)?.health != .unresponsive {
-      try await Task.sleep(for: .milliseconds(10))
-    }
-    #expect(model.check(for: app)?.health == .unresponsive)
+    #expect(await eventually { model.check(for: app)?.health == .unresponsive })
   }
 
 }
@@ -113,6 +107,7 @@ private actor RefreshRecoveryDriver: AppRecoveryDriver {
   func resolve(_ app: MemoryApp) -> RecoveryTarget {
     RecoveryTarget(app: app, process: process())
   }
+  func hangReported(_ target: RecoveryTarget) -> Bool? { nil }
   func observe(_ target: RecoveryTarget) async throws -> RecoveryObservation {
     let observation = RecoveryObservation(
       process: process(), response: health == .responsive ? .responding : .noReply)

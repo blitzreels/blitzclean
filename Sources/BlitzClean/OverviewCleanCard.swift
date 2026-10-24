@@ -105,7 +105,7 @@ struct OverviewCleanCard: View {
   private var hero: some View {
     VStack(alignment: .leading, spacing: 0) {
       HStack(alignment: .center, spacing: 14) {
-        BlitzColorTile(symbol: "stethoscope", color: Color(white: 0.45), size: 36)
+        BlitzIconTile(symbol: "stethoscope", tone: .muted, size: 36)
         VStack(alignment: .leading, spacing: 3) {
           headline
           Text(detailLine).font(BlitzType.body).foregroundStyle(BlitzUI.secondaryText)
@@ -235,7 +235,7 @@ struct OverviewCleanCard: View {
   private func recommendationRow(_ recommendation: AuditRecommendation) -> some View {
     let primary = isPrimary(recommendation)
     return HStack(spacing: 14) {
-      BlitzIconTile(symbol: recommendation.symbol, tone: recommendation.tone)
+      BlitzIconTile(symbol: recommendation.symbol, tone: recommendation.tone, size: 34)
       VStack(alignment: .leading, spacing: 4) {
         Text(recommendation.title).font(BlitzType.rowTitle).monospacedDigit().lineLimit(1)
         Text(recommendation.detail).font(BlitzType.caption).foregroundStyle(BlitzUI.secondaryText)
@@ -304,7 +304,7 @@ struct OverviewCleanCard: View {
       .font(BlitzType.caption).foregroundStyle(BlitzUI.tertiaryText)
     }
     .frame(maxWidth: .infinity, alignment: .leading).padding(24)
-    .blitzHeroCard()
+    .blitzSurface()
     .overlay { BlitzCelebration(trigger: removed ? result.date : nil) }
   }
 }

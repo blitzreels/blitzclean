@@ -36,7 +36,8 @@ struct SystemSnapshotTests {
         #expect(snapshot.diskStatus == .healthy)
         #expect(snapshot.healthStatus == .healthy)
         #expect(MenuBarTones.disk(snapshot) == .good)
-        #expect(MetricTone.forDisk(DiskCapacityInput(available: available, total: total)) == .good)
+        #expect(
+          BlitzStatusTone.forDisk(DiskCapacityInput(available: available, total: total)) == .good)
       }
     }
   }
@@ -46,7 +47,7 @@ struct SystemSnapshotTests {
     let snapshot = makeSnapshot(SnapshotInput(available: 0, total: 0))
 
     #expect(snapshot.diskStatus == .unknown)
-    #expect(MenuBarTones.disk(snapshot) == .neutral)
+    #expect(MenuBarTones.disk(snapshot) == .muted)
   }
 
   @Test

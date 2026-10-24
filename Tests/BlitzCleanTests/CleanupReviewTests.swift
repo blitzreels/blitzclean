@@ -90,9 +90,11 @@ struct CleanupReviewTests {
   }
 
   @Test func hungActivityCheckHasABoundedDeadline() {
+    let sleep = TestProcesses.guarded(.init(executable: "/bin/sleep", arguments: ["10"]))
     let start = ContinuousClock.now
     let result = CleanupActivity.runCommand(
-      CleanupCommandRequest(executable: "/bin/sleep", arguments: ["10"], timeout: 0.05))
+      CleanupCommandRequest(executable: sleep.executable, arguments: sleep.arguments, timeout: 0.05)
+    )
     #expect(result.status == -1)
     #expect(ContinuousClock.now - start < .seconds(2))
   }
@@ -247,20 +249,11 @@ struct CleanupReviewTests {
       cleanupAvailability: .ready, lastActivityAt: nil, contentBytes: nil, nodeOrigin: .project,
       projectRootPath: root.path, dependencyInstalledAt: nil, activeProcesses: [])
     #expect(CleanupActivity.revalidate(item) == .ready)
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: "/bin/sleep")
-    process.arguments = ["30"]
-    process.currentDirectoryURL = root
-    try process.run()
-    defer {
-      if process.isRunning {
-        process.terminate()
-        process.waitUntilExit()
-      }
-    }
+    let child = try TestProcesses.start(
+      .init(executable: "/bin/sleep", arguments: ["30"], directory: root))
+    defer { child.stop() }
     #expect(CleanupActivity.revalidate(item) == .blocked("Project is in use"))
-    process.terminate()
-    process.waitUntilExit()
+    child.stop()
     try FileManager.default.removeItem(at: lock)
     #expect(CleanupActivity.revalidate(item) == .blocked("No exact reinstall lock"))
     #expect(FileManager.default.fileExists(atPath: node.path))

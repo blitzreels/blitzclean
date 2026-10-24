@@ -1,0 +1,20 @@
+    1     0     0   1.0  19520 20:43:23 ??       /sbin/launchd
+  267     1   501   0.0    368 19:44:28 ??       /usr/bin/ssh-agent -l
+  592     1     0   0.8  24176 20:21:00 ??       /usr/libexec/logd
+  641     1   205   0.0  15776 20:21:00 ??       /usr/libexec/locationd
+  737     1    24   0.1   7200 20:20:59 ??       /usr/libexec/symptomsd
+  862     1     0   0.0  16560 20:20:53 ??       /opt/homebrew/opt/caddy/bin/caddy run --config /opt/homebrew/etc/Caddyfile
+  988     1   501   0.0   2096 20:20:47 ??       /System/Library/CoreServices/lockoutagent
+ 1091     1   501   0.0  25840 20:20:46 ??       /System/Applications/Siri AI.app/Contents/MacOS/Siri AI
+ 6425     1   501   0.0  18080 19:42:19 ??       /System/Library/PrivateFrameworks/HomeKitDaemon.framework/Support/homed
+ 9015     1   501   0.0   8224 20:20:34 ??       /Users/me/Library/Application Support/Figma/FigmaAgent.app/Contents/MacOS/figma_agent
+14774     1   501   0.0    640    04:08 ??       /System/Library/PrivateFrameworks/GeoServices.framework/geodMachServiceBridge
+20970     1   501   0.0   9376 20:18:04 ??       /System/Library/PrivateFrameworks/People.framework/peopled
+31128     1   501   0.0   6032    03:17 ??       /System/Library/PrivateFrameworks/FamilyCircle.framework/Versions/A/Resources/familycircled
+35371     1   501   0.0   6944    24:39 ??       npm exec vite dev --host localhost --port 3220 --strictPort --force         
+39634  8481   501   0.0    976 19:33:21 ??       postgres: me code_reels 127.0.0.1(54346) idle  
+44945     1   501   0.0   8288    00:52 ??       /System/Library/PrivateFrameworks/CoreParsec.framework/parsecd
+52830     1   501   0.0  11872    11:13 ??       /usr/libexec/searchpartyuseragent
+67426     1     0   0.0   8720 02:39:00 ??       /usr/libexec/PerfPowerServices
+86609     1   501   0.0 154752 07:21:31 ??       /System/Applications/Mail.app/Contents/MacOS/Mail
+66486 64896   501   0.1   2944 01:39:34 ttys001  -/bin/zsh

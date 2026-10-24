@@ -109,6 +109,10 @@ struct MenuBarHealthLabel: View {
         navigation.page = .memory
         openWindow.dashboard()
       }
+      .onReceive(NotificationCenter.default.publisher(for: .openProjects)) { _ in
+        navigation.page = .projects
+        openWindow.dashboard()
+      }
       .onReceive(NotificationCenter.default.publisher(for: .openWorkspace)) { _ in
         openWindow.dashboard()
       }
@@ -122,10 +126,17 @@ struct MenuBarHealthLabel: View {
       }
   }
 
+  /// The dev build shrinks to its mark and a DEV tag while the released app runs, so the two never
+  /// put the same readings side by side in the menu bar.
   var metrics: some View {
-    MenuBarMetrics(
-      snapshot: snapshot, risk: risk, showHealth: showHealth, showCPU: showCPU,
-      showMemory: showMemory, showDisk: showDisk, memoryDisplay: memoryDisplay)
+    let besideRelease =
+      AppBrand.isDevelopmentBuild
+      && !NSRunningApplication.runningApplications(withBundleIdentifier: AppBrand.bundleIdentifier)
+        .isEmpty
+    return MenuBarMetrics(
+      snapshot: snapshot, risk: risk, showHealth: showHealth,
+      showCPU: showCPU && !besideRelease, showMemory: showMemory && !besideRelease,
+      showDisk: showDisk && !besideRelease, memoryDisplay: memoryDisplay)
   }
 
   private var accessibilityLabel: String {
@@ -133,7 +144,7 @@ struct MenuBarHealthLabel: View {
       .init(
         snapshot: snapshot, showDisk: showDisk, showCPU: showCPU, showMemory: showMemory,
         memoryDisplay: memoryDisplay))
-    return "BlitzClean, Mac \(snapshot.healthStatus.title). \(metrics)."
+    return "\(AppBrand.name), Mac \(snapshot.healthStatus.title). \(metrics)."
   }
 }
 
@@ -158,10 +169,15 @@ struct MenuBarMetrics: View {
         }
       }.font(.system(size: 12, weight: .semibold))
         .foregroundStyle(showHealth && risk > .normal ? risk.tone.color : .primary)
+      if AppBrand.isDevelopmentBuild {
+        Text("DEV").font(.system(size: 9, weight: .bold)).tracking(0.4)
+          .padding(.horizontal, 4).padding(.vertical, 1)
+          .overlay(RoundedRectangle(cornerRadius: 3).strokeBorder(.primary, lineWidth: 1))
+      }
       if showCPU {
         MenuBarMetric(
           title: "CPU", value: snapshot.cpuUsage.map(PercentText.make) ?? "—",
-          tone: snapshot.cpuUsage.map(MenuBarTones.cpu) ?? .neutral, colored: showHealth)
+          tone: snapshot.cpuUsage.map(MenuBarTones.cpu) ?? .muted, colored: showHealth)
       }
       if showMemory {
         MenuBarMetric(
@@ -181,7 +197,7 @@ struct MenuBarMetrics: View {
 }
 
 enum MenuBarTones {
-  static func cpu(_ usage: Double) -> MetricTone {
+  static func cpu(_ usage: Double) -> BlitzStatusTone {
     if usage >= 0.95 {
       return .critical
     }
@@ -193,8 +209,8 @@ enum MenuBarTones {
     return .good
   }
 
-  static func disk(_ snapshot: SystemSnapshot) -> MetricTone {
-    MetricTone.forDisk(
+  static func disk(_ snapshot: SystemSnapshot) -> BlitzStatusTone {
+    BlitzStatusTone.forDisk(
       DiskCapacityInput(available: snapshot.diskAvailable, total: snapshot.diskTotal))
   }
 }
@@ -202,7 +218,7 @@ enum MenuBarTones {
 private struct MenuBarMetric: View {
   let title: String
   let value: String
-  let tone: MetricTone
+  let tone: BlitzStatusTone
   let colored: Bool
 
   var body: some View {

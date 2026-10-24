@@ -300,30 +300,30 @@ enum DevProcessClassifier {
 }
 
 enum RawProcessParser {
-  static func records(_ output: String) -> [RawProcessRecord] {
-    output.split(separator: "\n").compactMap { line in
-      let columns = line.split(separator: " ", maxSplits: 7, omittingEmptySubsequences: true)
-      guard columns.count == 8,
-        let processID = Int32(columns[0]),
+  /// Rows of `ps -axo pid=,ppid=,uid=,pcpu=,rss=,etime=,tty=,args=`; nil when any row is not in that shape.
+  static func records(_ output: String) -> [RawProcessRecord]? {
+    guard let rows = ProcessTable.rows(.init(output: output, columns: 8)) else { return nil }
+    var records: [RawProcessRecord] = []
+    for columns in rows {
+      guard let processID = Int32(columns[0]),
         let parentProcessID = Int32(columns[1]),
         let userID = Int(columns[2]),
         let cpuPercent = Double(columns[3].replacingOccurrences(of: ",", with: ".")),
         let residentKilobytes = UInt64(columns[4])
-      else {
-        return nil
-      }
-
+      else { return nil }
       let terminal = String(columns[6])
-      return RawProcessRecord(
-        processID: processID,
-        parentProcessID: parentProcessID,
-        userID: userID,
-        cpuPercent: cpuPercent,
-        residentKilobytes: residentKilobytes,
-        elapsed: String(columns[5]),
-        terminal: terminal == "??" ? nil : terminal,
-        arguments: String(columns[7]).trimmingCharacters(in: .whitespaces)
-      )
+      records.append(
+        RawProcessRecord(
+          processID: processID,
+          parentProcessID: parentProcessID,
+          userID: userID,
+          cpuPercent: cpuPercent,
+          residentKilobytes: residentKilobytes,
+          elapsed: String(columns[5]),
+          terminal: terminal == "??" ? nil : terminal,
+          arguments: String(columns[7])
+        ))
     }
+    return records
   }
 }

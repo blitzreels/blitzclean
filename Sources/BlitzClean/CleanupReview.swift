@@ -172,11 +172,6 @@ enum CleanupReviewScanner {
   }
 }
 
-struct CleanupCommandResult: Sendable {
-  let status: Int32
-  let output: String
-}
-
 enum CleanupActivity {
   static func command(_ arguments: [String]) -> CleanupCommandResult {
     runCommand(
@@ -184,12 +179,16 @@ enum CleanupActivity {
   }
 
   static func runCommand(_ request: CleanupCommandRequest) -> CleanupCommandResult {
-    let output = CommandRunner.run(
-      .init(
-        executable: request.executable, arguments: request.arguments, timeout: request.timeout,
-        maximumBytes: 64 * 1_024 * 1_024, input: nil, environment: .inherited))
-    return CleanupCommandResult(
-      status: acceptsDiagnostics(output.errors) ? output.status : -1, output: output.text)
+    let command = CommandRunner.Request(
+      executable: request.executable, arguments: request.arguments, timeout: request.timeout,
+      maximumBytes: 64 * 1_024 * 1_024, input: nil, environment: .inherited)
+    let output = CommandRunner.run(command)
+    guard acceptsDiagnostics(output.errors) else {
+      let warning = output.errors.split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
+      return .init(
+        status: -1, output: output.text, failure: "\(command.name) reported a problem: \(warning)")
+    }
+    return output.result(command.name)
   }
 
   static func acceptsDiagnostics(_ output: String) -> Bool {
@@ -213,14 +212,10 @@ enum CleanupActivity {
 
   static func workingDirectories() -> Set<String>? {
     let result = command(["-nP", "-d", "cwd", "-Fpn"])
-    guard result.status == 0, !result.output.isEmpty,
-      result.output.split(separator: "\n").allSatisfy({
-        $0.hasPrefix("p") || $0.hasPrefix("n") || $0 == "fcwd"
-      })
+    guard !result.output.isEmpty,
+      case .success(let directories) = result.read(ProjectProcessParser.workingDirectories)
     else { return nil }
-    return Set(
-      ProjectProcessParser.workingDirectories(result.output).values.compactMap(
-        ReviewFile.canonicalPath))
+    return Set(directories.values.compactMap(ReviewFile.canonicalPath))
   }
 
   static func revalidate(_ item: StorageItem) -> StorageCleanupAvailability {

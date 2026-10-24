@@ -17,19 +17,15 @@ struct ProcessSignalTests {
 
   @Test
   func resumesStoppedProcessesSoTheyCanQuit() throws {
-    let child = Process()
-    child.executableURL = URL(fileURLWithPath: "/bin/sleep")
-    child.arguments = ["30"]
-    try child.run()
-    defer { if child.isRunning { kill(child.processIdentifier, SIGKILL) } }
+    let sleep = try TestProcesses.start(.init(executable: "/bin/sleep", arguments: ["30"]))
+    defer { sleep.stop() }
+    let child = try #require(sleep.process)
     let identity = try #require(DevProcessIdentity.read(child.processIdentifier))
     #expect(ProcessSignal.send(.init(expected: identity, signal: SIGSTOP)).wasSent)
-    var stopped = false
-    for _ in 0..<50 where !stopped {
-      stopped = DevProcessIdentity.read(child.processIdentifier)?.process.stopped == true
-      if !stopped { usleep(20_000) }
-    }
-    try #require(stopped)
+    try #require(
+      eventuallyBlocking {
+        DevProcessIdentity.read(child.processIdentifier)?.process.stopped == true
+      })
     #expect(ProcessSignal.send(.init(expected: identity, signal: SIGTERM)).wasSent)
     child.waitUntilExit()
     #expect(child.terminationStatus == SIGTERM)
@@ -37,9 +33,9 @@ struct ProcessSignalTests {
 
   @Test
   func reportsExitedProcessesAsChanged() throws {
-    let child = Process()
-    child.executableURL = URL(fileURLWithPath: "/usr/bin/true")
-    try child.run()
+    let finished = try TestProcesses.start(.init(executable: "/usr/bin/true", arguments: []))
+    defer { finished.stop() }
+    let child = try #require(finished.process)
     let identity = DevProcessIdentity(
       process: .init(
         processID: child.processIdentifier, owner: getuid(), startSeconds: 1,

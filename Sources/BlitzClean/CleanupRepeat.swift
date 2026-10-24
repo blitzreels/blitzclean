@@ -121,22 +121,34 @@ struct RegrowActivity: Sendable {
     "cursor-agent", "claude", "codex", "gemini", "opencode",
   ]
 
+  /// Nil when either listing failed or was not in the expected format, so nothing is removed on a guess.
   static func read() -> Self? {
     let listing = CleanupActivity.runCommand(
       .init(executable: "/bin/ps", arguments: ["-axwwo", "pid=,args="], timeout: 8))
     let directories = CleanupActivity.command(["-nP", "-d", "cwd", "-Fpn"])
-    guard listing.status == 0, directories.status == 0 else { return nil }
-    let cwd = ProjectProcessParser.workingDirectories(directories.output)
+    guard case .success(let processes) = listing.read(parse),
+      case .success(let cwd) = directories.read(ProjectProcessParser.workingDirectories)
+    else { return nil }
     return Self(
-      processes: listing.output.split(separator: "\n").compactMap { line in
-        let trimmed = line.trimmingCharacters(in: .whitespaces)
-        guard let space = trimmed.firstIndex(of: " "), let pid = Int32(trimmed[..<space]),
-          pid != getpid()
-        else { return nil }
-        return Process(
-          arguments: String(trimmed[space...]).trimmingCharacters(in: .whitespaces),
-          directory: cwd[pid])
+      processes: processes.filter { $0.processID != getpid() }.map {
+        Process(arguments: $0.arguments, directory: cwd[$0.processID])
       })
+  }
+
+  struct Listed: Equatable {
+    let processID: Int32
+    let arguments: String
+  }
+
+  /// Rows of `ps -o pid=,args=`; nil when any row is not a process ID followed by its command.
+  static func parse(_ output: String) -> [Listed]? {
+    guard let rows = ProcessTable.rows(.init(output: output, columns: 2)) else { return nil }
+    var listed: [Listed] = []
+    for row in rows {
+      guard let processID = Int32(row[0]) else { return nil }
+      listed.append(.init(processID: processID, arguments: String(row[1])))
+    }
+    return listed
   }
 
   /// Why the target must stay, or nil when nothing is building from it.

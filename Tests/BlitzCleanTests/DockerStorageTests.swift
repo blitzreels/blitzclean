@@ -49,7 +49,7 @@ struct DockerStorageTests {
   }
 
   @Test func stalledDockerQueryEndsWithoutBlockingTheAudit() throws {
-    let script = try executable("exec /bin/sleep 30")
+    let script = try executable(TestProcesses.guardLine + "\nexec /bin/sleep 30")
     defer { try? FileManager.default.removeItem(at: script) }
     let service = DockerStorageService(.init(executablePath: script.path, queryTimeout: 0.1))
     let start = Date.now

@@ -17,6 +17,7 @@ let package = Package(
     .executableTarget(
       name: "BlitzClean",
       dependencies: [.product(name: "Sparkle", package: "Sparkle")]),
-    .testTarget(name: "BlitzCleanTests", dependencies: ["BlitzClean"]),
+    .testTarget(
+      name: "BlitzCleanTests", dependencies: ["BlitzClean"], resources: [.copy("Fixtures")]),
   ]
 )

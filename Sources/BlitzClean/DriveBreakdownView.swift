@@ -92,7 +92,7 @@ struct DriveBreakdownView: View {
     let capacity = model.breakdown?.capacity
     return VStack(alignment: .leading, spacing: 14) {
       HStack(alignment: .center, spacing: 10) {
-        BlitzColorTile(symbol: "internaldrive.fill", color: BlitzPalette.storage, size: 36)
+        BlitzIconTile(symbol: "internaldrive.fill", tone: .muted, size: 36)
         Text("Macintosh HD").font(BlitzType.title)
         if let capacity {
           Text("\(ByteText.full(capacity.available)) free of \(ByteText.compact(capacity.total))")
@@ -157,10 +157,13 @@ struct DriveBreakdownView: View {
     let deletable = band.units.filter { $0.removal == .deleteContents }
     return VStack(spacing: 0) {
       HStack(spacing: 12) {
-        BlitzColorTile(symbol: band.group.symbol, color: band.group.color, size: 28)
+        BlitzIconTile(symbol: band.group.symbol, tone: .muted, size: 28)
         HStack {
           VStack(alignment: .leading, spacing: 4) {
-            Text(band.group.title).font(.system(size: 14, weight: .semibold))
+            HStack(spacing: 7) {
+              Circle().fill(band.group.color).frame(width: 7, height: 7).accessibilityHidden(true)
+              Text(band.group.title).font(.system(size: 14, weight: .semibold))
+            }
             Text(band.group.detail).font(BlitzType.body).foregroundStyle(BlitzUI.secondaryText)
               .lineLimit(1)
           }
@@ -390,19 +393,21 @@ private struct DriveBar: View {
 }
 
 extension DriveGroup {
+  /// The group's share of the drive bar. Muted hues of similar lightness, so the bar reads as one chart
+  /// and no group looks like an alert; Trash and system data stay gray.
   var color: Color {
     switch self {
-    case .personal: BlitzPalette.storage
-    case .home: Color(red: 0.36, green: 0.38, blue: 0.92)
-    case .caches: BlitzPalette.good
-    case .simulators: Color(red: 0.18, green: 0.70, blue: 0.82)
-    case .ai: Color(red: 0.98, green: 0.47, blue: 0.33)
-    case .containers: Color(red: 0.66, green: 0.43, blue: 0.95)
-    case .apps: Color(red: 0.98, green: 0.76, blue: 0.20)
-    case .messages: Color(red: 0.95, green: 0.38, blue: 0.62)
-    case .appData: Color(white: 0.52)
-    case .trash: Color(red: 0.94, green: 0.30, blue: 0.30)
-    case .system: Color(white: 0.32)
+    case .personal: Color(red: 0.42, green: 0.60, blue: 0.94)
+    case .home: Color(red: 0.56, green: 0.52, blue: 0.90)
+    case .caches: Color(red: 0.42, green: 0.76, blue: 0.68)
+    case .simulators: Color(red: 0.40, green: 0.70, blue: 0.84)
+    case .ai: Color(red: 0.84, green: 0.62, blue: 0.46)
+    case .containers: Color(red: 0.66, green: 0.56, blue: 0.84)
+    case .apps: Color(red: 0.80, green: 0.72, blue: 0.50)
+    case .messages: Color(red: 0.78, green: 0.56, blue: 0.66)
+    case .appData: Color(white: 0.56)
+    case .trash: Color(white: 0.42)
+    case .system: Color(white: 0.28)
     }
   }
 }

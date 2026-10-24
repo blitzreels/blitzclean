@@ -73,6 +73,7 @@ final class MemoryRescueModel: NSObject, ObservableObject {
   private var lastPermissionCheck = Date.distantPast
   private var diskEvaluator = DiskRiskEvaluator()
   private var diskAlertGate = DiskAlertGate()
+  private var agentGate = AgentGuardGate()
   private var isSendingDiskAlert = false
   private lazy var store = MemoryIncidentStore(url: historyURL)
   private var persists: Bool { AppBrand.isInstalledApp }
@@ -120,7 +121,7 @@ final class MemoryRescueModel: NSObject, ObservableObject {
         guard let self else { return }
         self.sampleMemory(event: nil)
         self.persistHistoryIfDue(urgent: false)
-        let interval: TimeInterval = NSApp.isActive ? 15 : 30
+        let interval = RefreshCadence.interval(.memoryScan)
         if !self.isRefreshing,
           self.scannedAt.map({ Date.now.timeIntervalSince($0) >= interval }) ?? true
         {
@@ -202,6 +203,12 @@ final class MemoryRescueModel: NSObject, ObservableObject {
       Task { await configureNotifications(requestPermission: false) }
     }
     sendAlertIfNeeded()
+  }
+
+  /// Warns once a new agent session starts while memory has no room for it.
+  func noteAgents(_ budget: AgentBudget) {
+    guard agentGate.shouldSend(.init(budget: budget, date: .now)), alertsEnabled else { return }
+    Task { _ = await notifications.sendAgents(budget) }
   }
 
   private func sendAlertIfNeeded() {

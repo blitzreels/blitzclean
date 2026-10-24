@@ -119,6 +119,8 @@ private actor RenderRecoveryDriver: AppRecoveryDriver {
     return RecoveryTarget(app: app, process: process(app, stopped ? SSTOP : SSLEEP))
   }
 
+  func hangReported(_ target: RecoveryTarget) -> Bool? { nil }
+
   func observe(_ target: RecoveryTarget) throws -> RecoveryObservation {
     let position = index(target.app)
     if position == 4, resumed.contains(target.app.processID) { throw RecoveryExit() }

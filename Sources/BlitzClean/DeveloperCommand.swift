@@ -9,11 +9,10 @@ enum DeveloperCommand {
   }
 
   static func run(_ request: Request) -> CleanupCommandResult {
-    let output = CommandRunner.run(
-      .init(
-        executable: request.executable, arguments: request.arguments, timeout: request.timeout,
-        maximumBytes: request.maximumBytes, input: nil, environment: .noninteractive))
-    return .init(status: output.status, output: output.text)
+    let command = CommandRunner.Request(
+      executable: request.executable, arguments: request.arguments, timeout: request.timeout,
+      maximumBytes: request.maximumBytes, input: nil, environment: .noninteractive)
+    return CommandRunner.run(command).result(command.name)
   }
 
   struct GitRequest: Sendable {

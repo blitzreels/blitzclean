@@ -10,46 +10,6 @@ extension BlitzType {
     .monospacedDigit()
 }
 
-extension CleanPage {
-  /// Ring color for the resource a page owns: the one accent, then two neutrals.
-  /// Warning and critical tones override it.
-  var hue: Color {
-    switch self {
-    case .memory: BlitzUI.mint
-    case .cpu: Color.white.opacity(0.82)
-    default: Color.white.opacity(0.46)
-    }
-  }
-}
-
-/// Featured surface: the card fill with a larger radius and a slightly brighter edge.
-extension View {
-  func blitzHeroCard() -> some View {
-    let shape = RoundedRectangle(cornerRadius: BlitzUI.heroRadius, style: .continuous)
-    return background(BlitzUI.cardFill, in: shape)
-      .overlay { shape.strokeBorder(BlitzUI.panelStroke, lineWidth: 1).allowsHitTesting(false) }
-  }
-}
-
-/// Rounded-square symbol that identifies a finding's category. Neutral unless the finding is a warning.
-struct BlitzIconTile: View {
-  let symbol: String
-  let tone: BlitzStatusTone
-  var size: CGFloat = 34
-
-  var body: some View {
-    let shape = RoundedRectangle(cornerRadius: size * 0.3, style: .continuous)
-    let isAlert = tone == .warning || tone == .critical
-    shape.fill(isAlert ? tone.color.opacity(0.14) : BlitzUI.controlFill)
-      .overlay {
-        Image(systemName: symbol).font(.system(size: size * 0.42, weight: .medium))
-          .foregroundStyle(isAlert ? tone.color : BlitzUI.supportingText)
-      }
-      .frame(width: size, height: size)
-      .accessibilityHidden(true)
-  }
-}
-
 /// One-shot burst of particles; plays whenever `trigger` changes and honors Reduce Motion.
 struct BlitzCelebration: View {
   let trigger: Date?
@@ -111,11 +71,9 @@ struct MacVital: Identifiable, Equatable {
   let caption: String
   /// Share in use, from 0 to 1; absent while the reading is unavailable.
   let load: Double?
-  let tone: MetricTone
+  let tone: BlitzStatusTone
 
   var id: CleanPage { page }
-  /// Ring and legend color; it identifies the resource and never changes with severity.
-  var color: Color { page.hue }
   /// Warning or critical color for the value text; absent when the resource is fine.
   var alertColor: Color? { tone == .warning || tone == .critical ? tone.color : nil }
 
@@ -143,7 +101,7 @@ struct MacVital: Identifiable, Equatable {
         page: .cpu, title: "CPU", value: snapshot.cpuUsage.map(PercentText.make) ?? "—",
         compactValue: snapshot.cpuUsage.map(PercentText.make) ?? "—",
         caption: snapshot.cpuUsage.map { "\(PercentText.make(1 - $0)) idle" } ?? "Reading CPU…",
-        load: snapshot.cpuUsage, tone: snapshot.cpuUsage.map(MenuBarTones.cpu) ?? .neutral),
+        load: snapshot.cpuUsage, tone: snapshot.cpuUsage.map(MenuBarTones.cpu) ?? .muted),
       .init(
         page: .storage, title: "Storage",
         value: hasDisk ? "\(ByteText.compact(snapshot.diskAvailable)) free" : "—",
@@ -159,5 +117,5 @@ struct MacVital: Identifiable, Equatable {
 struct MacVitalInput {
   let snapshot: SystemSnapshot
   let memoryDisplay: MenuBarMemoryDisplay
-  let memoryTone: MetricTone
+  let memoryTone: BlitzStatusTone
 }

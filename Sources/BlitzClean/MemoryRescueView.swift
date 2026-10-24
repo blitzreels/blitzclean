@@ -26,27 +26,17 @@ struct MemoryGuardControls: View {
       }.blitzButton(.quiet).controlSize(.small).padding(.top, 4)
     }
     .toggleStyle(BlitzSwitchStyle()).font(BlitzType.callout)
-    .panelCard()
-  }
-}
-
-extension MemoryRisk {
-  var tone: MetricTone {
-    switch self {
-    case .normal: .good
-    case .growing, .warning: .warning
-    case .critical: .critical
-    }
+    .blitzCard(padding: 16)
   }
 }
 
 extension MemoryPressureLevel {
-  var tone: MetricTone {
+  var tone: BlitzStatusTone {
     switch self {
     case .normal: .good
     case .warning: .warning
     case .critical: .critical
-    case .unknown: .neutral
+    case .unknown: .muted
     }
   }
 }

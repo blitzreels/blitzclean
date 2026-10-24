@@ -40,12 +40,18 @@ struct WorktreeAssessment: Sendable {
 }
 
 enum GitWorktrees {
-  static func parse(_ output: String) -> [GitWorktreeRecord] {
+  /// Records from `git worktree list --porcelain -z`. Nil unless the output is complete: every record starts
+  /// with its path, names a commit or is bare, and ends with an empty field, so a cut-off list never passes.
+  static func parse(_ output: String) -> [GitWorktreeRecord]? {
+    guard output.hasSuffix("\0\0") else { return nil }
     var fields: [String] = []
     var result: [GitWorktreeRecord] = []
+    var malformed = false
     func flush() {
-      guard let path = fields.first(where: { $0.hasPrefix("worktree ") }) else {
-        fields.removeAll()
+      guard let path = fields.first, path.hasPrefix("worktree "), path.count > 9,
+        fields.contains(where: { $0.hasPrefix("HEAD ") || $0 == "bare" })
+      else {
+        malformed = true
         return
       }
       result.append(
@@ -60,17 +66,16 @@ enum GitWorktrees {
           primary: result.isEmpty))
       fields.removeAll()
     }
-    for field in output.split(separator: "\0", omittingEmptySubsequences: false) {
+    for field in output.dropLast().split(separator: "\0", omittingEmptySubsequences: false) {
       if field.isEmpty { flush() } else { fields.append(String(field)) }
     }
-    flush()
-    return result
+    return malformed || result.isEmpty ? nil : result
   }
 
-  static func list(_ directory: String) -> [GitWorktreeRecord]? {
-    let result = DeveloperCommand.git(
-      .init(directory: directory, arguments: ["worktree", "list", "--porcelain", "-z"]))
-    return result.status == 0 ? parse(result.output) : nil
+  static func list(_ directory: String) -> Result<[GitWorktreeRecord], CommandReadError> {
+    DeveloperCommand.git(
+      .init(directory: directory, arguments: ["worktree", "list", "--porcelain", "-z"])
+    ).read(parse)
   }
 
   static func base(_ directory: String) -> String? {
@@ -168,9 +173,15 @@ enum GitWorktrees {
 
   static func validateRemoval(_ input: Removal) -> String? {
     let expected = input.expected
+    let records: [GitWorktreeRecord]
+    switch list(expected.repository) {
+    case .success(let value): records = value
+    case .failure(let error):
+      return "Couldn't read this repository's worktrees: \(error.reason). Nothing was removed."
+    }
     guard let identity = expected.identity,
       DirectoryIdentity.read(expected.record.path) == identity,
-      let current = list(expected.repository)?.first(where: { $0.path == expected.record.path }),
+      let current = records.first(where: { $0.path == expected.record.path }),
       current == expected.record
     else { return "Worktree changed. Refresh and review it again." }
     let assessment = inspect(

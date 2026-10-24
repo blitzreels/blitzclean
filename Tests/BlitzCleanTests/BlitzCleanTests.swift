@@ -182,15 +182,8 @@ struct NativeCPUIntegrationTests {
 
   @Test
   func realBusyProcessReportsCoreUsage() async throws {
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: "/usr/bin/yes")
-    process.standardOutput = FileHandle.nullDevice
-    process.standardError = FileHandle.nullDevice
-    try process.run()
-    defer {
-      process.terminate()
-      process.waitUntilExit()
-    }
+    let busy = try TestProcesses.start(.init(executable: "/usr/bin/yes", arguments: []))
+    defer { busy.stop() }
     let before = CPUProcessReader.counters()
     let start = ProcessInfo.processInfo.systemUptime
     try await Task.sleep(for: .seconds(1))
@@ -201,7 +194,7 @@ struct NativeCPUIntegrationTests {
       .init(
         previous: before, current: after,
         seconds: elapsed, nanosecondsPerTick: scale))
-    let percent = try #require(usage.first { $0.id == process.processIdentifier }?.percent)
+    let percent = try #require(usage.first { $0.id == busy.processID }?.percent)
     #expect(percent > 10)
     #expect(percent <= 120)
   }

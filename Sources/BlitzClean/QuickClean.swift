@@ -146,12 +146,19 @@ enum CacheCleaner {
 
   static func processes() throws -> Set<String> {
     let result = CleanupActivity.runCommand(
-      .init(executable: "/bin/ps", arguments: ["-axo", "comm="], timeout: 5))
-    guard result.status == 0, !result.output.isEmpty else { throw CacheCleanError.unverified }
-    return Set(
-      result.output.split(separator: "\n").map {
-        URL(fileURLWithPath: String($0).trimmingCharacters(in: .whitespaces)).lastPathComponent
-      })
+      .init(executable: "/bin/ps", arguments: ["-axo", "pid=,comm="], timeout: 5))
+    guard case .success(let names) = result.read(processNames) else {
+      throw CacheCleanError.unverified
+    }
+    return names
+  }
+
+  /// Executable names from `ps -o pid=,comm=`; nil when any row is not a process ID and its command.
+  static func processNames(_ output: String) -> Set<String>? {
+    guard let rows = ProcessTable.rows(.init(output: output, columns: 2)),
+      rows.allSatisfy({ Int32($0[0]) != nil })
+    else { return nil }
+    return Set(rows.map { URL(fileURLWithPath: String($0[1])).lastPathComponent })
   }
 
   static func scan(_ request: CacheScanRequest) -> CacheScanResult {

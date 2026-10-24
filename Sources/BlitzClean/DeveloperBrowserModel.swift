@@ -42,9 +42,16 @@ final class DeveloperBrowserModel: ObservableObject {
       let active = CleanupActivity.workingDirectories()
       var repositories: Set<String> = []
       var allArtifacts: [DeveloperArtifact] = []
+      var unreadable: [String] = []
       for repository in discovery.repositories {
         if Task.isCancelled { break }
-        guard let records = GitWorktrees.list(repository), records.count > 1,
+        let listed = GitWorktrees.list(repository)
+        if case .failure(let error) = listed {
+          unreadable.append(
+            "Couldn't read worktrees in \(URL(fileURLWithPath: repository).lastPathComponent): \(error.reason)."
+          )
+        }
+        guard let records = try? listed.get(), records.count > 1,
           let primary = records.first?.path,
           repositories.insert(primary).inserted
         else { continue }
@@ -75,7 +82,8 @@ final class DeveloperBrowserModel: ObservableObject {
       await self?.finish(
         .init(
           artifacts: allArtifacts,
-          limited: discovery.limited || allArtifacts.count >= 150 || Task.isCancelled))
+          limited: discovery.limited || allArtifacts.count >= 150 || Task.isCancelled,
+          unreadable: unreadable))
     }
   }
 
@@ -93,6 +101,8 @@ final class DeveloperBrowserModel: ObservableObject {
   private struct Completion: Sendable {
     let artifacts: [DeveloperArtifact]
     let limited: Bool
+    /// "Couldn't read worktrees in X: reason." for each repository Git could not list.
+    let unreadable: [String]
   }
 
   private func finish(_ result: Completion) {
@@ -101,9 +111,13 @@ final class DeveloperBrowserModel: ObservableObject {
     scannedAt = .now
     limited = result.limited
     progress =
-      result.limited
-      ? "Partial scan. Some locations were unreadable or reached the scan limit. Choose a folder to narrow the scan."
-      : "Scan complete"
+      result.unreadable.first.map {
+        result.unreadable.count == 1
+          ? $0 : "\($0) \(result.unreadable.count - 1) more repositories too."
+      }
+      ?? (result.limited
+        ? "Partial scan. Some locations were unreadable or reached the scan limit. Choose a folder to narrow the scan."
+        : "Scan complete")
     scanTask = nil
   }
 

@@ -18,11 +18,19 @@ struct DependencyFileScanTests {
   @Test func auditSharesConcurrentMeasurementsIncludingUnavailablePaths() {
     let probe = MeasurementProbe()
     let session = FolderMeasurementSession(measure: probe.measure)
-    DispatchQueue.concurrentPerform(iterations: 64) { index in
-      let path = "folder\(index % 8)"
-      let value = session.footprint(path)
-      #expect(value == (path == "folder0" ? nil : .init(allocated: 42, content: 42)))
+    // Each caller gets its own thread: concurrentPerform runs on one thread when the pool is busy,
+    // which would leave nothing to share and fail the overlap check below.
+    let callers = DispatchGroup()
+    for index in 0..<64 {
+      callers.enter()
+      BlockingThread.start {
+        defer { callers.leave() }
+        let path = "folder\(index % 8)"
+        let value = session.footprint(path)
+        #expect(value == (path == "folder0" ? nil : .init(allocated: 42, content: 42)))
+      }
     }
+    callers.wait()
     #expect(probe.calls.count == 8)
     #expect(probe.calls.values.allSatisfy { $0 == 1 })
     #expect(probe.peak <= 4)

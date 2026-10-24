@@ -120,7 +120,7 @@ private struct StorageCapacityMeter: View {
       CapacityBar(
         usedRatio: drive.map { $0.total == 0 ? 0 : 1 - Double($0.available) / Double($0.total) }
           ?? snapshot.diskUsedRatio,
-        tone: MetricTone.forDisk(
+        tone: BlitzStatusTone.forDisk(
           .init(
             available: drive?.available ?? snapshot.diskAvailable,
             total: drive?.total ?? snapshot.diskTotal)))

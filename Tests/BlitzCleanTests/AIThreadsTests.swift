@@ -162,12 +162,9 @@ struct AIThreadsTests {
   }
 
   @Test func pauseAndResumeSignalsALiveProcess() throws {
-    let child = Process()
-    child.executableURL = URL(fileURLWithPath: "/bin/sleep")
-    child.arguments = ["20"]
-    try child.run()
-    defer { if child.isRunning { child.terminate() } }
-    let pid = child.processIdentifier
+    let child = try TestProcesses.start(.init(executable: "/bin/sleep", arguments: ["20"]))
+    defer { child.stop() }
+    let pid = child.processID
     let identity = try #require(DevProcessIdentity.read(pid))
     let thread = AIThread(
       id: "sleep", tool: .otherAgent, name: "sleep", directory: nil, terminal: nil,
@@ -207,17 +204,9 @@ struct AIThreadsTests {
   }
 
   @Test func quittingPausedProcessDeliversTermination() async throws {
-    let child = Process()
-    child.executableURL = URL(fileURLWithPath: "/bin/sleep")
-    child.arguments = ["20"]
-    try child.run()
-    let pid = child.processIdentifier
-    defer {
-      if child.isRunning {
-        _ = Darwin.kill(pid, SIGCONT)
-        child.terminate()
-      }
-    }
+    let child = try TestProcesses.start(.init(executable: "/bin/sleep", arguments: ["20"]))
+    defer { child.stop() }
+    let pid = child.processID
     let identity = try #require(DevProcessIdentity.read(pid))
     let thread = AIThread(
       id: "sleep", tool: .otherAgent, name: "sleep", directory: nil, terminal: nil,
@@ -225,15 +214,9 @@ struct AIThreadsTests {
       isDetached: false)
     let request = AIThreadStopRequest(thread: thread, expected: [pid: identity], force: false)
     #expect(AIThreadStopper.signal(request, .pause) == 1)
-    for _ in 0..<20 where !AIThreadStopper.paused(request) {
-      try await Task.sleep(for: .milliseconds(20))
-    }
-    #expect(AIThreadStopper.paused(request))
+    #expect(await eventually { AIThreadStopper.paused(request) })
     #expect(AIThreadStopper.signal(request, .quit) == 1)
-    for _ in 0..<40 where AIThreadStopper.running(request) {
-      try await Task.sleep(for: .milliseconds(25))
-    }
-    #expect(!AIThreadStopper.running(request))
+    #expect(await eventually { !AIThreadStopper.running(request) })
   }
 
   @Test func liveGroupingWhenRequested() {

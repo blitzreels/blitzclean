@@ -1,0 +1,14 @@
+    1 /sbin/launchd
+  267 /usr/bin/ssh-agent -l
+  592 /usr/libexec/logd
+  667 /usr/sbin/cfprefsd daemon
+  851 /usr/sbin/distnoted agent
+ 1035 /System/Library/CoreServices/Finder.app/Contents/MacOS/Finder
+ 6331 /System/Library/CoreServices/TimeMachine/backupd
+10810 /usr/libexec/fskit_agent
+23013 /System/Library/Frameworks/MediaExtension.framework/Versions/A/Helpers/MENotificationAgent
+27063 /System/Library/CoreServices/osanalyticshelper server-init
+37783 /usr/libexec/findmydeviced
+44079 /usr/sbin/distnoted agent
+62803 /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/bin/swift-plugin-server
+39836 /Users/me/.nvm/versions/node/v24.11.1/bin/agent-browser mcp --tools all

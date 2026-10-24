@@ -345,7 +345,8 @@ final class DashboardAuditModel: ObservableObject {
           await models.recovery.scan(apps, force: true)
           let incomplete = apps.filter {
             let health = models.recovery.check(for: $0)?.health
-            return health == nil || health == .unknown || health == .running
+            return health == nil || health == .unknown
+              || (health == .running && !WindowServerHangProbe.isAvailable)
           }
           return incomplete.isEmpty
             ? []

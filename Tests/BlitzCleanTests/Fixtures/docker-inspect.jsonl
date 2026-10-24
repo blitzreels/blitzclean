@@ -1,0 +1,1 @@
+{"id":"3cbf4e52fcee21b0386c260ba32c79c2bcdfb84891a832516b2bdc806b667232","name":"/supabase_storage_sample-app-local","created":"2026-10-20T20:57:14.461641914Z","running":true,"paused":false,"labels":{"com.docker.compose.project":"sample-app-local","com.supabase.cli.project":"sample-app-local","com.supabase.cli.workdir":"/Users/me/dev/sample-app/infra/sample-app"}}

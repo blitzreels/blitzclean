@@ -175,11 +175,7 @@ struct FolderExplorerCacheTests {
   }
 
   @MainActor private func waitFor(_ condition: () -> Bool) async throws {
-    for _ in 0..<250 {
-      if condition() { return }
-      try await Task.sleep(for: .milliseconds(20))
-    }
-    try #require(condition())
+    try #require(await eventually(condition))
   }
 
   private static func progress(
@@ -238,7 +234,7 @@ struct FolderExplorerCacheTests {
     func wait() {
       condition.lock()
       defer { condition.unlock() }
-      let deadline = Date.now.addingTimeInterval(5)
+      let deadline = Date.now.addingTimeInterval(TimeInterval(testTimeout.components.seconds))
       while !released {
         if !condition.wait(until: deadline) { return }
       }

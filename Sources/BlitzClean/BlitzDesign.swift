@@ -51,6 +51,8 @@ enum BlitzUI {
 
 enum BlitzButtonEmphasis {
   case accent, emphasized, secondary, quiet
+  /// Solid red, for the confirm button of a permanent removal.
+  case destructive
 }
 
 enum BlitzControlMetrics {
@@ -93,7 +95,8 @@ struct BlitzButtonStyle: ButtonStyle {
   func makeBody(configuration: Configuration) -> some View {
     let shape = RoundedRectangle(cornerRadius: BlitzUI.controlRadius, style: .continuous)
     let pressed = configuration.isPressed && isEnabled
-    let destructive = configuration.role == .destructive && emphasis != .accent
+    let destructive =
+      configuration.role == .destructive && emphasis != .accent && emphasis != .destructive
     return configuration.label
       .font(
         .system(
@@ -129,9 +132,11 @@ struct BlitzButtonStyle: ButtonStyle {
   }
 
   private func foreground(_ role: ButtonRole?) -> Color {
+    if emphasis == .destructive { return .white }
     if role == .destructive, emphasis != .accent { return Color(red: 1.0, green: 0.45, blue: 0.45) }
     switch emphasis {
     case .accent, .emphasized: return .black.opacity(0.88)
+    case .destructive: return .white
     case .secondary: return BlitzUI.primaryText
     case .quiet: return isHovered && isEnabled ? BlitzUI.primaryText : BlitzUI.secondaryText
     }
@@ -149,7 +154,7 @@ struct BlitzButtonStyle: ButtonStyle {
     if emphasis == .quiet { return .clear }
     if destructive { return BlitzUI.recordRed.opacity(0.35) }
     switch emphasis {
-    case .accent: return Color.white.opacity(0.18)
+    case .accent, .destructive: return Color.white.opacity(0.18)
     case .emphasized: return Color.white.opacity(0.3)
     default: return Color.white.opacity(isHovered && isEnabled ? 0.16 : 0.10)
     }
@@ -169,6 +174,13 @@ struct BlitzButtonStyle: ButtonStyle {
           startPoint: .top, endPoint: .bottom))
     case .emphasized:
       return AnyShapeStyle(hovered ? Color.white : BlitzUI.primaryText)
+    case .destructive:
+      let top = Color(red: 1.0, green: 0.42, blue: 0.40)
+      return AnyShapeStyle(
+        LinearGradient(
+          colors: hovered
+            ? [top, BlitzUI.recordRed] : [top.opacity(0.92), BlitzUI.recordRed.opacity(0.88)],
+          startPoint: .top, endPoint: .bottom))
     case .secondary:
       return AnyShapeStyle(
         LinearGradient(
@@ -553,17 +565,6 @@ struct BlitzChevron: View {
   }
 }
 
-extension View {
-  /// Severity-tinted surface for alerts.
-  func blitzToneCard(_ tone: MetricTone, radius: CGFloat = BlitzUI.cardRadius) -> some View {
-    background(tone.color.opacity(0.08), in: RoundedRectangle(cornerRadius: radius))
-      .overlay {
-        RoundedRectangle(cornerRadius: radius)
-          .strokeBorder(tone.color.opacity(0.22), lineWidth: 1).allowsHitTesting(false)
-      }
-  }
-}
-
 private struct BlitzRowModifier: ViewModifier {
   @State private var hovered = false
 
@@ -600,14 +601,7 @@ extension View {
 
   func blitzWindowDrag() -> some View { modifier(BlitzWindowDragModifier()) }
 
-  func blitzTable() -> some View {
-    background(BlitzUI.cardFill)
-      .clipShape(RoundedRectangle(cornerRadius: BlitzUI.cardRadius))
-      .overlay {
-        RoundedRectangle(cornerRadius: BlitzUI.cardRadius)
-          .strokeBorder(BlitzUI.separator, lineWidth: 1).allowsHitTesting(false)
-      }
-  }
+  func blitzTable() -> some View { blitzSurface() }
 }
 
 struct BlitzSwitchStyle: ToggleStyle {

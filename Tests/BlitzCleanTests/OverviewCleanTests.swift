@@ -21,17 +21,16 @@ struct OverviewCleanTests {
         scanRequest: .init(roots: [], minimumBytes: 0, maxEntries: 1),
         synchronizesInBackground: false))
     let audit = DashboardAuditModel()
+    let projects = AuditCheckGate()
     audit.start(
       .init(checks: [
         .caches: { [] },
         .projects: {
-          try? await Task.sleep(for: .milliseconds(500))
+          await projects.wait()
           return []
         },
       ]))
-    for _ in 0..<100 where audit.progress.results[.caches] == nil {
-      try await Task.sleep(for: .milliseconds(5))
-    }
+    #expect(await eventually { audit.progress.results[.caches] != nil })
     audit.cleanCaches(
       .init(
         monitor: SystemMonitor(), memory: MemoryRescueModel(), processes: DevProcessModel(),
@@ -41,9 +40,8 @@ struct OverviewCleanTests {
     #expect(audit.progress.results[.projects] == nil)
     try await wait(caches)
     #expect(await driver.deleted == candidates.map(\.path))
-    for _ in 0..<100 where audit.progress.isRunning {
-      try await Task.sleep(for: .milliseconds(10))
-    }
+    await projects.release()
+    #expect(await eventually { !audit.progress.isRunning && audit.cleanupResult != nil })
     #expect(audit.cleanupResult?.outcome.skippedCount == candidates.count)
   }
 
@@ -231,11 +229,7 @@ struct OverviewCleanTests {
   }
 
   private func wait(_ model: QuickCleanModel) async throws {
-    let deadline = ContinuousClock.now + .seconds(10)
-    while model.isBusy {
-      try #require(ContinuousClock.now < deadline)
-      try await Task.sleep(for: .milliseconds(10))
-    }
+    try #require(await eventually { !model.isBusy })
   }
 }
 
