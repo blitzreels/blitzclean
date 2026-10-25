@@ -30,7 +30,7 @@ struct OverviewCleanupSummary: Equatable {
   init(_ input: Input) {
     var unique: [String: Item] = [:]
     for item in input.items where item.bytes > 0 {
-      let path = URL(fileURLWithPath: item.path).standardizedFileURL.path
+      let path = URL(filePath: item.path, directoryHint: .inferFromPath).standardizedFileURL.path
       if item.bytes > (unique[path]?.bytes ?? 0) {
         unique[path] = Item(path: path, bytes: item.bytes, source: item.source)
       }

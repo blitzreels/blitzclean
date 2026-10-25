@@ -367,7 +367,7 @@ struct WorkspaceProjectsView: View {
     guard let path = Finder.chooseFolder() else { return }
     editing = WorkspacePreference(
       directory: WorkspacePreferences.canonical(path),
-      name: URL(fileURLWithPath: path).lastPathComponent, keepRunning: false, startCommand: nil)
+      name: PathName.last(path), keepRunning: false, startCommand: nil)
   }
 }
 

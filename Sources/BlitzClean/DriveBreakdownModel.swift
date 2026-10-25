@@ -37,6 +37,8 @@ final class DriveBreakdownModel: ObservableObject {
       breakdown = saved
       rank = Self.rank(saved)
     }
+    // The saved breakdown keeps the free space of its scan; free space is read live instead.
+    refreshCapacity()
     refreshRuntimes()
   }
 
@@ -80,6 +82,7 @@ final class DriveBreakdownModel: ObservableObject {
 
   func scan() {
     guard !isScanning, busyID == nil else { return }
+    refreshCapacity()
     isScanning = true
     visited = 0
     let progress = DriveScanner.Progress()

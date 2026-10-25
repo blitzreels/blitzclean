@@ -36,11 +36,11 @@ enum CPUProcessRanking {
       let name: String
       if let appRange = executable.range(of: ".app/") {
         let appPath = String(executable[..<appRange.lowerBound])
-        let appName = URL(fileURLWithPath: appPath).lastPathComponent
-        let executableName = URL(fileURLWithPath: executable).lastPathComponent
+        let appName = PathName.last(appPath)
+        let executableName = PathName.last(executable)
         name = executableName == appName ? appName : "\(appName) · \(executableName)"
       } else {
-        name = URL(fileURLWithPath: executable).lastPathComponent
+        name = PathName.last(executable)
       }
       return CPUProcess(
         processID: record.processID, name: name, workingDirectory: directory,
@@ -55,7 +55,7 @@ struct DevProject: Identifiable, Sendable {
   let directory: String
   let processes: [DevProcess]
   var id: String { directory }
-  var name: String { URL(fileURLWithPath: directory).lastPathComponent }
+  var name: String { PathName.last(directory) }
   var servers: [DevProcess] { processes.filter(\.canStopWithProject) }
 
   static func grouped(_ processes: [DevProcess]) -> [Self] {

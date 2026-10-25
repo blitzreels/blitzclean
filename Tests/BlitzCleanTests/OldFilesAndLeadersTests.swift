@@ -359,7 +359,11 @@ struct BackgroundCostTests {
     let key = ProcessGroupCache.Key(pid: 42, start: 7)
     #expect(cache.identity(key) == nil)
     #expect(cache.store(.init(key: key, identity: nil)) == nil)
-    let stored = cache.store(.init(key: key, identity: .init(name: "node", group: "node · app")))
+    let stored = cache.store(
+      .init(
+        key: key,
+        identity: .init(name: "node", executable: "/usr/local/bin/node", group: "node · app")
+      ))
     #expect(stored?.group == "node · app")
     #expect(cache.identity(key)?.name == "node")
     #expect(cache.identity(.init(pid: 42, start: 8)) == nil)

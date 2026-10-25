@@ -47,7 +47,7 @@ struct AIThread: Identifiable, Equatable, Sendable {
   var hostName: String? = nil
   var delegatedTools: [String] = []
 
-  var project: String? { directory.map { URL(fileURLWithPath: $0).lastPathComponent } }
+  var project: String? { directory.map { PathName.last($0) } }
 
   var displayName: String {
     sessionTitle ?? project ?? name

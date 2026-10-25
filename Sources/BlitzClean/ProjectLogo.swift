@@ -107,7 +107,7 @@ enum ProjectLogo {
 
   /// An app named like the project in Applications or the project's own build folder.
   private static func installedApp(_ directory: String) -> String? {
-    let name = URL(fileURLWithPath: directory).lastPathComponent.lowercased()
+    let name = PathName.last(directory).lowercased()
     let home = FileManager.default.homeDirectoryForCurrentUser.path
     for folder in ["/Applications", home + "/Applications", directory + "/dist"] {
       guard let apps = try? FileManager.default.contentsOfDirectory(atPath: folder) else {

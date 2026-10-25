@@ -1,3 +1,4 @@
+import AppKit
 import Darwin
 import Foundation
 import UserNotifications
@@ -192,6 +193,8 @@ enum ProjectPausePolicy {
 struct PressureUpdate: Sendable {
   let assessment: PressureAssessment
   let action: String?
+  /// Builds the brake holds paused, for Resume and Stop on Memory.
+  let paused: [BuildBrakeEntry]
 }
 
 final class PressureSentinel: @unchecked Sendable {
@@ -207,12 +210,20 @@ final class PressureSentinel: @unchecked Sendable {
   private var lastSaved = Date.distantPast
   private var events: [[String: String]] = []
   private let installed = AppBrand.isInstalledApp
+  private lazy var brake = BuildBrake(url: installed ? AppData.file("build-brake.json") : nil)
+  private var terminationObserver: NSObjectProtocol?
 
-  deinit { timer?.cancel() }
+  deinit {
+    timer?.cancel()
+    terminationObserver.map(NotificationCenter.default.removeObserver)
+  }
 
   func start(_ receive: @escaping @Sendable (PressureUpdate) -> Void) {
     queue.async { [self] in
       guard timer == nil else { return }
+      terminationObserver = NotificationCenter.default.addObserver(
+        forName: NSApplication.willTerminateNotification, object: nil, queue: nil
+      ) { [weak self] _ in self?.queue.sync { self?.brake.releaseAll() } }
       if installed {
         let url = AppData.file("pressure-latest.json")
         if let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize, size <= 524_288,
@@ -253,8 +264,10 @@ final class PressureSentinel: @unchecked Sendable {
       elevatedSince = nil
     }
     var action: String?
+    let acts = installed && ActingCopy.current
+    if installed, !acts, !brake.paused.isEmpty { brake.releaseAll() }
     let permitted = Set(UserDefaults.standard.stringArray(forKey: ProjectPausePolicy.key) ?? [])
-    if installed, let elevatedSince, memory.date.timeIntervalSince(elevatedSince) >= 6,
+    if acts, let elevatedSince, memory.date.timeIntervalSince(elevatedSince) >= 6,
       memory.date.timeIntervalSince(lastPause) >= 30,
       let target = targets.filter({
         permitted.contains($0.directory) && !$0.isPaused
@@ -270,7 +283,34 @@ final class PressureSentinel: @unchecked Sendable {
         targets.removeAll { $0.directory == target.directory }
       }
     }
-    if installed {
+    if acts,
+      let outcome = brake.step(
+        .init(
+          risk: assessment.limit == .memory ? assessment.risk : .normal, total: memory.total,
+          available: memory.available, date: memory.date))
+    {
+      if let message = outcome.message {
+        action = [action, message].compactMap { $0 }.joined(separator: " ")
+      }
+      if outcome.notifyPause, let message = outcome.message {
+        notify(.init(id: "build-brake", title: "Paused a build to protect memory", body: message))
+      }
+      if let loop = outcome.loop {
+        action = [action, loop].compactMap { $0 }.joined(separator: " ")
+        notify(.init(id: "build-brake-loop", title: "A build keeps restarting", body: loop))
+      }
+      if let stuck = outcome.stuck {
+        notify(
+          .init(
+            id: "build-brake-stuck",
+            title: "\(stuck.process.label) is still paused",
+            body:
+              "It holds \(ByteText.compact(stuck.process.footprint)) and memory is still short, so it "
+              + "can't resume. Stop it on Memory to free that memory, or Resume it if it has to finish."
+          ))
+      }
+    }
+    if acts {
       let enabled = UserDefaults.standard.object(forKey: "memory.alertsEnabled") as? Bool ?? true
       if enabled && alertGate.shouldSend(.init(risk: assessment.risk, date: memory.date)) {
         let content = UNMutableNotificationContent()
@@ -281,7 +321,7 @@ final class PressureSentinel: @unchecked Sendable {
         UNUserNotificationCenter.current().add(
           UNNotificationRequest(identifier: "capacity-guard", content: content, trigger: nil))
       }
-      if action != nil || memory.date.timeIntervalSince(lastSaved) >= 60 {
+      if action != nil || memory.date.timeIntervalSince(lastSaved) >= 300 {
         lastSaved = memory.date
         events.append([
           "at": ISO8601DateFormatter().string(from: memory.date), "risk": assessment.title,
@@ -303,6 +343,27 @@ final class PressureSentinel: @unchecked Sendable {
         }
       }
     }
-    receive(PressureUpdate(assessment: assessment, action: action))
+    receive(PressureUpdate(assessment: assessment, action: action, paused: brake.paused))
+  }
+
+  struct NotifyRequest {
+    let id: String
+    let title: String
+    let body: String
+  }
+
+  private func notify(_ request: NotifyRequest) {
+    let content = UNMutableNotificationContent()
+    content.title = request.title
+    content.body = request.body
+    content.categoryIdentifier = "memory"
+    content.sound = .default
+    UNUserNotificationCenter.current().add(
+      UNNotificationRequest(identifier: request.id, content: content, trigger: nil))
+  }
+
+  /// Resumes or stops one paused build at a person's request.
+  func release(_ request: BuildBrake.ReleaseRequest) {
+    queue.async { [self] in brake.release(request) }
   }
 }

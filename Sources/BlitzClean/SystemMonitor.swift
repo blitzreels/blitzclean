@@ -386,7 +386,7 @@ final class SystemMonitor: NSObject, ObservableObject {
     memorySamples = memoryHistory.samples
     history.append(refreshedSnapshot)
     resourceSamples = history.samples
-    if Date.now.timeIntervalSince(lastHistorySave) >= 30 { persistResourceHistory() }
+    if Date.now.timeIntervalSince(lastHistorySave) >= 300 { persistResourceHistory() }
     memoryStats = VMMemoryStatsReader.current()
     sampleProcesses()
   }

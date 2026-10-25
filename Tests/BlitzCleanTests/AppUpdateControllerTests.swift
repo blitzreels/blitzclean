@@ -46,6 +46,22 @@ struct AppUpdateControllerTests {
     #expect(driver.manualChecks == 1)
   }
 
+  @Test func launchChecksInBackgroundOnlyWhenAutomaticChecksAreOn() {
+    let driver = UpdateDriverStub()
+    let controller = AppUpdateController { _ in driver }
+    controller.start()
+    #expect(driver.backgroundChecks == 1)
+    #expect(driver.manualChecks == 0)
+    #expect(controller.status == .checking)
+
+    let quiet = UpdateDriverStub()
+    quiet.automaticallyChecksForUpdates = false
+    let manual = AppUpdateController { _ in quiet }
+    manual.start()
+    #expect(quiet.backgroundChecks == 0)
+    #expect(manual.status == .idle)
+  }
+
   @Test func automaticChecksFollowTheUpdater() {
     let driver = UpdateDriverStub()
     let controller = AppUpdateController { _ in driver }
@@ -88,8 +104,11 @@ private final class UpdateDriverStub: AppUpdateDriving {
   var onReadinessChange: (() -> Void)?
   var manualChecks = 0
 
+  var backgroundChecks = 0
+
   func start() throws {}
   func checkForUpdates() { manualChecks += 1 }
+  func checkForUpdatesInBackground() { backgroundChecks += 1 }
 }
 
 private struct StubError: Error, CustomStringConvertible {

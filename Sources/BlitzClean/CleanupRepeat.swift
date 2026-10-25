@@ -163,7 +163,7 @@ struct RegrowActivity: Sendable {
       return Self.isBuilding(process, root: root)
     }
     return running.map {
-      "\($0.name) is running in \(URL(fileURLWithPath: root).lastPathComponent)"
+      "\($0.name) is running in \(PathName.last(root))"
     }
   }
 
@@ -337,7 +337,7 @@ enum CleanupReportImporter {
       return CleanupWin(
         id: "report:\(url.lastPathComponent):\(index)",
         date: (item.time ?? report.started?.at).map(Date.init(timeIntervalSince1970:)) ?? fallback,
-        title: "Removed \(URL(fileURLWithPath: item.path).lastPathComponent)",
+        title: "Removed \(PathName.last(item.path))",
         paths: [item.path], before: volume(item.freeBefore), after: volume(item.freeAfter),
         bytes: item.allocatedBytes)
     }

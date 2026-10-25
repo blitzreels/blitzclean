@@ -41,6 +41,11 @@ final class DevProcessModel: ObservableObject {
   @Published private(set) var hiddenLeftoverNames =
     UserDefaults.standard.stringArray(forKey: LeftoverProcessFinder.hiddenKey) ?? []
   private let sentinel = PressureSentinel()
+  /// A server that stopped leaves a dead port on screen until the next scan; with no window open that scan
+  /// waits a minute, so a stopped server triggers one sooner, at most every 15 seconds.
+  private var lastExitCheck = Date.distantPast
+  /// Builds the brake paused before memory ran out.
+  @Published private(set) var brakePaused: [BuildBrakeEntry] = []
   private let scanner = DevProcessScanner()
   private let prober = PortProber()
   private var timer: Timer?
@@ -56,6 +61,7 @@ final class DevProcessModel: ObservableObject {
           self.pressure = update.assessment
         }
         ResourceSnapshotCache.pressure = update.assessment
+        if self.brakePaused != update.paused { self.brakePaused = update.paused }
         if let action = update.action {
           self.projectAction = action
           self.refresh()
@@ -86,7 +92,18 @@ final class DevProcessModel: ObservableObject {
 
   func refreshIfStale() {
     guard !isRefreshing else { return }
-    let interval = RefreshCadence.interval(.processes)
+    if Date.now.timeIntervalSince(lastExitCheck) >= 15,
+      processes.contains(where: {
+        !$0.listeningPorts.isEmpty && kill($0.processID, 0) != 0 && errno == ESRCH
+      })
+    {
+      lastExitCheck = .now
+      refresh()
+      return
+    }
+    let interval =
+      autoPauseDirectories.isEmpty
+      ? RefreshCadence.interval(.processes) : min(15, RefreshCadence.interval(.processes))
     if let scannedAt, Date().timeIntervalSince(scannedAt) < interval {
       return
     }
@@ -192,6 +209,22 @@ final class DevProcessModel: ObservableObject {
         value.identities = target.identities.filter { !excluded.contains($0.process.processID) }
         return value.identities.isEmpty ? nil : value
       })
+  }
+
+  struct BrakeRequest {
+    let entry: BuildBrakeEntry
+    let stop: Bool
+  }
+
+  /// Resumes a paused build, or stops it to free the memory it holds.
+  func releaseBrake(_ request: BrakeRequest) {
+    brakePaused.removeAll { $0 == request.entry }
+    sentinel.release(.init(entry: request.entry, signal: request.stop ? SIGTERM : SIGCONT))
+    projectAction =
+      request.stop
+      ? "Stopped \(request.entry.process.label); its \(ByteText.compact(request.entry.process.footprint)) is free again."
+      : "Resumed \(request.entry.process.label)."
+    refresh()
   }
 
   struct AutoPauseRequest {

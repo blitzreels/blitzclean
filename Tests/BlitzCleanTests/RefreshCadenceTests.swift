@@ -6,11 +6,15 @@ import Testing
 struct RefreshCadenceTests {
   @Test func readersSlowDownInTheBackgroundAndUnderPressure() {
     for reader in RefreshCadence.Reader.allCases {
-      let front = RefreshCadence.interval(reader, .init(foreground: true, pressure: .normal))
-      let back = RefreshCadence.interval(reader, .init(foreground: false, pressure: .normal))
-      let warning = RefreshCadence.interval(reader, .init(foreground: true, pressure: .warning))
-      let critical = RefreshCadence.interval(reader, .init(foreground: true, pressure: .critical))
+      let front = RefreshCadence.interval(reader, .init(visibility: .foreground, pressure: .normal))
+      let back = RefreshCadence.interval(reader, .init(visibility: .background, pressure: .normal))
+      let hidden = RefreshCadence.interval(reader, .init(visibility: .hidden, pressure: .normal))
+      let warning = RefreshCadence.interval(
+        reader, .init(visibility: .foreground, pressure: .warning))
+      let critical = RefreshCadence.interval(
+        reader, .init(visibility: .foreground, pressure: .critical))
       #expect(back >= front)
+      #expect(hidden >= back)
       #expect(warning > front)
       #expect(critical > warning)
     }
@@ -18,7 +22,14 @@ struct RefreshCadenceTests {
 
   @Test func processScanUnderCriticalPressureWaitsAtLeastFifteenSeconds() {
     #expect(
-      RefreshCadence.interval(.processes, .init(foreground: true, pressure: .critical)) >= 15)
+      RefreshCadence.interval(.processes, .init(visibility: .foreground, pressure: .critical))
+        >= 15)
+  }
+
+  @Test func scansNobodyIsReadingWaitAMinute() {
+    #expect(
+      RefreshCadence.interval(.processes, .init(visibility: .hidden, pressure: .normal)) == 60)
+    #expect(RefreshCadence.interval(.system, .init(visibility: .hidden, pressure: .normal)) == 6)
   }
 }
 

@@ -116,14 +116,7 @@ enum AIThreadNames {
   }
 
   static func processArguments(_ processID: Int32) -> [String] {
-    var mib: [Int32] = [CTL_KERN, KERN_PROCARGS2, processID]
-    var size = 1_024 * 1_024
-    var data = Data(count: size)
-    let result = data.withUnsafeMutableBytes { buffer in
-      sysctl(&mib, UInt32(mib.count), buffer.baseAddress, &size, nil, 0)
-    }
-    guard result == 0, size > MemoryLayout<Int32>.size else { return [] }
-    return arguments(Data(data.prefix(size)))
+    ProcessArguments.read(processID)
   }
 
   static func arguments(_ data: Data) -> [String] {

@@ -31,7 +31,10 @@ struct DashboardRenderTests {
       UserDefaults.standard.set(true, forKey: key)
     }
     let labelRenderer = ImageRenderer(
-      content: MenuBarHealthLabel(snapshot: monitor.snapshot, risk: memoryRescue.risk).metrics
+      content: MenuBarHealthLabel(
+        snapshot: monitor.snapshot, risk: memoryRescue.risk,
+        updates: AppUpdateController { _ in nil }
+      ).metrics
         .padding(6)
         .background(Color.black)
         .environment(\.colorScheme, .dark)

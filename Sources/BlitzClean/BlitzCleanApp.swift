@@ -25,7 +25,8 @@ struct BlitzCleanApp: App {
         navigation: cleanNavigation, updates: appDelegate.updates, processes: devProcesses)
     } label: {
       MenuBarHealthLabel(
-        snapshot: monitor.snapshot, risk: max(memoryRescue.risk, memoryRescue.capacity.risk)
+        snapshot: monitor.snapshot, risk: max(memoryRescue.risk, memoryRescue.capacity.risk),
+        updates: appDelegate.updates
       )
       .environmentObject(cleanNavigation)
       .onReceive(devProcesses.$threads) { threads in
@@ -39,16 +40,18 @@ struct BlitzCleanApp: App {
     .menuBarExtraStyle(.window)
 
     Window(AppBrand.name, id: "dashboard") {
-      BlitzDashboardView(
-        monitor: monitor, memory: memoryRescue, cleanup: quickClean,
-        storage: storageBreakdown, navigation: cleanNavigation,
-        developerBrowser: developerBrowser, processes: devProcesses, workspaces: workspaces,
-        services: .init(
-          recovery: appRecovery, permissions: permissions, docker: dockerStorage,
-          folders: folderExplorer,
-          launchAtLogin: launchAtLogin, updates: appDelegate.updates)
-      )
-      .background(DashboardWindowLifecycle())
+      DashboardWindowContent {
+        BlitzDashboardView(
+          monitor: monitor, memory: memoryRescue, cleanup: quickClean,
+          storage: storageBreakdown, navigation: cleanNavigation,
+          developerBrowser: developerBrowser, processes: devProcesses, workspaces: workspaces,
+          services: .init(
+            recovery: appRecovery, permissions: permissions, docker: dockerStorage,
+            folders: folderExplorer,
+            launchAtLogin: launchAtLogin, updates: appDelegate.updates,
+            restarts: appDelegate.restarts)
+        )
+      }
     }
     .windowStyle(.hiddenTitleBar)
     .defaultSize(width: 1080, height: 820)
@@ -84,6 +87,8 @@ struct BlitzCleanApp: App {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
   let updates = AppUpdateController()
+  /// Created at launch: macOS deletes panic reports within about half an hour of a restart.
+  let restarts = RestartReportModel()
 
   func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
     guard

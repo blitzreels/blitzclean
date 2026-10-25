@@ -11,7 +11,7 @@ struct ReviewFile: Codable, Equatable, Identifiable, Sendable {
   let modifiedNanoseconds: Int64
 
   var id: String { path }
-  var name: String { URL(fileURLWithPath: path).lastPathComponent }
+  var name: String { PathName.last(path) }
   var isTemporary: Bool { path.hasPrefix("/private/") }
   var kind: String {
     let ext = URL(fileURLWithPath: path).pathExtension.lowercased()

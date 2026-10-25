@@ -56,22 +56,24 @@ struct CPUControlView: View {
     let items = items
     let visible = showsAll ? items : Array(items.prefix(Self.rowLimit))
     let threads = processes.threadsByID
+    let busiest = max(1, items.first?.cpu ?? 1)
     return ScrollView {
       VStack(alignment: .leading, spacing: 24) {
         ResourceVerdictCard(
-          verdict: verdict, symbol: "cpu.fill",
+          verdict: verdict, gauge: monitor.snapshot.cpuUsage ?? 0,
           message: appResult ?? processes.consumerMessage ?? processes.threadMessage
         ) {
-          VStack(spacing: 14) {
+          VStack(alignment: .leading, spacing: 16) {
             HStack {
+              BlitzGroupLabel(title: "History")
               Spacer()
               HistoryRangePicker(seconds: $seconds)
             }
             ResourcePlot(
-              samples: monitor.resourceSamples, kind: .cpu, color: BlitzPalette.data,
-              seconds: seconds
+              samples: monitor.resourceSamples, kind: .cpu, color: verdict.tone.meterColor,
+              seconds: seconds, isDetailed: true
             )
-            .frame(height: 90)
+            .frame(height: 130)
             .help("Total CPU usage across all cores, from 0 to 100%")
           }
         }
@@ -96,9 +98,10 @@ struct CPUControlView: View {
                   activity: processes.activity,
                   isBackground: processes.backgrounded.contains(consumer.id),
                   thread: consumer.threadID.flatMap { threads[$0] },
+                  share: consumer.cpuPercent / busiest,
                   onConfirm: { pending = $0 }, onForceQuitApp: forceQuitApp)
               case .system(let process):
-                SystemCPURow(process: process)
+                SystemCPURow(process: process, share: process.percent / busiest)
               }
               if item.id != visible.last?.id { BlitzRowDivider(leading: 56) }
             }
@@ -141,10 +144,13 @@ struct CPUControlView: View {
   private var verdict: ResourceVerdict {
     let usage = monitor.snapshot.cpuUsage ?? 0
     let cores = ProcessInfo.processInfo.activeProcessorCount
-    let (title, tone): (String, BlitzStatusTone) =
-      usage >= 0.85
-      ? ("CPU is maxed out", .critical)
-      : usage >= 0.5 ? ("CPU is busy", .warning) : ("CPU is calm", .good)
+    let tone = MenuBarTones.cpu(usage)
+    let title =
+      switch tone {
+      case .critical: "CPU is maxed out"
+      case .warning: "CPU is busy"
+      default: usage >= 0.5 ? "CPU is working" : "CPU is calm"
+      }
     let top = processes.consumers.filter { $0.kind != .system }
       .max { $0.cpuPercent < $1.cpuPercent }
     var summary = "\(PercentText.make(usage)) of \(cores) cores in use"

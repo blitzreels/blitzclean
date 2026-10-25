@@ -18,7 +18,7 @@ struct DeveloperArtifact: Identifiable, Sendable {
   let reinstallCommand: String?
   let internalVolume: Bool
   var id: String { path }
-  var name: String { URL(fileURLWithPath: projectPath).lastPathComponent }
+  var name: String { PathName.last(projectPath) }
 
   func withBlocker(_ reason: String?) -> Self {
     .init(
@@ -165,7 +165,7 @@ enum DeveloperArtifactScanner {
   }
 
   static func reinstall(_ lockfile: String?) -> String? {
-    switch lockfile.map({ URL(fileURLWithPath: $0).lastPathComponent }) {
+    switch lockfile.map({ PathName.last($0) }) {
     case "package-lock.json": "npm ci"
     case "pnpm-lock.yaml": "pnpm install --frozen-lockfile"
     case "yarn.lock": "yarn install --frozen-lockfile"

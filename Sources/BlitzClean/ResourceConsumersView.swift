@@ -96,6 +96,8 @@ struct ConsumerRow: View {
   let activity: ConsumerActivity
   let isBackground: Bool
   let thread: AIThread?
+  /// The row's amount against the scale of its list, drawn as a meter under the value.
+  let share: Double
   let onConfirm: (PendingProcessAction) -> Void
   let onForceQuitApp: (MemoryApp) -> Void
 
@@ -117,7 +119,10 @@ struct ConsumerRow: View {
           .lineLimit(1).truncationMode(.middle)
       }.frame(maxWidth: .infinity, alignment: .leading)
         .help(consumer.directory ?? consumer.name)
-      BlitzTrailingValue(value: value, detail: valueDetail).frame(width: 84, alignment: .trailing)
+      VStack(alignment: .trailing, spacing: 5) {
+        BlitzTrailingValue(value: value, detail: valueDetail)
+        BlitzMeter(fraction: share, tone: .muted, height: 3).frame(width: 64)
+      }.frame(width: 84, alignment: .trailing)
       primary(candidate: candidate, busy: busy).frame(width: 96, alignment: .trailing)
       if consumer.kind == .system {
         Color.clear.frame(width: 34, height: 1)
@@ -296,11 +301,19 @@ struct ConsumerRow: View {
 /// A macOS process using CPU; it explains itself instead of offering actions.
 struct SystemCPURow: View {
   let process: LiveCPUProcess
+  let share: Double
 
   var body: some View {
-    let description = SystemProcessNames.describe(process.name)
+    let description = SystemProcessNames.describe(
+      .init(name: process.name, executable: process.executable))
     HStack(spacing: 12) {
-      Image(systemName: "applelogo").frame(width: 28).foregroundStyle(BlitzUI.secondaryText)
+      if let bundle = ResourceOwnership.appBundle(process.executable) {
+        ApplicationIcon(source: .file(bundle), size: 28, fallback: "app")
+      } else {
+        Image(
+          systemName: SystemProcessNames.isSystem(process.executable) ? "applelogo" : "terminal"
+        ).frame(width: 28).foregroundStyle(BlitzUI.secondaryText)
+      }
       VStack(alignment: .leading, spacing: 2) {
         Text(description.title).font(BlitzType.rowTitle).lineLimit(1)
         Text(
@@ -309,10 +322,12 @@ struct SystemCPURow: View {
         )
         .font(BlitzType.caption).foregroundStyle(BlitzUI.secondaryText).lineLimit(1)
       }.frame(maxWidth: .infinity, alignment: .leading)
-      BlitzTrailingValue(
-        value: CPUText.percent(process.percent),
-        detail: process.percent >= 100 ? CPUText.cores(process.percent) : nil
-      ).frame(width: 84, alignment: .trailing)
+      VStack(alignment: .trailing, spacing: 5) {
+        BlitzTrailingValue(
+          value: CPUText.percent(process.percent),
+          detail: process.percent >= 100 ? CPUText.cores(process.percent) : nil)
+        BlitzMeter(fraction: share, tone: .muted, height: 3).frame(width: 64)
+      }.frame(width: 84, alignment: .trailing)
       Color.clear.frame(width: 96 + 12 + 34, height: 1)
     }.blitzRow()
   }
@@ -346,14 +361,19 @@ struct ResourceVerdict {
 
 struct ResourceVerdictCard<Chart: View>: View {
   let verdict: ResourceVerdict
-  let symbol: String
+  /// Share of the resource in use, drawn as the ring beside the verdict.
+  let gauge: Double
   let message: String?
   @ViewBuilder let chart: () -> Chart
 
   var body: some View {
     VStack(alignment: .leading, spacing: 16) {
-      HStack(alignment: .center, spacing: 14) {
-        BlitzIconTile(symbol: symbol, tone: verdict.tone, size: 40)
+      HStack(alignment: .center, spacing: 16) {
+        BlitzRingGauge(fraction: gauge, tone: verdict.tone, size: 64, lineWidth: 7) {
+          Text(PercentText.make(gauge)).font(BlitzNumberFont.value(15)).monospacedDigit()
+            .contentTransition(.numericText())
+            .animation(.snappy, value: gauge)
+        }
         VStack(alignment: .leading, spacing: 3) {
           HStack(spacing: 8) {
             Text(verdict.title).font(.system(size: 20, weight: .semibold))

@@ -5,23 +5,10 @@ struct LiveProcessTree: Sendable {
   let parents: [Int32: Int32]
 
   static func read() -> Self {
-    let capacity = max(1024, Int(proc_listallpids(nil, 0)) + 256)
-    var ids = [Int32](repeating: 0, count: capacity)
-    let count = ids.withUnsafeMutableBytes {
-      proc_listallpids($0.baseAddress, Int32($0.count))
-    }
-    var parents: [Int32: Int32] = [:]
-    for pid in ids.prefix(max(0, min(Int(count), capacity))) where pid > 1 {
-      var info = proc_bsdinfo()
-      let size = MemoryLayout<proc_bsdinfo>.stride
-      let read = withUnsafeMutablePointer(to: &info) {
-        proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, $0, Int32(size))
-      }
-      if read == size, info.pbi_uid == getuid(), info.pbi_status != SZOMB {
-        parents[pid] = Int32(info.pbi_ppid)
-      }
-    }
-    return Self(parents: parents)
+    Self(
+      parents: Dictionary(
+        NativeProcessList.rows(.init(owner: getuid())).map { ($0.pid, $0.parent) },
+        uniquingKeysWith: { first, _ in first }))
   }
 
   func descendants(_ roots: Set<Int32>) -> [Int32] {

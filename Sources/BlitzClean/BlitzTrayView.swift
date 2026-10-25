@@ -24,9 +24,8 @@ struct BlitzTrayView: View {
     VStack(spacing: 0) {
       header
       VStack(alignment: .leading, spacing: 14) {
-        if memory.capacity.risk > .normal { issueRow }
-        resources
-        if let fix { fixRow(fix) }
+        gauges
+        attention
         topConsumers
       }.padding(.horizontal, 12).padding(.bottom, 14)
       Rectangle().fill(Color.white.opacity(0.07)).frame(height: 1)
@@ -40,14 +39,14 @@ struct BlitzTrayView: View {
   // MARK: Header
 
   private var header: some View {
-    let attention = memory.capacity.risk > .normal || recovery.attentionCount > 0
+    let status = headerStatus
     return HStack(spacing: 10) {
       BrandMark().frame(width: 40, height: 40).scaleEffect(0.55).frame(width: 22, height: 22)
       Text(AppBrand.name).font(.system(size: 13, weight: .semibold))
       HStack(spacing: 5) {
-        BlitzStatusDot(tone: attention ? .warning : .good, diameter: 6)
-        Text(attention ? "Needs attention" : "All good").font(BlitzType.caption)
-          .foregroundStyle(BlitzUI.secondaryText)
+        BlitzStatusDot(tone: status.tone, diameter: 6)
+        Text(status.text).font(BlitzType.caption).lineLimit(1)
+          .foregroundStyle(status.tone == .good ? BlitzUI.secondaryText : status.tone.color)
       }
       Spacer()
       if updates.version != nil {
@@ -81,92 +80,101 @@ struct BlitzTrayView: View {
     }.padding(.leading, 14).padding(.trailing, 8).padding(.vertical, 10)
   }
 
-  // MARK: Issue
+  // MARK: Status
 
-  private var issueRow: some View {
+  /// The header names the worst thing in a few words, so the tray answers "is my Mac fine?" first.
+  private var headerStatus: (text: String, tone: BlitzStatusTone) {
     let capacity = memory.capacity
-    let isDisk = capacity.limit == .disk
-    return Button {
-      navigation.review(capacity)
-      openWindow.dashboard()
-    } label: {
-      HStack(spacing: 12) {
-        BlitzIconTile(
-          symbol: isDisk ? "internaldrive.fill" : "exclamationmark",
-          tone: capacity.risk.tone, size: 28)
-        VStack(alignment: .leading, spacing: 2) {
-          Text(capacity.title).font(BlitzType.rowTitle).foregroundStyle(BlitzUI.primaryText)
-          Text(
-            isDisk
-              ? "Free up space before large downloads or builds."
-              : "Quit what you are not using before starting new work."
-          )
-          .font(BlitzType.caption).foregroundStyle(BlitzUI.secondaryText)
-          .fixedSize(horizontal: false, vertical: true)
-        }
-        Spacer(minLength: 4)
-        Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold))
-          .foregroundStyle(BlitzUI.tertiaryText)
-      }
-      .padding(12).contentShape(Rectangle())
+    if capacity.risk > .normal { return (capacity.title, capacity.risk.tone) }
+    if recovery.attentionCount > 0 {
+      return (
+        recovery.attentionCount == 1
+          ? "1 app not responding" : "\(recovery.attentionCount) apps not responding", .warning
+      )
     }
-    .buttonStyle(BlitzRowButtonStyle(radius: 12))
-    .blitzCard(padding: 0)
-    .help(capacity.reviewTitle)
+    if let worst = vitals.first(where: { $0.tone == .critical || $0.tone == .warning }) {
+      return ("\(worst.title) needs a look", worst.tone)
+    }
+    return ("All good", .good)
   }
 
-  // MARK: Resources
+  // MARK: Gauges
 
-  private var resources: some View {
-    VStack(alignment: .leading, spacing: 8) {
-      BlitzGroupLabel(title: "Resources").padding(.leading, 4)
-      VStack(spacing: 0) {
-        ForEach(vitals) { vital in
-          resourceRow(vital)
-          if vital.id != vitals.last?.id { BlitzRowDivider(leading: 50) }
+  private var gauges: some View {
+    HStack(spacing: 0) {
+      ForEach(vitals) { vital in
+        Button {
+          open(vital.page)
+        } label: {
+          VStack(spacing: 8) {
+            BlitzRingGauge(fraction: vital.load ?? 0, tone: vital.tone, size: 58, lineWidth: 6) {
+              Text(vital.load.map(PercentText.make) ?? "—").font(BlitzNumberFont.value(13))
+                .monospacedDigit().contentTransition(.numericText())
+                .animation(.snappy, value: vital.load)
+            }
+            VStack(spacing: 1) {
+              Text(vital.title).font(BlitzType.captionEmphasis)
+                .foregroundStyle(BlitzUI.primaryText)
+              Text(
+                vital.page == .cpu
+                  ? "\(ProcessInfo.processInfo.activeProcessorCount) cores" : vital.compactValue
+              )
+              .font(BlitzType.caption).monospacedDigit().lineLimit(1)
+              .foregroundStyle(vital.alertColor ?? BlitzUI.secondaryText)
+              .contentTransition(.numericText())
+            }
+          }
+          .frame(maxWidth: .infinity).padding(.vertical, 12).contentShape(Rectangle())
+        }
+        .buttonStyle(BlitzRowButtonStyle(radius: 10))
+        .help("Open \(vital.title)")
+        .accessibilityLabel("\(vital.title), \(vital.value)")
+      }
+    }.padding(4).blitzCard(padding: 0)
+  }
+
+  // MARK: Attention
+
+  /// One card for what is wrong and the one thing to do about it; nothing when all is well.
+  @ViewBuilder private var attention: some View {
+    let capacity = memory.capacity
+    let fix = fix
+    if capacity.risk > .normal || fix != nil {
+      VStack(alignment: .leading, spacing: 0) {
+        if capacity.risk > .normal {
+          Button {
+            navigation.review(capacity)
+            openWindow.dashboard()
+          } label: {
+            HStack(spacing: 12) {
+              BlitzIconTile(
+                symbol: capacity.limit == .disk ? "internaldrive.fill" : "memorychip.fill",
+                tone: capacity.risk.tone, size: 28)
+              VStack(alignment: .leading, spacing: 2) {
+                Text(capacity.title).font(BlitzType.rowTitle).foregroundStyle(BlitzUI.primaryText)
+                Text(
+                  capacity.limit == .disk
+                    ? "Free up space before large downloads or builds."
+                    : "Quit what you are not using before starting new work."
+                )
+                .font(BlitzType.caption).foregroundStyle(BlitzUI.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+              }
+              Spacer(minLength: 4)
+              BlitzChevron()
+            }
+            .padding(12).contentShape(Rectangle())
+          }
+          .buttonStyle(BlitzRowButtonStyle(radius: 12))
+          .help(capacity.reviewTitle)
+        } else {
+          BlitzGroupLabel(title: "Suggested").padding(.horizontal, 12).padding(.top, 12)
+        }
+        if let fix {
+          if capacity.risk > .normal { BlitzRowDivider(leading: 12) }
+          fixRow(fix)
         }
       }.blitzCard(padding: 0)
-    }
-  }
-
-  private func resourceRow(_ vital: MacVital) -> some View {
-    Button {
-      open(vital.page)
-    } label: {
-      HStack(spacing: 12) {
-        BlitzIconTile(symbol: vital.page.tileSymbol, tone: .muted, size: 26)
-        VStack(alignment: .leading, spacing: 6) {
-          HStack(alignment: .firstTextBaseline) {
-            Text(vital.title).font(BlitzType.body).foregroundStyle(BlitzUI.secondaryText)
-            Spacer(minLength: 8)
-            Text(vital.compactValue).font(BlitzNumberFont.value(15)).monospacedDigit()
-              .foregroundStyle(vital.alertColor ?? BlitzUI.primaryText)
-              .contentTransition(.numericText())
-          }
-          visual(vital)
-        }
-        Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold))
-          .foregroundStyle(BlitzUI.tertiaryText)
-      }
-      .padding(.horizontal, 12).padding(.vertical, 10).contentShape(Rectangle())
-    }.buttonStyle(BlitzRowButtonStyle(radius: 0)).help("Open \(vital.title)")
-  }
-
-  @ViewBuilder private func visual(_ vital: MacVital) -> some View {
-    let ink = vital.alertColor ?? BlitzPalette.data
-    switch vital.page {
-    case .cpu:
-      ResourcePlot(
-        samples: monitor.resourceSamples, kind: .cpu, color: ink, seconds: 120
-      ).frame(height: 20)
-    case .memory:
-      SegmentedBar(
-        segments: [.init(id: "used", color: ink, fraction: snapshot.ramUsedRatio)],
-        height: 4)
-    default:
-      SegmentedBar(
-        segments: [.init(id: "used", color: ink, fraction: snapshot.diskUsedRatio)],
-        height: 4)
     }
   }
 
@@ -224,21 +232,18 @@ struct BlitzTrayView: View {
   }
 
   private func fixRow(_ fix: Fix) -> some View {
-    VStack(alignment: .leading, spacing: 8) {
-      BlitzGroupLabel(title: "Suggested").padding(.leading, 4)
-      HStack(spacing: 12) {
-        BlitzIconTile(symbol: fix.symbol, tone: .muted, size: 26)
-        VStack(alignment: .leading, spacing: 2) {
-          Text(fix.title).font(BlitzType.rowTitle).lineLimit(1).truncationMode(.middle)
-          Text(fix.detail).font(BlitzType.caption).foregroundStyle(BlitzUI.secondaryText)
-            .lineLimit(1)
-        }
-        Spacer(minLength: 8)
-        Button(action: fix.perform) {
-          Label(fix.actionTitle, systemImage: fix.actionSymbol)
-        }.blitzButton(.accent).controlSize(.small).fixedSize()
-      }.padding(12).blitzCard(padding: 0)
-    }
+    HStack(spacing: 12) {
+      BlitzIconTile(symbol: fix.symbol, tone: .muted, size: 28)
+      VStack(alignment: .leading, spacing: 2) {
+        Text(fix.title).font(BlitzType.rowTitle).lineLimit(1).truncationMode(.middle)
+        Text(fix.detail).font(BlitzType.caption).foregroundStyle(BlitzUI.secondaryText)
+          .lineLimit(1)
+      }
+      Spacer(minLength: 8)
+      Button(action: fix.perform) {
+        Label(fix.actionTitle, systemImage: fix.actionSymbol)
+      }.blitzButton(.accent).controlSize(.small).fixedSize()
+    }.padding(12)
   }
 
   // MARK: Top consumers
@@ -271,18 +276,18 @@ struct BlitzTrayView: View {
           .frame(width: 20)
       }.blitzButton(.secondary).help("Emergency controls · ⌃⌥⌘R")
         .accessibilityLabel("Emergency controls")
-      Button {
-        open(.recovery)
-      } label: {
-        HStack(spacing: 6) {
-          Text("Revive apps")
-          if recovery.attentionCount > 0 {
+      if recovery.attentionCount > 0 {
+        Button {
+          open(.recovery)
+        } label: {
+          HStack(spacing: 6) {
+            Text("Revive apps")
             BlitzCountBadge(
               count: recovery.attentionCount,
               label: "\(recovery.attentionCount) apps need attention")
-          }
-        }.frame(maxWidth: .infinity)
-      }.blitzButton(.secondary)
+          }.frame(maxWidth: .infinity)
+        }.blitzButton(.secondary)
+      }
       Button {
         open(.overview)
       } label: {
@@ -325,12 +330,9 @@ private struct TrayConsumerRow: View {
                   .foregroundStyle(BlitzUI.supportingText)
               }
             }
-            SegmentedBar(
-              segments: [
-                .init(
-                  id: "share", color: BlitzPalette.data,
-                  fraction: total == 0 ? 0 : Double(consumer.memoryBytes) / Double(total))
-              ], height: 3)
+            BlitzMeter(
+              fraction: total == 0 ? 0 : Double(consumer.memoryBytes) / Double(total),
+              tone: .muted, height: 3)
           }
         }.contentShape(Rectangle())
       }.buttonStyle(.plain).help("Open Memory")

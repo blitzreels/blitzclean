@@ -8,6 +8,8 @@ protocol AppUpdateDriving: AnyObject {
   var onReadinessChange: (() -> Void)? { get set }
   func start() throws
   func checkForUpdates()
+  /// Checks without showing anything; a found update surfaces in the menu bar and tray.
+  func checkForUpdatesInBackground()
 }
 
 /// Sparkle-backed updates for signed release builds. Development builds carry no feed key and stay unavailable.
@@ -91,7 +93,8 @@ final class AppUpdateController: NSObject, ObservableObject {
   var detail: String {
     switch status {
     case .idle:
-      return automaticChecks ? "Checks once a day." : "Automatic checks are off."
+      return automaticChecks
+        ? "Checks when BlitzClean opens and once a day." : "Automatic checks are off."
     case .checking: return "Looking for a newer version…"
     case .upToDate: return "BlitzClean \(AppBrand.version) is the latest version."
     case .available(let version): return "BlitzClean \(version) is available."
@@ -119,6 +122,10 @@ final class AppUpdateController: NSObject, ObservableObject {
       try driver.start()
       self.driver = driver
       automaticChecks = driver.automaticallyChecksForUpdates
+      if automaticChecks {
+        status = .checking
+        driver.checkForUpdatesInBackground()
+      }
     } catch {
       status = .failed(error.localizedDescription)
     }
@@ -197,6 +204,7 @@ private final class SparkleUpdateDriver: AppUpdateDriving {
 
   func start() throws { try controller.updater.start() }
   func checkForUpdates() { controller.checkForUpdates(nil) }
+  func checkForUpdatesInBackground() { controller.updater.checkForUpdatesInBackground() }
 }
 
 extension AppUpdateController: SPUUpdaterDelegate, @preconcurrency SPUStandardUserDriverDelegate {

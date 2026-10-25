@@ -98,7 +98,7 @@ struct DevProcess: Identifiable, Equatable, Sendable {
       return "~"
     }
 
-    return URL(fileURLWithPath: workingDirectory).lastPathComponent
+    return PathName.last(workingDirectory)
   }
 }
 
@@ -258,7 +258,7 @@ enum DevProcessClassifier {
   }
 
   private static func scriptName(_ tokens: [String]) -> String? {
-    if URL(fileURLWithPath: tokens[0]).lastPathComponent == "java" {
+    if PathName.last(tokens[0]) == "java" {
       return javaMainName(tokens)
     }
 

@@ -27,7 +27,7 @@ struct LargeFileItem: Equatable, Identifiable, Sendable {
   let identity: TrashIdentity
 
   var id: String { path }
-  var name: String { URL(fileURLWithPath: path).lastPathComponent }
+  var name: String { PathName.last(path) }
 }
 
 struct LargeFileScanRequest: Sendable {

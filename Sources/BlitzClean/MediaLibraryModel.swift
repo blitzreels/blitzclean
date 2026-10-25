@@ -78,7 +78,7 @@ final class MediaLibraryModel: ObservableObject {
         exports.insert(result, at: 0)
         exports = Array(exports.prefix(100))
         status =
-          "Saved \(URL(fileURLWithPath: result.output).lastPathComponent). "
+          "Saved \(PathName.last(result.output)). "
           + "\(ByteText.full(UInt64(result.inputBytes))) → \(ByteText.full(UInt64(result.outputBytes)))."
           + (result.outputBytes >= result.inputBytes ? " Output is larger than the source." : "")
         do {

@@ -29,7 +29,7 @@ struct ResourceConsumer: Identifiable, Equatable, Sendable {
   /// The AI thread behind an AI session; absent for other kinds.
   let threadID: String?
 
-  var project: String? { directory.map { URL(fileURLWithPath: $0).lastPathComponent } }
+  var project: String? { directory.map { PathName.last($0) } }
   var canSignal: Bool { kind == .aiSession || kind == .workload }
 }
 
@@ -68,7 +68,7 @@ enum ResourceConsumers {
         case .system: "macOS services"
         case .app: first.bundleApp ?? first.name
         default:
-          first.directory.map { "\(first.name) · \(URL(fileURLWithPath: $0).lastPathComponent)" }
+          first.directory.map { "\(first.name) · \(PathName.last($0))" }
             ?? first.name
         }
       consumers.append(
@@ -191,8 +191,14 @@ enum SystemProcessNames {
     let detail: String
   }
 
-  static func describe(_ name: String) -> Description {
-    switch name {
+  struct Process {
+    let name: String
+    let executable: String
+  }
+
+  static func describe(_ process: Process) -> Description {
+    let name = process.name
+    return switch name {
     case "mds", "mds_stores", "mdworker", "mdworker_shared", "mdsync", "corespotlightd":
       .init(title: "Spotlight indexing", detail: "Indexes new files · finishes on its own")
     case "kernel_task":
@@ -221,9 +227,30 @@ enum SystemProcessNames {
     case "coreaudiod", "audiomxd":
       .init(title: "Audio", detail: "Plays and records sound")
     default:
-      name.localizedCaseInsensitiveContains("spotlight")
-        ? .init(title: "Spotlight", detail: "Indexes files and suggestions · finishes on its own")
-        : .init(title: name, detail: "Part of macOS")
+      if name.localizedCaseInsensitiveContains("spotlight") {
+        .init(title: "Spotlight", detail: "Indexes files and suggestions · finishes on its own")
+      } else if isSystem(process.executable) {
+        .init(title: name, detail: "Part of macOS")
+      } else {
+        .init(
+          title: ResourceOwnership.appName(process.executable) ?? name, detail: location(process))
+      }
     }
+  }
+
+  /// Apple ships its processes on the sealed system volume; an unreadable path is treated as Apple's.
+  static func isSystem(_ executable: String) -> Bool {
+    executable.isEmpty
+      || ["/System/", "/usr/", "/bin/", "/sbin/", "/Library/Apple/"].contains {
+        executable.hasPrefix($0)
+      }
+  }
+
+  private static func location(_ process: Process) -> String {
+    if let bundle = ResourceOwnership.appBundle(process.executable) {
+      return "Runs without a window · \((bundle as NSString).abbreviatingWithTildeInPath)"
+    }
+    let folder = URL(fileURLWithPath: process.executable).deletingLastPathComponent().path
+    return "\(process.name) · \((folder as NSString).abbreviatingWithTildeInPath)"
   }
 }

@@ -19,15 +19,10 @@ struct DevProcessScanner: Sendable {
         return read.fallback
       }
     }
-    let records = value(
-      .init(
-        result: DeveloperCommand.run(
-          ProcessCommands.request(
-            .init(
-              executable: "/bin/ps",
-              arguments: ["-axo", "pid=,ppid=,uid=,pcpu=,rss=,etime=,tty=,args="]))
-        ).read(RawProcessParser.records), subject: "running processes", fallback: [])
-    ).filter { $0.userID == currentUserID && $0.processID != getpid() }
+    let records = NativeProcessRecords.shared.read().filter {
+      $0.userID == currentUserID && $0.processID != getpid()
+    }
+    if records.isEmpty { problems.append("Couldn't read running processes.") }
     let portsByProcess = value(
       .init(
         result: DeveloperCommand.run(ProcessCommands.listeningPorts)

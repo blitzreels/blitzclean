@@ -52,7 +52,7 @@ struct ProcessOrigin: Equatable, Sendable {
 
   static func read(_ processID: Int32) -> Self? {
     guard let info = bsdInfo(processID), let executable = path(processID) else { return nil }
-    let name = URL(fileURLWithPath: executable).lastPathComponent
+    let name = PathName.last(executable)
     var chain = [name]
     var parent = Int32(info.pbi_ppid)
     var launcher: String?
@@ -61,7 +61,7 @@ struct ProcessOrigin: Equatable, Sendable {
       guard parent > 1, let parentPath = path(parent), let parentInfo = bsdInfo(parent) else {
         break
       }
-      let parentName = URL(fileURLWithPath: parentPath).lastPathComponent
+      let parentName = PathName.last(parentPath)
       chain.append(parentName)
       if parentName != name {
         launcher = parentName
@@ -78,7 +78,7 @@ struct ProcessOrigin: Equatable, Sendable {
       match?.project
       ?? directory.flatMap { path in
         path == "/" || path == NSHomeDirectory()
-          ? nil : URL(fileURLWithPath: path).lastPathComponent
+          ? nil : PathName.last(path)
       }
     return .init(
       tool: match?.tool ?? known[name], project: project, launcher: launcher,

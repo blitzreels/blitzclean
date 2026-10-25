@@ -149,7 +149,7 @@ enum WorkspaceCatalog {
       let preference =
         input.preferences.first { $0.directory == directory }
         ?? WorkspacePreference(
-          directory: directory, name: URL(fileURLWithPath: directory).lastPathComponent,
+          directory: directory, name: PathName.last(directory),
           keepRunning: false, startCommand: nil)
       return WorkspaceProject(
         directory: directory, preference: preference,

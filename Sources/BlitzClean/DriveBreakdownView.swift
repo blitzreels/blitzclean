@@ -137,10 +137,12 @@ struct DriveBreakdownView: View {
         }
       }
       if model.isScanning {
-        HStack(spacing: 8) {
-          ProgressView().controlSize(.small)
+        VStack(alignment: .leading, spacing: 8) {
           Text("Measuring the whole drive · \(model.visited.formatted()) files checked")
-        }.font(BlitzType.caption).foregroundStyle(BlitzUI.secondaryText).monospacedDigit()
+            .font(BlitzType.caption).foregroundStyle(BlitzUI.secondaryText).monospacedDigit()
+            .contentTransition(.numericText())
+          BlitzProgressBar(fraction: nil, height: 3)
+        }
       } else if let date = model.breakdown?.scannedAt {
         Text("Measured \(date.formatted(.relative(presentation: .named)))")
           .font(BlitzType.caption).foregroundStyle(BlitzUI.secondaryText)
@@ -363,14 +365,20 @@ private struct DriveBar: View {
   let total: UInt64
   let onSelect: (DriveGroup) -> Void
   @State private var hovered: DriveGroup?
+  @State private var grown = false
 
   var body: some View {
     GeometryReader { geometry in
       HStack(spacing: 1) {
         ForEach(bands, id: \.group) { band in
-          Rectangle().fill(band.group.color)
+          Rectangle()
+            .fill(
+              LinearGradient(
+                colors: [band.group.color, band.group.color.opacity(0.78)], startPoint: .top,
+                endPoint: .bottom)
+            )
             .opacity(hovered == nil || hovered == band.group ? 1 : 0.45)
-            .frame(width: max(2, geometry.size.width * fraction(band.bytes)))
+            .frame(width: max(2, geometry.size.width * fraction(band.bytes) * (grown ? 1 : 0)))
             .contentShape(Rectangle())
             .onHover { hovered = $0 ? band.group : (hovered == band.group ? nil : hovered) }
             .onTapGesture { onSelect(band.group) }
@@ -381,7 +389,8 @@ private struct DriveBar: View {
         .background(Color.white.opacity(0.07))
         .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
         .animation(.easeOut(duration: 0.15), value: hovered)
-    }.frame(height: 14).blitzPointingHand()
+    }.frame(height: 18).blitzPointingHand()
+      .onAppear { withAnimation(.spring(response: 0.8, dampingFraction: 0.86)) { grown = true } }
       .accessibilityElement(children: .ignore)
       .accessibilityLabel(
         bands.map { "\($0.group.title) \(ByteText.compact($0.bytes))" }.joined(separator: ", "))

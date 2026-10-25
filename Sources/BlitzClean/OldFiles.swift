@@ -39,7 +39,7 @@ struct OldFileItem: Codable, Equatable, Identifiable, Sendable {
   let inode: UInt64
 
   var id: String { path }
-  var name: String { URL(fileURLWithPath: path).lastPathComponent }
+  var name: String { PathName.last(path) }
 }
 
 struct OldFileScanRequest: Sendable {

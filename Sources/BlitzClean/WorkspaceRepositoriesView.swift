@@ -73,7 +73,7 @@ extension WorkspaceProjectsView {
           Text(worktree.checkout?.branch ?? "detached HEAD")
             .font(.system(size: 13, weight: .medium, design: .monospaced)).lineLimit(1)
           if !worktree.isPrimary {
-            Text(URL(fileURLWithPath: worktree.path).lastPathComponent).font(BlitzType.caption)
+            Text(PathName.last(worktree.path)).font(BlitzType.caption)
               .foregroundStyle(BlitzUI.tertiaryText).lineLimit(1).truncationMode(.middle)
           }
           if let checkout = worktree.checkout { gitState(checkout) }

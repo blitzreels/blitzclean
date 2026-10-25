@@ -211,16 +211,52 @@ struct MemoryIncidentHistory: Codable, Sendable {
   }
 }
 
+/// The full history is rewritten only once an hour and at quit; each event in between appends one line
+/// to a journal beside it. Rewriting 2 MB every minute had macOS flag BlitzClean for disk writes.
 actor MemoryIncidentStore {
   let url: URL
 
   init(url: URL) { self.url = url }
 
+  nonisolated static func journal(_ url: URL) -> URL {
+    url.appendingPathExtension("log")
+  }
+
   func load() -> MemoryIncidentHistory {
-    guard let data = try? Data(contentsOf: url), data.count <= 8 * 1_024 * 1_024,
-      let history = try? JSONDecoder().decode(MemoryIncidentHistory.self, from: data)
-    else { return MemoryIncidentHistory() }
+    var history = MemoryIncidentHistory()
+    if let data = try? Data(contentsOf: url), data.count <= 8 * 1_024 * 1_024,
+      let saved = try? JSONDecoder().decode(MemoryIncidentHistory.self, from: data)
+    {
+      history = saved
+    }
+    guard let journal = try? Data(contentsOf: Self.journal(url)), journal.count <= 8 * 1_024 * 1_024
+    else { return history }
+    var ids = Set(history.events.map(\.id))
+    for line in journal.split(separator: UInt8(ascii: "\n")) {
+      guard let event = try? JSONDecoder().decode(MemoryIncident.self, from: Data(line)),
+        ids.insert(event.id).inserted
+      else { continue }
+      history.append(event)
+    }
     return history
+  }
+
+  func append(_ event: MemoryIncident) throws {
+    var line = try JSONEncoder().encode(event)
+    line.append(UInt8(ascii: "\n"))
+    let journal = Self.journal(url)
+    if !FileManager.default.fileExists(atPath: journal.path) {
+      try FileManager.default.createDirectory(
+        at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+      guard
+        FileManager.default.createFile(
+          atPath: journal.path, contents: nil, attributes: [.posixPermissions: 0o600])
+      else { throw CocoaError(.fileWriteUnknown) }
+    }
+    let handle = try FileHandle(forWritingTo: journal)
+    defer { try? handle.close() }
+    try handle.seekToEnd()
+    try handle.write(contentsOf: line)
   }
 
   func save(_ history: MemoryIncidentHistory) throws {
@@ -232,7 +268,7 @@ actor MemoryIncidentStore {
     let url: URL
   }
 
-  /// Synchronous so the last minutes survive a quit.
+  /// Synchronous so the last minutes survive a quit. The journal is folded in, so it starts empty.
   nonisolated static func write(_ input: WriteInput) throws {
     try FileManager.default.createDirectory(
       at: input.url.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -240,5 +276,6 @@ actor MemoryIncidentStore {
     try data.write(to: input.url, options: .atomic)
     try FileManager.default.setAttributes(
       [.posixPermissions: 0o600], ofItemAtPath: input.url.path)
+    try? FileManager.default.removeItem(at: journal(input.url))
   }
 }

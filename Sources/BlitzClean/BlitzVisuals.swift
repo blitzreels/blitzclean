@@ -1,17 +1,5 @@
 import SwiftUI
 
-/// Chart colors. Data is drawn in one neutral ink; only warning and critical readings take a color,
-/// so color always means something needs attention (October 24 request: fewer colors).
-enum BlitzPalette {
-  static let data = Color.white.opacity(0.82)
-  static let good = BlitzUI.mint
-
-  /// The ink for a reading: neutral while it is fine, the tone's color when it needs attention.
-  static func ink(_ tone: BlitzStatusTone) -> Color {
-    tone == .warning || tone == .critical ? tone.color : data
-  }
-}
-
 enum BlitzNumberFont {
   /// Large figures use the rounded face, as Activity and Battery settings do.
   static func value(_ size: CGFloat) -> Font {
@@ -30,12 +18,24 @@ struct BlitzIconTile: View {
 
   var body: some View {
     let shape = RoundedRectangle(cornerRadius: size * 0.26, style: .continuous)
+    let base = tinted || tone == .good ? tone.color : Color.white
     shape
-      .fill(tinted ? tone.color.opacity(0.14) : Color.white.opacity(0.06))
-      .overlay(shape.strokeBorder(Color.white.opacity(0.08), lineWidth: 0.5))
+      .fill(
+        LinearGradient(
+          colors: [base.opacity(tinted ? 0.24 : 0.11), base.opacity(tinted ? 0.10 : 0.04)],
+          startPoint: .top, endPoint: .bottom)
+      )
+      .overlay(
+        shape.strokeBorder(
+          LinearGradient(
+            colors: [Color.white.opacity(0.16), Color.white.opacity(0.03)], startPoint: .top,
+            endPoint: .bottom), lineWidth: 0.75)
+      )
       .overlay(
         Image(systemName: symbol).font(.system(size: size * 0.46, weight: .medium))
-          .foregroundStyle(tinted || tone == .good ? tone.color : BlitzUI.supportingText)
+          .symbolRenderingMode(.hierarchical)
+          .foregroundStyle(tinted || tone == .good ? tone.color : BlitzUI.primaryText)
+          .shadow(color: tinted || tone == .good ? tone.color.opacity(0.5) : .clear, radius: 4)
       )
       .frame(width: size, height: size)
       .accessibilityHidden(true)

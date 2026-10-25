@@ -12,6 +12,7 @@ struct MemoryControlView: View {
   @State private var pending: PendingProcessAction?
   @State private var appResult: String?
   @StateObject private var forceQuit = ForceQuitModel()
+  @StateObject private var background = BackgroundLoadModel()
 
   private static let rowLimit = 10
 
@@ -36,27 +37,29 @@ struct MemoryControlView: View {
         quittableApps: commands.quittableApps, now: .now))
     return ScrollView {
       VStack(alignment: .leading, spacing: 24) {
+        let verdict = verdict(idle)
         ResourceVerdictCard(
-          verdict: verdict(idle), symbol: "memorychip.fill",
+          verdict: verdict, gauge: monitor.snapshot.ramUsedRatio,
           message: appResult ?? processes.threadMessage
             ?? processes.consumerMessage ?? model.statusMessage
         ) {
-          VStack(spacing: 14) {
+          VStack(alignment: .leading, spacing: 16) {
+            MemoryComposition(
+              total: monitor.snapshot.ramTotal, available: monitor.snapshot.ramAvailable,
+              compressed: model.sample?.compressed, swap: model.sample?.swapUsed,
+              tone: verdict.tone)
             HStack {
+              BlitzGroupLabel(title: "History")
               Spacer()
               HistoryRangePicker(seconds: $seconds)
             }
             ResourcePlot(
-              samples: monitor.resourceSamples, kind: .memory, color: BlitzPalette.data,
-              seconds: seconds
-            ).frame(height: 90)
-            HStack(spacing: 24) {
-              stat("Free", ByteText.compact(monitor.snapshot.ramAvailable))
-              stat("On disk (swap)", model.sample?.swapUsed.map(ByteText.compact) ?? "—")
-              stat("Compressed", model.sample.map { ByteText.compact($0.compressed) } ?? "—")
-            }
+              samples: monitor.resourceSamples, kind: .memory, color: verdict.tone.meterColor,
+              seconds: seconds, isDetailed: true
+            ).frame(height: 130)
           }
         }
+        PausedBuildsSection(processes: processes)
         HStack {
           BlitzSegmentedPicker(
             title: "Memory breakdown", options: MemoryListingMode.allCases,
@@ -83,6 +86,8 @@ struct MemoryControlView: View {
             else { return nil }
             return .init(title: commands.stopTitle(consumer)) { commands.stop(consumer) }
           })
+        BackgroundLoadSection(
+          model: background, resources: processes.resources, onConfirm: { pending = $0 })
         pressureSection
       }.padding(BlitzUI.pagePadding)
     }
@@ -173,14 +178,6 @@ struct MemoryControlView: View {
     name.count > 22 ? String(name.prefix(21)) + "…" : name
   }
 
-  private func stat(_ title: String, _ value: String) -> some View {
-    HStack {
-      Text(title).font(BlitzType.body).foregroundStyle(BlitzUI.secondaryText)
-      Spacer()
-      Text(value).font(BlitzType.label).monospacedDigit()
-    }.frame(maxWidth: .infinity, alignment: .leading)
-  }
-
   // MARK: List
 
   @ViewBuilder private var detachedButton: some View {
@@ -220,6 +217,7 @@ struct MemoryControlView: View {
             activity: processes.activity,
             isBackground: processes.backgrounded.contains(consumer.id),
             thread: consumer.threadID.flatMap { threads[$0] },
+            share: Double(consumer.memoryBytes) / Double(max(1, monitor.snapshot.ramTotal)),
             onConfirm: { pending = $0 }, onForceQuitApp: forceQuitApp)
           if consumer.id != visible.last?.id { BlitzRowDivider(leading: 56) }
         }
@@ -366,6 +364,62 @@ extension MemoryRisk {
     case .growing: .working
     case .warning: .warning
     case .critical: .critical
+    }
+  }
+}
+
+/// What the memory is doing right now: apps, compressed and free as one bar, with what spilled to disk.
+struct MemoryComposition: View {
+  let total: UInt64
+  let available: UInt64
+  let compressed: UInt64?
+  let swap: UInt64?
+  let tone: BlitzStatusTone
+
+  private struct Part: Identifiable {
+    let id: String
+    let color: Color
+    let bytes: UInt64
+  }
+
+  private var parts: [Part] {
+    let free = min(total, available)
+    let squeezed = min(compressed ?? 0, total - free)
+    let ink = tone.meterColor
+    return [
+      .init(id: "Apps", color: ink, bytes: total - free - squeezed),
+      .init(id: "Compressed", color: ink.opacity(0.45), bytes: squeezed),
+      .init(id: "Free", color: Color.white.opacity(0.16), bytes: free),
+    ]
+  }
+
+  var body: some View {
+    let parts = parts
+    VStack(alignment: .leading, spacing: 12) {
+      SegmentedBar(
+        segments: parts.map {
+          .init(
+            id: $0.id, color: $0.color, fraction: total > 0 ? Double($0.bytes) / Double(total) : 0)
+        }, height: 10
+      )
+      .animation(.spring(response: 0.5, dampingFraction: 0.9), value: available)
+      HStack(spacing: 18) {
+        ForEach(parts) { part in
+          HStack(spacing: 6) {
+            RoundedRectangle(cornerRadius: 2).fill(part.color).frame(width: 8, height: 8)
+            Text(part.id).font(BlitzType.caption).foregroundStyle(BlitzUI.secondaryText)
+            Text(ByteText.compact(part.bytes)).font(BlitzType.captionEmphasis).monospacedDigit()
+              .contentTransition(.numericText())
+          }
+        }
+        Spacer(minLength: 0)
+        if let swap, swap > 0 {
+          Label("\(ByteText.compact(swap)) moved to disk", systemImage: "arrow.down.to.line")
+            .font(BlitzType.captionEmphasis).monospacedDigit()
+            .foregroundStyle(swap >= total / 4 ? BlitzUI.warning : BlitzUI.secondaryText)
+            .help("Memory macOS moved to disk (swap). Reading it back is slow.")
+        }
+      }
     }
   }
 }

@@ -555,3 +555,39 @@ has Not needed (quiet) beside Allow…. A skipped permission leaves the list and
 shrinks to one caption line, "Not needed: …", with Ask again. Skips persist in `permissions.skipped`;
 a permission granted later no longer counts as skipped. Features that need the permission keep their own
 inline state, so skipping never hides why something is unavailable.
+
+## 2026-10-25 · Background load and build brake
+
+The Mac restarted after agent typechecks and dev servers filled memory, while login services, duplicated
+tool servers and a CI virtual machine held several GB nobody had started on purpose. Memory now lists that
+load, and Settings adds "Pause builds before memory runs out", on by default, covering agent builds too.
+
+## 2026-10-25 · Background priority, stuck pauses and restart reports
+
+Builds and agents' scripts now run at background priority so apps keep the performance cores, and the brake
+pauses a fast-growing build before macOS warns. A paused build keeps its memory, so after two minutes of
+short memory Stop becomes its main action, on Memory and on Overview. After a restart caused by memory, Overview
+names what held it, read from the panic report before macOS deletes it.
+
+
+## 2026-10-25 · Visual data and motion
+
+The user found the app not visual enough and asked for great charts, progress bars and a snappier feel. Calm
+color stays (state colors only, one mint button per view), but every reading now has a picture: ring gauges
+on Overview and on the Memory and CPU verdicts, sidebar and row meters, Memory's composition bar, history
+charts with percent gridlines, a latest-value dot and a hover readout, and moving progress bars instead of
+scan spinners. Fine readings draw mint rather than gray, so a healthy Mac reads as healthy. Overview gets a
+compact vitals row back above the problem cards; the October 24 problems-first layout stays below it. CPU's
+verdict now uses the sidebar and tray thresholds, and the Overview disk card now uses the 30 GB reserve like
+the menu bar instead of a percentage, so no two places color the same reading differently.
+
+The tray said the same thing twice (an issue card, then a separate suggestion) and drew each resource
+differently. It now leads with three ring gauges, merges the problem and its fix into one card, and shows
+Revive apps only when an app needs it.
+
+## 2026-10-25 · App icon in the menu bar and launch update checks
+
+The user asked for a menu bar icon like BlitzRecorder's and for new versions to be found automatically. The
+menu bar now shows the color app icon instead of the monochrome mark, with one status dot (attention or
+update ready) replacing the warning triangle. Updates are checked at every launch as well as daily, as
+BlitzRecorder does.

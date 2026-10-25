@@ -156,7 +156,7 @@ enum RepoGrouping {
         ?? (common.hasSuffix("/.git") ? String(common.dropLast(5)) : active[0].path)
       let activePaths = Set(active.map(\.path))
       return RepoGroup(
-        commonDirectory: common, name: URL(fileURLWithPath: primary).lastPathComponent,
+        commonDirectory: common, name: PathName.last(primary),
         primaryPath: primary,
         active: active.sorted {
           if $0.isPrimary != $1.isPrimary { return $0.isPrimary }
@@ -264,7 +264,7 @@ final class RepoWorkspaceModel: ObservableObject {
         checkouts[folder] = result.checkouts[folder]
       }
       let failure = result.failures.sorted { $0.key < $1.key }.first.map {
-        "Couldn't read Git state for \(URL(fileURLWithPath: $0.key).lastPathComponent): \($0.value)."
+        "Couldn't read Git state for \(PathName.last($0.key)): \($0.value)."
       }
       if failure != message { message = failure }
       if checkouts != self.checkouts { self.checkouts = checkouts }

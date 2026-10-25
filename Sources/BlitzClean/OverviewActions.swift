@@ -8,6 +8,8 @@ enum OverviewFix {
   case pause(ResourceConsumer)
   case quitAgents([AIThread])
   case open(CleanPage)
+  case dismissRestart(RestartReport)
+  case stopBuild(BuildBrakeEntry)
   case openDrive
   case openCleanup(StorageCleanupFocus)
 }
@@ -56,10 +58,18 @@ enum OverviewProblems {
     /// A program pinned at high CPU for minutes.
     let runaway: ResourceConsumer?
     let frozenApps: Int
+    /// The last restart nobody dismissed, from the kernel's panic report.
+    let restart: RestartReport?
+    /// Builds paused so long that memory can no longer release them.
+    let stuckBuilds: [BuildBrakeEntry]
   }
 
   static func make(_ input: Input) -> [OverviewProblem] {
-    order([disk(input), memory(input), agents(input), cpu(input), apps(input)].compactMap { $0 })
+    order(
+      [
+        restart(input), stuckBuild(input), disk(input), memory(input), agents(input), cpu(input),
+        apps(input),
+      ].compactMap { $0 })
   }
 
   /// The worst problem first; ties keep the order they were found in (disk, memory, agents, CPU, apps).
@@ -68,6 +78,39 @@ enum OverviewProblems {
       $0.element.urgency != $1.element.urgency
         ? $0.element.urgency > $1.element.urgency : $0.offset < $1.offset
     }.map(\.element)
+  }
+
+  private static func restart(_ input: Input) -> OverviewProblem? {
+    guard let report = input.restart else { return nil }
+    let kills =
+      report.memoryKills > 0
+      ? " macOS had already closed apps \(report.memoryKills) times in the hours before." : ""
+    let brake =
+      BuildBrakePolicy.enabled
+      ? " The build brake now pauses builds like these before memory runs out."
+      : " Turn on \"Pause builds before memory runs out\" in Settings to stop builds like these first."
+    return OverviewProblem(
+      id: "restart", symbol: "exclamationmark.arrow.triangle.2.circlepath", title: report.title,
+      detail: (report.memoryRanOut
+        ? "These held the most memory: \(report.summary)." : "\(report.reason).") + kills
+        + (report.memoryRanOut ? brake : ""),
+      urgency: 1, fixTitle: "Got It", fix: .dismissRestart(report),
+      includes: report.memoryRanOut ? "Kernel: \(report.reason)" : nil,
+      more: [.init(title: "See what uses memory now", fix: .open(.memory))])
+  }
+
+  private static func stuckBuild(_ input: Input) -> OverviewProblem? {
+    guard let entry = input.stuckBuilds.max(by: { $0.process.footprint < $1.process.footprint })
+    else { return nil }
+    let size = ByteText.compact(entry.process.footprint)
+    return OverviewProblem(
+      id: "stuck-build", symbol: "pause.circle",
+      title: "\(entry.process.label) is paused and holds \(size)",
+      detail:
+        "BlitzClean paused it before memory ran out. Memory is still short, so it can't resume. "
+        + "Stop frees its memory; whatever it was building is lost.",
+      urgency: 2, fixTitle: "Stop · \(size)", fix: .stopBuild(entry), includes: nil,
+      more: [.init(title: "Resume or stop on Memory", fix: .open(.memory))])
   }
 
   static func urgency(_ tone: BlitzStatusTone) -> Int {
@@ -79,10 +122,13 @@ enum OverviewProblems {
   }
 
   static func diskTone(_ input: Input) -> BlitzStatusTone {
-    let free = input.diskTotal == 0 ? 1 : Double(input.diskAvailable) / Double(input.diskTotal)
-    if free < 0.05 { return .critical }
-    if free < 0.15 { return .warning }
-    return .good
+    diskTone(available: input.diskAvailable, total: input.diskTotal)
+  }
+
+  /// The same rule as the menu bar and sidebar: free bytes against the 30 GB reserve, not a percentage.
+  static func diskTone(available: UInt64, total: UInt64) -> BlitzStatusTone {
+    let tone = BlitzStatusTone.forDisk(DiskCapacityInput(available: available, total: total))
+    return tone == .muted ? .good : tone
   }
 
   /// Rebuildable things deleted together with one confirmation: old listed simulators, caches and the Trash.

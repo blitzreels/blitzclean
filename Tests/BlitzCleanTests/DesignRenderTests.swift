@@ -28,11 +28,24 @@ struct DesignRenderTests {
     if apps.count > 3 { _ = await recovery.revive(apps[3]) }
     if apps.count > 4 { _ = await recovery.revive(apps[4]) }
 
+    let restarts = RestartReportModel()
+    restarts.record([
+      RestartReport(
+        id: "render", date: .now.addingTimeInterval(-1_200), memoryRanOut: true,
+        reason: "watchdog timeout: no checkins from watchdogd in 91 seconds",
+        residentBytes: 71_000_000_000,
+        top: [
+          .init(name: "node", bytes: 17_500_000_000, startedBy: "Claude Code"),
+          .init(name: "tsc", bytes: 15_500_000_000, startedBy: "Claude Code"),
+          .init(name: "tsc", bytes: 10_700_000_000, startedBy: "Claude Code"),
+        ], memoryKills: 2)
+    ])
     let navigation = CleanNavigation(TestDefaults("navigation").defaults)
     let services = DashboardServices(
       recovery: recovery, permissions: PermissionsModel(), docker: DockerStorageModel(),
       folders: FolderExplorerModel(),
-      launchAtLogin: LaunchAtLoginController(), updates: AppUpdateController { _ in nil })
+      launchAtLogin: LaunchAtLoginController(), updates: AppUpdateController { _ in nil },
+      restarts: restarts)
     let processes = DevProcessModel()
     processes.refresh()
     for _ in 0..<40 where processes.threads.isEmpty {
@@ -72,6 +85,19 @@ struct DesignRenderTests {
       .background(BlitzUI.canvasBackground).environment(\.colorScheme, .dark),
       to: directory.appendingPathComponent("Storage drive.png"),
       size: .init(width: 1080, height: 3600))
+    let background = BackgroundLoadModel()
+    try await write(
+      BackgroundLoadSection(model: background, resources: processes.resources, onConfirm: { _ in })
+        .padding(BlitzUI.pagePadding).frame(maxHeight: .infinity, alignment: .top)
+        .background(BlitzUI.canvasBackground).environment(\.colorScheme, .dark),
+      to: directory.appendingPathComponent("Memory background load.png"), wait: .seconds(6),
+      size: .init(width: 1080, height: 900))
+    try await write(
+      MemoryGuardControls(model: memory).padding(BlitzUI.pagePadding)
+        .frame(maxHeight: .infinity, alignment: .top)
+        .background(BlitzUI.canvasBackground).environment(\.colorScheme, .dark),
+      to: directory.appendingPathComponent("Settings memory guard.png"),
+      size: .init(width: 1080, height: 360))
   }
 
   private func write(

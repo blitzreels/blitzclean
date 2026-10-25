@@ -63,7 +63,7 @@ struct CacheCandidate: Identifiable, Sendable {
   let rule: CacheRule
   let tree: CacheTree
   var id: String { path }
-  var name: String { URL(fileURLWithPath: path).lastPathComponent }
+  var name: String { PathName.last(path) }
   var displayName: String {
     let parts = name.split(separator: "--", maxSplits: 1)
     if parts.count == 2, parts[0].count == 64, parts[0].allSatisfy(\.isHexDigit) {

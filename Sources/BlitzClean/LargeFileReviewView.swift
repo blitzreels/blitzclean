@@ -109,7 +109,7 @@ struct LargeFileReviewView: View {
               ForEach(media.exports.prefix(10)) { export in
                 HStack {
                   VStack(alignment: .leading, spacing: 4) {
-                    Text(URL(fileURLWithPath: export.output).lastPathComponent).font(
+                    Text(PathName.last(export.output)).font(
                       .system(size: 12))
                     Text("\(export.kind) · \(ByteText.full(UInt64(export.outputBytes)))")
                       .font(.system(size: 10)).foregroundStyle(.secondary)

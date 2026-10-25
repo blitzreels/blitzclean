@@ -104,6 +104,8 @@ struct ResourceHistory: Sendable {
 struct LiveCPUProcess: Identifiable, Sendable {
   let id: Int32
   let name: String
+  /// Path of the running binary; empty when macOS did not report it.
+  let executable: String
   let percent: Double
 }
 
@@ -115,6 +117,7 @@ struct CPUCounter: Sendable {
   var footprint: UInt64 = 0
   /// App name for processes inside an app bundle, otherwise the process name.
   var group: String = ""
+  var executable: String = ""
 }
 
 struct CPUInterval: Sendable {
@@ -142,7 +145,8 @@ enum CPUProcessReader {
       let percent =
         Double(current.ticks - old.ticks) * input.nanosecondsPerTick
         / (input.seconds * 1_000_000_000) * 100
-      return LiveCPUProcess(id: current.id, name: current.name, percent: percent)
+      return LiveCPUProcess(
+        id: current.id, name: current.name, executable: current.executable, percent: percent)
     }.filter { $0.percent >= 0.1 }.sorted { $0.percent > $1.percent }
   }
 
@@ -206,7 +210,8 @@ enum CPUProcessReader {
       return CPUCounter(
         id: pid, name: identity.name, start: start,
         ticks: info.ri_user_time &+ info.ri_system_time,
-        footprint: info.ri_phys_footprint, group: identity.group)
+        footprint: info.ri_phys_footprint, group: identity.group,
+        executable: identity.executable)
     }
   }
 
@@ -223,7 +228,7 @@ enum CPUProcessReader {
       ? String(decoding: path.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
       : ""
     return .init(
-      name: processName,
+      name: processName, executable: executable,
       group: group(
         .init(
           executable: executable, name: processName,
@@ -240,6 +245,7 @@ final class ProcessGroupCache: @unchecked Sendable {
 
   struct Identity {
     let name: String
+    let executable: String
     let group: String
   }
 

@@ -21,11 +21,11 @@ explaining why to [DESIGN-HISTORY.md](DESIGN-HISTORY.md). Never leave two rules 
 - Status: `BlitzStatusTone` is the only status type (`good`, `working`, `warning`, `critical`, `muted`).
   `MemoryRisk.tone` maps memory risk to it; rising memory stays gray.
 - Color: `BlitzUI.mint` marks the recommended action and finished fixes; `BlitzUI.warning` and
-  `BlitzUI.recordRed` mark warning and critical state. Charts draw in `BlitzPalette.data` and switch to
-  `BlitzPalette.ink(tone)` only at warning or critical. The drive bar is the one categorical chart
-  (`DriveGroup.color`, muted hues of equal lightness, gray for Trash and system).
-- Icons: `BlitzIconTile(symbol:tone:size:)` is the only icon square: neutral fill and glyph, tinted at warning
-  or critical, mint glyph for good. Real app icons (`ApplicationIcon`) and project logos (`ProjectIcon`) are
+  `BlitzUI.recordRed` mark warning and critical state. Readings draw in `BlitzStatusTone.meterColor`: mint
+  while fine, neutral ink for plain amounts (row meters), amber or red at warning or critical. The drive bar
+  is the one categorical chart (`DriveGroup.color`, muted hues of equal lightness, gray for Trash and system).
+- Icons: `BlitzIconTile(symbol:tone:size:)` is the only icon square: a soft top-lit gradient and hierarchical
+  glyph, neutral by default, tinted with a faint glow at warning or critical, mint for good. Real app icons (`ApplicationIcon`) and project logos (`ProjectIcon`) are
   used where they exist; the sidebar uses plain outline glyphs that fill when selected.
 
 ## Components
@@ -42,6 +42,11 @@ explaining why to [DESIGN-HISTORY.md](DESIGN-HISTORY.md). Never leave two rules 
   `BlitzCheckboxStyle`, `BlitzSearchField`. Menus draw inside the window through `blitzDropdownHost`.
 - Status: `BlitzStatusDot`, `BlitzStatusBadge`, `BlitzStatusLine`. Badges report exceptions only (Paused,
   Not responding, Detached); normal states get none. Empty states are one line of text.
+- Data: `BlitzRingGauge` for a share of a whole (sweeps in, eases on change), `BlitzMeter` for capsule meters
+  (sidebar, rows), `BlitzSparkline` for a short trend, `ResourcePlot` for history (percent gridlines,
+  latest-value dot, hover readout on page charts), `SegmentedBar` for composition, `BlitzProgressBar` for long
+  work (a filling bar when the share is known, a moving sheen when not; no bare spinner for a scan). Changing
+  numbers use `.contentTransition(.numericText())`. Page switches cross-fade in 0.16 s.
 - Confirmation: `BlitzConfirmation` for irreversible or bulk actions: a floating card (max 560 points wide,
   14-point corners, shadow) at the bottom of the page with the action's icon in red, the items as a table of
   name and size, one note on what stays, Cancel and a solid red confirm button (`.destructive`). Callers write
@@ -50,17 +55,29 @@ explaining why to [DESIGN-HISTORY.md](DESIGN-HISTORY.md). Never leave two rules 
 ## Pages
 
 - **Sidebar**: Overview, Memory, CPU, Storage, Revive apps, Projects (⌘1–⌘6), Settings. Each item has one gray
-  caption (free disk, free RAM and its top app…) and a status dot at warning or critical.
-- **Overview**: only problems, one card each, worst first (`OverviewProblems.order`). A card states the problem,
+  caption (free disk, free RAM and its top app…) and a status dot at warning or critical. Memory, CPU and
+  Storage add a 3-point meter of how full they are.
+- **Overview**: a row of three vitals (Memory, CPU, Disk: ring gauge with the percentage, one caption, a
+  15-minute sparkline or a meter), each opening its page; below it only problems, one card each, worst first (`OverviewProblems.order`). A card states the problem,
   one sentence on why it matters and what the button does, one large button with the amount ("Free up to
   10 GB", "Close idle · 9 GB", "See agents", "Pause", "Revive"), a quiet line naming what it touches and a few
   quiet links for things that need a look first. Free deletes old iOS simulators the simulator service lists,
   caches and the Trash together after one confirmation; personal files are never part of it. While deleting,
   the button becomes a progress bar with the current item, the space freed so far and the free space now. When
-  nothing is wrong one card says so. The deep checkup is a quiet link until it runs.
-- **Memory / CPU**: a verdict card (state, the numbers that explain it, one recommended fix) above one ranked
-  list of things a person recognizes (an AI session, an app with its helpers, `node · project`). Memory rows
+  nothing is wrong one card says so. A restart caused by memory running out gets a card naming what held
+  the memory (from the kernel panic report) with Got It, and a build paused too long gets Stop · size. The deep checkup is a quiet link until it runs.
+- **Memory / CPU**: a verdict card (a ring gauge of the share in use, state, the numbers that explain it, one
+  recommended fix; Memory then shows apps, compressed and free as one bar with what moved to disk; both end
+  with the history chart) above one ranked list of things a person recognizes (an AI session, an app with its
+  helpers, `node · project`). Each row's value has a meter: share of RAM, or share of the busiest row for CPU.
+  CPU tone follows `MenuBarTones.cpu` everywhere (warning from 75%); disk tone follows the 30 GB reserve
+  (`DiskSpacePolicy`) everywhere, Overview's disk card included. Memory rows
   Stop or Quit; CPU rows Pause. Menus hold Run in background, Force Quit (confirmed) and Show in Finder.
+  Above the list, Paused to protect memory shows builds the brake paused, each with Resume, or Stop once
+  memory has stayed short for two minutes (Stop is the only action that frees a paused build's memory).
+  Memory ends with Background load: login services that hold memory or keep failing (Turn Off, confirmed;
+  the plist moves to `LaunchAgents/Disabled by BlitzClean`), virtual machines, tool servers every agent
+  session starts again, memory cleaner apps (Quit) and apps macOS flagged for 30 GB+ of disk writes.
 - **Storage**: Drive (whole disk by logical groups, each unit with one action matching its consequence),
   Browse (folders and largest files, Move to Trash or Delete permanently) and Cleanup. Data an owning app
   manages is shown with where to remove it. iOS downloads macOS protects are named, not offered.
@@ -71,9 +88,15 @@ explaining why to [DESIGN-HISTORY.md](DESIGN-HISTORY.md). Never leave two rules 
   or worse), then Repositories (one card per Git repository, one row per active worktree with branch, changes,
   agents, programs, ports, memory, Stop and agent Pause/Quit; idle worktrees folded), Other running folders,
   Leftover processes and Saved projects.
-- **Tray**: header with status dot, one issue row when capacity is at risk, Memory/CPU/Storage rows, one
-  suggested fix it can run, the three largest memory users. The dev build shows only its mark and DEV while the
-  released app runs.
+- **Tray**: header naming the worst state in a few words ("All good", "Memory is short", "1 app not
+  responding"), three ring gauges (Memory, CPU, Storage) that open their pages, one card holding the problem
+  and the one fix it can run (absent when nothing is wrong), the three largest memory users with meters, and a
+  footer of Emergency controls, Revive apps only while an app needs it, and Open BlitzClean.
+- **Menu bar**: the full-color app icon, as BlitzRecorder shows it, then the chosen readings. A dot on the
+  icon is amber or red while memory is at risk and mint while an update is ready. The dev build shows only its
+  icon and DEV while the released app runs.
+- **Updates**: Sparkle checks quietly at every launch and once a day, and installs on quit. A found update
+  shows as the menu bar dot and the tray's Update button; it never opens a window by itself.
 
 ## Safety
 

@@ -12,6 +12,7 @@ struct OverviewDashboard: View {
   @ObservedObject var drive: DriveBreakdownModel
   @ObservedObject var history: CleanupOverviewModel
   @ObservedObject var worktrees: DeveloperBrowserModel
+  @ObservedObject var restarts: RestartReportModel
   @Binding var pending: PendingProcessAction?
 
   private var commands: ConsumerCommands { .init(processes: processes, memory: memory) }
@@ -29,10 +30,10 @@ struct OverviewDashboard: View {
         }
       }
       if drive.isScanning {
-        HStack(spacing: 6) {
-          ProgressView().controlSize(.mini)
+        VStack(alignment: .leading, spacing: 6) {
           Text("Measuring your drive to find more space…").font(BlitzType.caption)
             .foregroundStyle(BlitzUI.tertiaryText)
+          BlitzProgressBar(fraction: nil, height: 3).frame(maxWidth: 260)
         }
       }
     }
@@ -151,7 +152,11 @@ struct OverviewDashboard: View {
         $0.kind != .system && !$0.isPaused && $0.canSignal
           && processes.activity.busy(.init(id: $0.id, now: .now)) >= ConsumerActivity.runawayAfter
       }.max { $0.cpuPercent < $1.cpuPercent },
-      frozenApps: recovery.attentionCount)
+      frozenApps: recovery.attentionCount, restart: restarts.current,
+      stuckBuilds: processes.brakePaused.filter {
+        Date.now.timeIntervalSince($0.pausedAt) >= BuildBrakePolicy.stuckAfter
+          && processes.pressure.risk >= .warning
+      })
   }
 
   private func perform(_ fix: OverviewFix) {
@@ -170,6 +175,8 @@ struct OverviewDashboard: View {
     case .quitAgents(let agents):
       for agent in agents { processes.stopThread(agent, force: false) }
     case .open(let page): navigation.page = page
+    case .dismissRestart(let report): restarts.dismiss(report)
+    case .stopBuild(let entry): processes.releaseBrake(.init(entry: entry, stop: true))
     case .openDrive: openDrive()
     case .openCleanup(let focus): openCleanup(focus)
     }

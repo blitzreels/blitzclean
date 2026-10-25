@@ -43,15 +43,38 @@ enum AppLifetime {
   }
 }
 
+/// Shows the dashboard only while its window is open. SwiftUI keeps a closed window's views alive and
+/// recomputed every page on each reading, which cost about a third of BlitzClean's idle CPU.
+struct DashboardWindowContent<Content: View>: View {
+  /// Starts closed: SwiftUI can build this view for a window that is never shown.
+  @State private var open = false
+  @ViewBuilder let content: () -> Content
+
+  var body: some View {
+    Group {
+      if open { content() } else { Color.clear }
+    }.background(DashboardWindowLifecycle(onChange: { open = $0 }))
+  }
+}
+
 struct DashboardWindowLifecycle: NSViewRepresentable {
+  /// Called with whether the window is open whenever that may have changed.
+  let onChange: (Bool) -> Void
+
   func makeNSView(context: Context) -> DashboardLifecycleView {
-    DashboardLifecycleView()
+    let view = DashboardLifecycleView()
+    view.onChange = onChange
+    return view
   }
 
-  func updateNSView(_ nsView: DashboardLifecycleView, context: Context) {}
+  func updateNSView(_ nsView: DashboardLifecycleView, context: Context) {
+    nsView.onChange = onChange
+  }
 }
 
 final class DashboardLifecycleView: NSView {
+  var onChange: ((Bool) -> Void)?
+
   override func viewDidMoveToWindow() {
     super.viewDidMoveToWindow()
     NotificationCenter.default.removeObserver(self)
@@ -59,9 +82,24 @@ final class DashboardLifecycleView: NSView {
     NotificationCenter.default.addObserver(
       self, selector: #selector(dashboardWillClose), name: NSWindow.willCloseNotification,
       object: window)
+    for name in [
+      NSWindow.didChangeOcclusionStateNotification, NSWindow.didBecomeKeyNotification,
+      NSWindow.didBecomeMainNotification,
+    ] {
+      NotificationCenter.default.addObserver(
+        self, selector: #selector(visibilityChanged), name: name, object: window)
+    }
+    visibilityChanged(Notification(name: NSWindow.didChangeOcclusionStateNotification))
+  }
+
+  @objc private func visibilityChanged(_ notification: Notification) {
+    guard let window else { return }
+    let visible = window.isVisible
+    DispatchQueue.main.async { [weak self] in self?.onChange?(visible) }
   }
 
   @objc private func dashboardWillClose(_ notification: Notification) {
     NSApp.setActivationPolicy(.accessory)
+    DispatchQueue.main.async { [weak self] in self?.onChange?(false) }
   }
 }

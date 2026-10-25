@@ -62,7 +62,7 @@ enum ResourceOwnership {
           owner = app
         }
         if owner == nil, let path = input.executables[current.processID] {
-          let name = URL(fileURLWithPath: path).lastPathComponent
+          let name = PathName.last(path)
           if name == "claude" { owner = "Claude Code" }
           if name == "codex" { owner = "Codex" }
         }
@@ -110,7 +110,7 @@ enum ResourceOwnership {
       return ResourceGroup(
         id: key,
         name: first.name, owner: first.owner,
-        project: first.directory.map { URL(fileURLWithPath: $0).lastPathComponent },
+        project: first.directory.map { PathName.last($0) },
         processCount: items.count, memoryBytes: items.compactMap(\.memoryBytes).reduce(0, +),
         unknownMemoryCount: items.filter { $0.memoryBytes == nil }.count)
     }.sorted { $0.memoryBytes > $1.memoryBytes }
@@ -118,12 +118,12 @@ enum ResourceOwnership {
 
   static func groupID(_ process: ResourceProcess) -> String {
     let key = [process.owner, process.directory ?? "", process.name].joined(separator: "\u{1F}")
-    return SHA256.hash(data: Data(key.utf8)).map { String(format: "%02x", $0) }.joined()
+    return GroupIDCache.shared.id(key)
   }
 
   /// The executable's name, except tools installed under a version folder, such as Claude Code's `versions/2.1.302`.
   static func label(_ executable: String) -> String {
-    let url = URL(fileURLWithPath: executable)
+    let url = URL(filePath: executable, directoryHint: .notDirectory)
     let name = url.lastPathComponent
     let parent = url.deletingLastPathComponent()
     guard parent.lastPathComponent == "versions", name.first?.isNumber == true else { return name }
@@ -131,8 +131,13 @@ enum ResourceOwnership {
   }
 
   static func appName(_ path: String) -> String? {
+    appBundle(path).map { PathName.last(String($0.dropLast(4))) }
+  }
+
+  /// The outermost `.app` bundle that contains `path`, such as `/Applications/Chrome.app`.
+  static func appBundle(_ path: String) -> String? {
     guard let range = path.range(of: ".app/") else { return nil }
-    return URL(fileURLWithPath: String(path[..<range.lowerBound])).lastPathComponent
+    return String(path[..<range.lowerBound]) + ".app"
   }
 }
 
@@ -145,5 +150,23 @@ enum ResourceSnapshotCache {
   static var recentGroups: [ResourceGroup]? {
     guard let scannedAt, Date.now.timeIntervalSince(scannedAt) < 30 else { return nil }
     return Array(groups.prefix(32))
+  }
+}
+
+/// Every scan hashes each process's owner, folder and name; the same few hundred keys repeat, so each is
+/// hashed once.
+final class GroupIDCache: @unchecked Sendable {
+  static let shared = GroupIDCache()
+  private let lock = NSLock()
+  private var ids: [String: String] = [:]
+
+  func id(_ key: String) -> String {
+    lock.lock()
+    defer { lock.unlock() }
+    if let id = ids[key] { return id }
+    if ids.count > 4_096 { ids.removeAll() }
+    let id = SHA256.hash(data: Data(key.utf8)).map { String(format: "%02x", $0) }.joined()
+    ids[key] = id
+    return id
   }
 }

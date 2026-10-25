@@ -51,7 +51,7 @@ enum ApplicationIconResolver {
       guard let url = application(name) else { return nil }
       path = url.path
     case .file(let value):
-      let name = URL(fileURLWithPath: value).lastPathComponent
+      let name = PathName.last(value)
       path = NSWorkspace.shared.urlForApplication(withBundleIdentifier: name)?.path ?? value
     case .storage(let value):
       if let owner = StorageOwner.forPath(value), let url = application(owner.rawValue) {

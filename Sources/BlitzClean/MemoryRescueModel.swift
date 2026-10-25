@@ -68,7 +68,7 @@ final class MemoryRescueModel: NSObject, ObservableObject {
   private var hasUnsavedHistory = false
   private var lastSavedAt = Date.distantPast
   /// Rewriting the history costs a full JSON encode, so routine samples batch into one write a minute.
-  private static let saveInterval: TimeInterval = 60
+  private static let saveInterval: TimeInterval = 3_600
   private var isSendingAlert = false
   private var lastPermissionCheck = Date.distantPast
   private var diskEvaluator = DiskRiskEvaluator()
@@ -207,12 +207,13 @@ final class MemoryRescueModel: NSObject, ObservableObject {
 
   /// Warns once a new agent session starts while memory has no room for it.
   func noteAgents(_ budget: AgentBudget) {
-    guard agentGate.shouldSend(.init(budget: budget, date: .now)), alertsEnabled else { return }
+    guard ActingCopy.current, agentGate.shouldSend(.init(budget: budget, date: .now)), alertsEnabled
+    else { return }
     Task { _ = await notifications.sendAgents(budget) }
   }
 
   private func sendAlertIfNeeded() {
-    guard ResourceSnapshotCache.pressure.risk == .normal,
+    guard ResourceSnapshotCache.pressure.risk == .normal, ActingCopy.current,
       alertsEnabled, notifications.authorized, !isSendingAlert
     else { return }
     var nextGate = alertGate
@@ -248,7 +249,7 @@ final class MemoryRescueModel: NSObject, ObservableObject {
   }
 
   private func sendDiskAlertIfNeeded() {
-    guard diskAlertsEnabled, notifications.authorized, !isSendingDiskAlert,
+    guard diskAlertsEnabled, ActingCopy.current, notifications.authorized, !isSendingDiskAlert,
       let assessment = diskAssessment
     else { return }
     var nextGate = diskAlertGate
@@ -408,7 +409,11 @@ final class MemoryRescueModel: NSObject, ObservableObject {
     incidents = history.events.reversed().filter { $0.kind != "sample" }
     lastRecordedAt = event.date
     hasUnsavedHistory = true
-    persistHistoryIfDue(urgent: input.kind == "pressure" && risk >= .critical)
+    if persists {
+      let store = store
+      Task { try? await store.append(event) }
+    }
+    persistHistoryIfDue(urgent: false)
   }
 
   private func persistHistoryIfDue(urgent: Bool) {

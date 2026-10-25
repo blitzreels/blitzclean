@@ -67,7 +67,7 @@ enum LeftoverProcessFinder {
         let path = input.executables[record.processID], path == identity.executable,
         eligibleExecutable(.init(path: path, apps: input.apps))
       else { return nil }
-      let name = URL(fileURLWithPath: path).lastPathComponent
+      let name = PathName.last(path)
       let directory = input.directories[record.processID].flatMap { $0 == "/" ? nil : $0 }
       if let directory,
         input.keptRunningRoots.contains(where: {
@@ -92,7 +92,14 @@ enum LeftoverProcessFinder {
   static func find(_ input: Input) -> Result<[LeftoverProcess], CommandReadError> {
     let candidates = candidates(input)
     guard !candidates.isEmpty else { return .success([]) }
-    return managedProcessIDs().map { jobs in candidates.filter { !jobs.contains($0.processID) } }
+    let newest =
+      candidates.map {
+        Double($0.identity.process.startSeconds)
+          + Double($0.identity.process.startMicroseconds) / 1_000_000
+      }.max() ?? 0
+    return recentManagedJobs(newestStart: newest).map { jobs in
+      candidates.filter { !jobs.processIDs.contains($0.processID) }
+    }
   }
 
   static func managedProcessIDs() -> Result<Set<Int32>, CommandReadError> {
@@ -102,6 +109,32 @@ enum LeftoverProcessFinder {
         maximumBytes: 1_024 * 1_024)
     ).read(launchdJobs)
   }
+
+  struct ManagedJobs {
+    let processIDs: Set<Int32>
+    let readAt: Date
+  }
+
+  /// The job list for scans, reused for a minute instead of starting `launchctl` on every scan, unless a
+  /// candidate started after it was read. Stopping a leftover still reads it fresh.
+  static func recentManagedJobs(newestStart: TimeInterval) -> Result<ManagedJobs, CommandReadError>
+  {
+    managedLock.lock()
+    defer { managedLock.unlock() }
+    if let managedCache, Date.now.timeIntervalSince(managedCache.readAt) < 60,
+      newestStart < managedCache.readAt.timeIntervalSince1970
+    {
+      return .success(managedCache)
+    }
+    return managedProcessIDs().map { ids in
+      let jobs = ManagedJobs(processIDs: ids, readAt: .now)
+      managedCache = jobs
+      return jobs
+    }
+  }
+
+  nonisolated(unsafe) private static var managedCache: ManagedJobs?
+  private static let managedLock = NSLock()
 
   static func launchdJobs(_ output: String) -> Set<Int32>? {
     let lines = output.split(whereSeparator: \.isNewline)
@@ -141,14 +174,14 @@ enum LeftoverProcessFinder {
     while let argument = remaining.next() {
       if argument == "-m", let module = remaining.next() { return "\(interpreter) \(module)" }
       if argument == "-jar", let jar = remaining.next() {
-        return "\(interpreter) \(URL(fileURLWithPath: jar).lastPathComponent)"
+        return "\(interpreter) \(PathName.last(jar))"
       }
       if takesValue.contains(argument) {
         _ = remaining.next()
         continue
       }
       if argument.hasPrefix("-") { continue }
-      let script = URL(fileURLWithPath: argument).lastPathComponent
+      let script = PathName.last(argument)
       let shown =
         interpreter == "java"
         ? (script.split(separator: ".").last.map(String.init) ?? script) : script
@@ -169,7 +202,7 @@ enum LeftoverProcessFinder {
 
   static func eligibleExecutable(_ input: ExecutableInput) -> Bool {
     guard !isSystemOrService(input.path),
-      !builtInHidden.contains(URL(fileURLWithPath: input.path).lastPathComponent)
+      !builtInHidden.contains(PathName.last(input.path))
     else { return false }
     guard let app = enclosingApp(input.path) else { return true }
     return !input.apps.bundlePaths.contains(app)

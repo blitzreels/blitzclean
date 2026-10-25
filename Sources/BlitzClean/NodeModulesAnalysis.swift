@@ -144,7 +144,7 @@ enum NodeModulesResolver {
       return "Trigger builds · \(rootName(request.projectRootPath))"
     case .project:
       guard let projectRootPath = request.projectRootPath else {
-        return URL(fileURLWithPath: request.immediateProjectPath).lastPathComponent
+        return PathName.last(request.immediateProjectPath)
       }
 
       let root = rootName(projectRootPath)
@@ -167,7 +167,7 @@ enum NodeModulesResolver {
       return "cache"
     }
 
-    return URL(fileURLWithPath: path).lastPathComponent
+    return PathName.last(path)
   }
 }
 

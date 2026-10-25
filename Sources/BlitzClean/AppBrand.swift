@@ -20,7 +20,6 @@ enum AppBrand {
     identifier?.hasPrefix(bundleIdentifier) == true
   }
   @MainActor static let icon = resourceImage("AppIcon.icns")
-  @MainActor static let mark = resourceImage("Mark.svg")
   @MainActor static let makerWordmark = resourceImage("BlitzReelsWordmark.png")
   static let repositoryURL = URL(string: "https://github.com/blitzreels/blitzclean")!
 

@@ -69,7 +69,7 @@ struct OverviewBuilderTests {
       idle: [], largest: nil, detachedAgents: [],
       agents: AgentBudget(
         sessions: fixture.sessions, memoryBytes: 0, room: 0, typicalBytes: 1, mix: []),
-      runaway: nil, frozenApps: fixture.frozen)
+      runaway: nil, frozenApps: fixture.frozen, restart: nil, stuckBuilds: [])
   }
 
   private var simulators: [DriveUnit] {

@@ -112,6 +112,7 @@ struct DashboardServices {
   let folders: FolderExplorerModel
   let launchAtLogin: LaunchAtLoginController
   let updates: AppUpdateController
+  let restarts: RestartReportModel
 }
 
 struct BlitzDashboardView: View {
@@ -138,7 +139,10 @@ struct BlitzDashboardView: View {
           Rectangle().fill(BlitzUI.separator).frame(height: 1)
         }
         pageContent
+          .id(navigation.page)
+          .transition(.opacity.combined(with: .offset(y: 6)))
       }.frame(maxWidth: .infinity, maxHeight: .infinity)
+        .animation(.easeOut(duration: 0.16), value: navigation.page)
         .background(BlitzUI.canvasBackground)
     }
     .ignoresSafeArea(.container, edges: .top)
@@ -172,7 +176,7 @@ struct BlitzDashboardView: View {
         monitor: monitor, memory: memory, repeats: storage.repeats, processes: processes,
         recovery: services.recovery, navigation: navigation, cleanup: cleanup,
         history: storage.overview, storage: storage, docker: services.docker, audit: audit,
-        drive: storage.drive, worktrees: developerBrowser)
+        drive: storage.drive, worktrees: developerBrowser, restarts: services.restarts)
     case .memory: MemoryControlView(monitor: monitor, model: memory, processes: processes)
     case .cpu: CPUControlView(monitor: monitor, processes: processes, memory: memory)
     case .storage:
@@ -221,6 +225,17 @@ private struct BlitzSidebar: View {
 
   private var selection: CleanPage { navigation.page }
 
+  /// How full the page's resource is, for the meter under its caption.
+  private func share(_ page: CleanPage) -> Double? {
+    let snapshot = monitor.snapshot
+    switch page {
+    case .memory: return snapshot.ramTotal > 0 ? snapshot.ramUsedRatio : nil
+    case .cpu: return snapshot.cpuUsage
+    case .storage: return snapshot.diskTotal > 0 ? snapshot.diskUsedRatio : nil
+    default: return nil
+    }
+  }
+
   var body: some View {
     VStack(alignment: .leading, spacing: 2) {
       Color.clear.frame(height: BlitzUI.toolbarHeight).contentShape(Rectangle())
@@ -259,6 +274,11 @@ private struct BlitzSidebar: View {
             Text(insight.text).font(BlitzType.caption).monospacedDigit().lineLimit(1)
               .foregroundStyle(BlitzUI.tertiaryText)
               .contentTransition(.numericText())
+            if let share = share(page) {
+              BlitzMeter(fraction: share, tone: insight.tone, height: 3)
+                .padding(.top, 3)
+                .opacity(selected ? 1 : 0.75)
+            }
           }
         }
         Spacer(minLength: 4)

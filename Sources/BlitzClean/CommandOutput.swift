@@ -33,7 +33,7 @@ struct CommandReadError: LocalizedError, Equatable, Sendable {
 extension CommandRunner.Request {
   /// The tool's short name for messages, such as "lsof" or "xcrun simctl".
   var name: String {
-    let tool = URL(fileURLWithPath: executable).lastPathComponent
+    let tool = PathName.last(executable)
     guard tool == "xcrun", let subcommand = arguments.first else { return tool }
     return tool + " " + subcommand
   }

@@ -162,7 +162,9 @@ struct MenuBarSizeTests {
   @Test
   func allMetricsFitACrowdedMenuBar() throws {
     let image = MenuBarLabelRenderer.image(
-      content: MenuBarHealthLabel(snapshot: .empty, risk: .critical).metrics, colored: true)
+      content: MenuBarHealthLabel(
+        snapshot: .empty, risk: .critical, updates: AppUpdateController { _ in nil }
+      ).metrics, colored: true)
     #expect(image.size.width > 20)
     #expect(image.size.width <= 180)
     #expect(image.size.height <= 24)

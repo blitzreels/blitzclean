@@ -25,7 +25,7 @@ enum EmergencyInventory {
         !identity.executable.contains("/BlitzClean.app/")
       else { continue }
       identities[pid] = identity
-      let name = URL(fileURLWithPath: identity.executable).lastPathComponent
+      let name = PathName.last(identity.executable)
       let arguments =
         name == "codex"
         ? AIThreadNames.processArguments(pid).joined(separator: " ") : identity.executable
@@ -59,7 +59,7 @@ enum EmergencyInventory {
     ]
     for record in records {
       guard !claimed.contains(record.processID), let identity = identities[record.processID],
-        runtimes.contains(URL(fileURLWithPath: identity.executable).lastPathComponent),
+        runtimes.contains(PathName.last(identity.executable)),
         !identity.executable.contains(".app/"),
         let directory = directories[record.processID], directory != "/",
         directory != FileManager.default.homeDirectoryForCurrentUser.path
@@ -67,7 +67,7 @@ enum EmergencyInventory {
       var root = record.processID
       var visited: Set<Int32> = []
       while let parent = tree.parents[root], let candidate = identities[parent],
-        runtimes.contains(URL(fileURLWithPath: candidate.executable).lastPathComponent),
+        runtimes.contains(PathName.last(candidate.executable)),
         !claimed.contains(parent), visited.insert(parent).inserted
       { root = parent }
       let ids = tree.descendants([root]).filter { identities[$0] != nil && !claimed.contains($0) }
@@ -75,7 +75,7 @@ enum EmergencyInventory {
       claimed.formUnion(ids)
       targets.append(
         .init(
-          id: "process-\(root)", name: URL(fileURLWithPath: directory).lastPathComponent,
+          id: "process-\(root)", name: PathName.last(directory),
           detail: "Local workload · PID \(root)", identities: ids.compactMap { identities[$0] },
           bytes: ids.reduce(0) { $0 + (footprints[$1] ?? 0) }, isSharedApp: false))
     }

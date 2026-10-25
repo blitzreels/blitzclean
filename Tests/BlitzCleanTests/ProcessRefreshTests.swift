@@ -13,7 +13,12 @@ struct ProcessRefreshTests {
     defer { listener.stop() }
     let model = DevProcessModel()
     try #require(
-      await eventually { model.processes.contains { $0.processID == listener.processID } })
+      await eventually {
+        if !model.processes.contains(where: { $0.processID == listener.processID }) {
+          model.refresh()
+        }
+        return model.processes.contains { $0.processID == listener.processID }
+      })
     let before = model.scannedAt
     listener.stop()
     #expect(await eventually { !model.processes.contains { $0.processID == listener.processID } })

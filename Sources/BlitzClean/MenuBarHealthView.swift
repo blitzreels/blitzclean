@@ -86,6 +86,7 @@ struct MenuBarHealthLabel: View {
   @EnvironmentObject private var navigation: CleanNavigation
   let snapshot: SystemSnapshot
   let risk: MemoryRisk
+  @ObservedObject var updates: AppUpdateController
 
   @AppStorage(MenuBarPreferenceKey.showHealth) private var showHealth = true
   @AppStorage(MenuBarPreferenceKey.showCPU) private var showCPU = true
@@ -95,46 +96,55 @@ struct MenuBarHealthLabel: View {
     .available
 
   var body: some View {
-    Image(nsImage: MenuBarLabelRenderer.image(content: metrics, colored: showHealth))
-      .accessibilityElement(children: .ignore)
-      .accessibilityLabel(accessibilityLabel)
-      .help(accessibilityLabel)
-      .task {
-        if let window = AppLaunch.initialWindow.consume() {
-          if let page = CleanPage.destination(for: window) { navigation.page = page }
-          openWindow.dashboard()
-        }
-      }
-      .onReceive(NotificationCenter.default.publisher(for: .openMemoryRescue)) { _ in
-        navigation.page = .memory
+    Image(
+      nsImage: MenuBarLabelRenderer.cached(
+        .init(
+          key:
+            "\(accessibilityLabel)|\(risk)|\(showHealth)|\(besideRelease)|\(updates.version ?? "")|\(NSApp?.effectiveAppearance.name.rawValue ?? "")",
+          content: { metrics }, colored: true))
+    )
+    .accessibilityElement(children: .ignore)
+    .accessibilityLabel(accessibilityLabel)
+    .help(accessibilityLabel)
+    .task {
+      if let window = AppLaunch.initialWindow.consume() {
+        if let page = CleanPage.destination(for: window) { navigation.page = page }
         openWindow.dashboard()
       }
-      .onReceive(NotificationCenter.default.publisher(for: .openProjects)) { _ in
-        navigation.page = .projects
-        openWindow.dashboard()
-      }
-      .onReceive(NotificationCenter.default.publisher(for: .openWorkspace)) { _ in
-        openWindow.dashboard()
-      }
-      .onReceive(NotificationCenter.default.publisher(for: .openAppRecovery)) { _ in
-        navigation.page = .recovery
-        openWindow.dashboard()
-      }
-      .onReceive(NotificationCenter.default.publisher(for: .openStorageReview)) { _ in
-        navigation.page = .storage
-        openWindow.dashboard()
-      }
+    }
+    .onReceive(NotificationCenter.default.publisher(for: .openMemoryRescue)) { _ in
+      navigation.page = .memory
+      openWindow.dashboard()
+    }
+    .onReceive(NotificationCenter.default.publisher(for: .openProjects)) { _ in
+      navigation.page = .projects
+      openWindow.dashboard()
+    }
+    .onReceive(NotificationCenter.default.publisher(for: .openWorkspace)) { _ in
+      openWindow.dashboard()
+    }
+    .onReceive(NotificationCenter.default.publisher(for: .openAppRecovery)) { _ in
+      navigation.page = .recovery
+      openWindow.dashboard()
+    }
+    .onReceive(NotificationCenter.default.publisher(for: .openStorageReview)) { _ in
+      navigation.page = .storage
+      openWindow.dashboard()
+    }
   }
 
   /// The dev build shrinks to its mark and a DEV tag while the released app runs, so the two never
   /// put the same readings side by side in the menu bar.
-  var metrics: some View {
-    let besideRelease =
-      AppBrand.isDevelopmentBuild
+  private var besideRelease: Bool {
+    AppBrand.isDevelopmentBuild
       && !NSRunningApplication.runningApplications(withBundleIdentifier: AppBrand.bundleIdentifier)
         .isEmpty
+  }
+
+  var metrics: some View {
+    let besideRelease = besideRelease
     return MenuBarMetrics(
-      snapshot: snapshot, risk: risk, showHealth: showHealth,
+      snapshot: snapshot, risk: risk, updateVersion: updates.version, showHealth: showHealth,
       showCPU: showCPU && !besideRelease, showMemory: showMemory && !besideRelease,
       showDisk: showDisk && !besideRelease, memoryDisplay: memoryDisplay)
   }
@@ -144,13 +154,16 @@ struct MenuBarHealthLabel: View {
       .init(
         snapshot: snapshot, showDisk: showDisk, showCPU: showCPU, showMemory: showMemory,
         memoryDisplay: memoryDisplay))
-    return "\(AppBrand.name), Mac \(snapshot.healthStatus.title). \(metrics)."
+    let update = updates.version.map { " Update \($0) is ready." } ?? ""
+    return "\(AppBrand.name), Mac \(snapshot.healthStatus.title). \(metrics).\(update)"
   }
 }
 
 struct MenuBarMetrics: View {
   let snapshot: SystemSnapshot
   let risk: MemoryRisk
+  /// A newer BlitzClean found by the updater, shown as a mint dot on the icon.
+  let updateVersion: String?
   let showHealth: Bool
   let showCPU: Bool
   let showMemory: Bool
@@ -159,16 +172,7 @@ struct MenuBarMetrics: View {
 
   var body: some View {
     HStack(spacing: 8) {
-      Group {
-        if risk > .normal {
-          Image(systemName: "exclamationmark.triangle.fill")
-        } else if let mark = AppBrand.mark {
-          Image(nsImage: mark).resizable().renderingMode(.template).frame(width: 18, height: 18)
-        } else {
-          Image(systemName: "bolt.fill")
-        }
-      }.font(.system(size: 12, weight: .semibold))
-        .foregroundStyle(showHealth && risk > .normal ? risk.tone.color : .primary)
+      MenuBarAppIcon(badge: badge)
       if AppBrand.isDevelopmentBuild {
         Text("DEV").font(.system(size: 9, weight: .bold)).tracking(0.4)
           .padding(.horizontal, 4).padding(.vertical, 1)
@@ -194,6 +198,33 @@ struct MenuBarMetrics: View {
     }.frame(height: 22)
   }
 
+  /// Attention outranks an update: amber or red while memory is at risk, mint while an update waits.
+  private var badge: Color? {
+    if risk > .normal { return showHealth ? risk.tone.color : BlitzUI.warning }
+    return updateVersion == nil ? nil : BlitzUI.mint
+  }
+}
+
+/// The app's own icon, as BlitzRecorder shows it, with an optional status dot in its corner.
+struct MenuBarAppIcon: View {
+  let badge: Color?
+
+  var body: some View {
+    Group {
+      if let icon = AppBrand.icon {
+        Image(nsImage: icon).resizable().interpolation(.high)
+      } else {
+        Image(systemName: "bolt.fill").font(.system(size: 12, weight: .semibold))
+      }
+    }.frame(width: 18, height: 18)
+      .overlay(alignment: .topTrailing) {
+        if let badge {
+          Circle().fill(badge).frame(width: 7, height: 7)
+            .overlay(Circle().strokeBorder(Color.black.opacity(0.55), lineWidth: 1))
+            .offset(x: 2, y: -1)
+        }
+      }
+  }
 }
 
 enum MenuBarTones {
@@ -233,6 +264,23 @@ private struct MenuBarMetric: View {
 
 @MainActor
 enum MenuBarLabelRenderer {
+  struct CachedRequest<Content: View> {
+    /// Everything the image shows; the same key reuses the last image.
+    let key: String
+    let content: () -> Content
+    let colored: Bool
+  }
+
+  @MainActor private static var last: (key: String, image: NSImage)?
+
+  /// The label redraws whenever any reading changes, though most changes round to the same text.
+  @MainActor static func cached<Content: View>(_ request: CachedRequest<Content>) -> NSImage {
+    if let last, last.key == request.key { return last.image }
+    let image = image(content: request.content(), colored: request.colored)
+    last = (request.key, image)
+    return image
+  }
+
   static func image(content: some View, colored: Bool) -> NSImage {
     let isDark = NSApp?.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
     let renderer = ImageRenderer(

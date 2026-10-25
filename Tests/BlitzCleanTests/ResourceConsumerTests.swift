@@ -98,8 +98,19 @@ struct ResourceConsumerTests {
   }
 
   @Test func macOSProcessesGetPlainNames() {
-    #expect(SystemProcessNames.describe("mds_stores").title == "Spotlight indexing")
-    #expect(SystemProcessNames.describe("something").title == "something")
+    #expect(
+      SystemProcessNames.describe(
+        .init(name: "mds_stores", executable: "/System/Library/mds_stores")
+      ).title == "Spotlight indexing")
+    let apple = SystemProcessNames.describe(.init(name: "something", executable: "/usr/libexec/x"))
+    #expect(apple.title == "something")
+    #expect(apple.detail == "Part of macOS")
+    let other = SystemProcessNames.describe(
+      .init(
+        name: "BlitzClean",
+        executable: "/Users/me/Applications/BlitzClean.app/Contents/MacOS/BlitzClean"))
+    #expect(other.detail != "Part of macOS")
+    #expect(other.detail.hasSuffix("BlitzClean.app"))
   }
 }
 

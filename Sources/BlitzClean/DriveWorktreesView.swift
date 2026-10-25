@@ -69,7 +69,7 @@ struct DriveWorktreesSection: View {
       $0.replacingOccurrences(of: "refs/heads/", with: "")
     }
     let repository = worktree.worktree.map {
-      URL(fileURLWithPath: $0.repository).lastPathComponent
+      PathName.last($0.repository)
     }
     return HStack(spacing: 12) {
       Image(systemName: "arrow.triangle.branch").font(.system(size: 13, weight: .medium))

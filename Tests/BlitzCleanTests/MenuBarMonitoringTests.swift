@@ -61,7 +61,7 @@ struct MenuBarMonitoringTests {
   @Test func allMemoryModesFitAndRenderWhenRequested() throws {
     for display in MenuBarMemoryDisplay.allCases {
       let metrics = MenuBarMetrics(
-        snapshot: snapshot, risk: .normal, showHealth: true, showCPU: true,
+        snapshot: snapshot, risk: .normal, updateVersion: nil, showHealth: true, showCPU: true,
         showMemory: true, showDisk: true, memoryDisplay: display)
       let image = MenuBarLabelRenderer.image(content: metrics, colored: true)
       #expect(image.size.width > 100)

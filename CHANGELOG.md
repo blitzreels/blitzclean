@@ -1,5 +1,44 @@
 # Changelog
 
+## Unreleased
+
+### Memory protection
+
+- Settings adds "Pause builds before memory runs out", on by default. It pauses a fast-growing build, agent
+  builds included, before macOS starts warning.
+- Builds and agents' scripts run at background priority, so apps keep the performance cores.
+- A paused build keeps its memory. After two minutes of short memory, Stop becomes its main action on Memory
+  and on Overview.
+- Memory lists background load nobody started on purpose: login services that hold memory or keep failing
+  (Turn Off), virtual machines, tool servers every agent session starts again, memory cleaner apps, and apps
+  macOS flagged for heavy disk writes.
+- After a restart caused by memory running out, Overview names what held the memory, read from the panic
+  report before macOS deletes it.
+
+### Design
+
+- Overview opens with Memory, CPU and Disk as ring gauges with a 15-minute trend; each opens its page.
+- Memory and CPU show a live ring gauge, Memory splits RAM into apps, compressed and free, and the history
+  charts gain percent gridlines, a dot on the latest value and a readout on hover.
+- Every row on Memory and CPU, and every resource in the sidebar, has a small meter.
+- Drive scans show a moving progress bar instead of a spinner, the drive bar grows in, numbers roll when they
+  change, and pages cross-fade.
+- The menu bar panel leads with three ring gauges and puts the problem and its fix in one card. Revive apps
+  appears only while an app needs it.
+- The menu bar shows the color app icon, with an amber or red dot when memory is at risk and a mint dot when
+  an update is ready.
+
+### Updates
+
+- BlitzClean checks for updates every time it opens, as well as once a day, and installs them on quit.
+
+### Fixes
+
+- Storage showed the free space from its last scan instead of the free space now.
+- Processes outside Apple's system folders were labeled "Part of macOS"; they now show their app and location.
+- CPU and disk use the same thresholds everywhere, so the sidebar, Overview, the CPU page and the menu bar
+  never color the same reading differently.
+
 ## 1.6.0 - 2026-10-24
 
 ### Overview

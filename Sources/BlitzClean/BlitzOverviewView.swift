@@ -14,6 +14,7 @@ struct BlitzOverviewView: View {
   @ObservedObject var audit: DashboardAuditModel
   @ObservedObject var drive: DriveBreakdownModel
   @ObservedObject var worktrees: DeveloperBrowserModel
+  @ObservedObject var restarts: RestartReportModel
   @State private var pending: PendingProcessAction?
 
   private var models: DashboardAuditModel.Models {
@@ -38,10 +39,11 @@ struct BlitzOverviewView: View {
         largeBytes: storage.largeFiles.totalBytes))
     ScrollView {
       VStack(alignment: .leading, spacing: 24) {
+        OverviewVitals(monitor: monitor, memory: memory, navigation: navigation)
         OverviewDashboard(
           monitor: monitor, memory: memory, processes: processes, recovery: recovery,
           navigation: navigation, storage: storage, drive: drive, history: history,
-          worktrees: worktrees,
+          worktrees: worktrees, restarts: restarts,
           pending: $pending)
         if audit.progress.startedAt == nil {
           Button("Run a full checkup") { audit.check(models) }

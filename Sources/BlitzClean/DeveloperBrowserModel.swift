@@ -48,7 +48,7 @@ final class DeveloperBrowserModel: ObservableObject {
         let listed = GitWorktrees.list(repository)
         if case .failure(let error) = listed {
           unreadable.append(
-            "Couldn't read worktrees in \(URL(fileURLWithPath: repository).lastPathComponent): \(error.reason)."
+            "Couldn't read worktrees in \(PathName.last(repository)): \(error.reason)."
           )
         }
         guard let records = try? listed.get(), records.count > 1,
@@ -60,7 +60,7 @@ final class DeveloperBrowserModel: ObservableObject {
         for record in records.dropFirst().prefix(40) {
           if Task.isCancelled || allArtifacts.count >= 150 { break }
           await self?.setProgress(
-            "Checking \(URL(fileURLWithPath: record.path).lastPathComponent)…")
+            "Checking \(PathName.last(record.path))…")
           let assessment = GitWorktrees.inspect(
             .init(
               repository: repository, record: record, base: base,

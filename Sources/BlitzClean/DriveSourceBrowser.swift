@@ -31,7 +31,7 @@ struct DriveSourceBrowser: View {
                 isSelected: roots == Set(drive.scanRoots), action: { open(drive.scanRoots) })
             }
             BlitzChip(
-              title: customFolder.map { URL(fileURLWithPath: $0).lastPathComponent }
+              title: customFolder.map { PathName.last($0) }
                 ?? "Folder…",
               symbol: "folder", isSelected: customFolder != nil, action: chooseFolder)
           }.blitzChipGroup()
