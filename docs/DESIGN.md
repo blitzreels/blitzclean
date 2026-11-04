@@ -78,7 +78,7 @@ explaining why to [DESIGN-HISTORY.md](DESIGN-HISTORY.md). Never leave two rules 
   Memory ends with Background load: login services that hold memory or keep failing (Turn Off, confirmed;
   the plist moves to `LaunchAgents/Disabled by BlitzClean`), virtual machines, tool servers every agent
   session starts again, memory cleaner apps (Quit) and apps macOS flagged for 30 GB+ of disk writes.
-- **Storage**: Cleanup sections start collapsed. Their headers show the summary and expand on click; a route to a section opens it. Drive (whole disk by logical groups, each unit with one action matching its consequence),
+- **Storage**: Cleanup sections and the Drive page’s Git worktrees section start collapsed. Their headers show the summary and expand on click; a route to a section opens it. Drive (whole disk by logical groups, each unit with one action matching its consequence),
   Browse (folders and largest files, Move to Trash or Delete permanently) and Cleanup. Data an owning app
   manages is shown with where to remove it. iOS downloads macOS protects are named, not offered.
 - **Revive apps**: regular apps plus any app that is paused or not responding; never a BlitzClean copy. Hangs
