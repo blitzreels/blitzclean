@@ -87,7 +87,8 @@ struct BlitzConfirmation: View {
   var reviewItems: [ConfirmationContent.Item]? = nil
 
   var body: some View {
-    let content = reviewItems.map { ConfirmationContent(items: $0, note: message) }
+    let content =
+      reviewItems.map { ConfirmationContent(items: $0, note: message) }
       ?? ConfirmationContent.parse(message)
     VStack(alignment: .leading, spacing: 14) {
       HStack(alignment: .center, spacing: 12) {
@@ -97,7 +98,7 @@ struct BlitzConfirmation: View {
         Text(title).font(.system(size: 15, weight: .semibold))
         Spacer(minLength: 0)
       }
-      if !content.items.isEmpty { itemList(content.items, wrapNames: reviewItems != nil) }
+      if !content.items.isEmpty { itemList(content.items) }
       if !content.note.isEmpty {
         Text(content.note).font(BlitzType.body).foregroundStyle(BlitzUI.secondaryText)
           .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
@@ -123,13 +124,12 @@ struct BlitzConfirmation: View {
     .transition(.move(edge: .bottom).combined(with: .opacity))
   }
 
-  private func itemList(_ items: [ConfirmationContent.Item], wrapNames: Bool) -> some View {
+  private func itemList(_ items: [ConfirmationContent.Item]) -> some View {
     let rows = VStack(spacing: 0) {
       ForEach(Array(items.enumerated()), id: \.offset) { index, item in
         HStack(alignment: .top, spacing: 12) {
           Text(item.name).font(BlitzType.callout).foregroundStyle(BlitzUI.supportingText)
-            .lineLimit(wrapNames ? nil : 1).truncationMode(.middle)
-            .textSelection(.enabled)
+            .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
           Spacer(minLength: 8)
           if let value = item.value {
             Text(value).font(BlitzType.numeric).foregroundStyle(BlitzUI.secondaryText)
@@ -138,19 +138,14 @@ struct BlitzConfirmation: View {
         if index < items.count - 1 { BlitzRowDivider(leading: 12) }
       }
     }
-    return Group {
-      if items.count > 6 {
-        ScrollView { rows }.frame(height: 6 * 30)
-      } else {
-        rows
+    return ScrollView { rows }
+      .frame(height: min(CGFloat(items.count) * 46, 180))
+      .background(
+        Color.white.opacity(0.03), in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+      )
+      .overlay {
+        RoundedRectangle(cornerRadius: 10, style: .continuous)
+          .strokeBorder(BlitzUI.separator, lineWidth: 1).allowsHitTesting(false)
       }
-    }
-    .background(
-      Color.white.opacity(0.03), in: RoundedRectangle(cornerRadius: 10, style: .continuous)
-    )
-    .overlay {
-      RoundedRectangle(cornerRadius: 10, style: .continuous)
-        .strokeBorder(BlitzUI.separator, lineWidth: 1).allowsHitTesting(false)
-    }
   }
 }

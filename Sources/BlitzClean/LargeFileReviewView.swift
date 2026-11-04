@@ -167,7 +167,8 @@ struct LargeFileReviewView: View {
             let files = pendingTrash
             pendingTrash = []
             trash(files)
-          }, onCancel: { pendingTrash = [] })
+          }, onCancel: { pendingTrash = [] },
+          reviewItems: pendingTrash.map { .init(name: $0.path, value: ByteText.full($0.bytes)) })
       }
     }
   }
