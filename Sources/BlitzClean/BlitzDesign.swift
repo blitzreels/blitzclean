@@ -2,9 +2,9 @@ import AppKit
 import SwiftUI
 
 enum BlitzType {
-  static let largeTitle = Font.system(size: 24, weight: .semibold)
-  static let title = Font.system(size: 17, weight: .semibold)
-  static let headline = Font.system(size: 15, weight: .semibold)
+  static let largeTitle = Font.system(size: 21, weight: .semibold)
+  static let title = Font.system(size: 16, weight: .semibold)
+  static let headline = Font.system(size: 14, weight: .semibold)
   static let section = Font.system(size: 13, weight: .semibold)
   static let callout = Font.system(size: 13)
   static let rowTitle = Font.system(size: 13, weight: .medium)
@@ -39,10 +39,10 @@ enum BlitzUI {
   static let tertiaryText = Color.white.opacity(0.46)
   static let controlRadius: CGFloat = 8
   static let cardRadius: CGFloat = 12
-  static let pagePadding: CGFloat = 28
-  static let toolbarHeight: CGFloat = 52
+  static let pagePadding: CGFloat = 20
+  static let toolbarHeight: CGFloat = 46
   static let titleFont = BlitzType.largeTitle
-  static let valueFont = Font.system(size: 32, weight: .medium)
+  static let valueFont = Font.system(size: 28, weight: .medium)
 
   static func sectionLabel(_ title: String) -> some View {
     Text(title).font(BlitzType.captionEmphasis).foregroundStyle(secondaryText).lineLimit(1)
@@ -58,10 +58,10 @@ enum BlitzButtonEmphasis {
 enum BlitzControlMetrics {
   static func height(_ size: ControlSize) -> CGFloat {
     switch size {
-    case .mini: 24
-    case .small: 28
-    case .large, .extraLarge: 40
-    default: 34
+    case .mini: 22
+    case .small: 26
+    case .large, .extraLarge: 36
+    default: 30
     }
   }
 
@@ -570,8 +570,8 @@ private struct BlitzRowModifier: ViewModifier {
 
   func body(content: Content) -> some View {
     content
-      .padding(.horizontal, 16).padding(.vertical, 10)
-      .frame(maxWidth: .infinity, minHeight: 56, alignment: .leading)
+      .padding(.horizontal, 12).padding(.vertical, 8)
+      .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
       .background(hovered ? BlitzUI.quietFill : .clear)
       .contentShape(Rectangle())
       .onHover { hovered = $0 }

@@ -13,16 +13,11 @@ struct BlitzStorageView: View {
 
   var body: some View {
     VStack(spacing: 0) {
-      HStack(spacing: 16) {
-        BlitzSegmentedPicker(
-          title: "Storage", options: CleanStoragePage.allCases,
-          selection: $navigation.storagePage, label: { $0.rawValue }
-        ).frame(maxWidth: 320)
-        Spacer()
+      StoragePageHeader(selection: $navigation.storagePage) {
         if navigation.storagePage != .drive {
-          StorageCapacityMeter(snapshot: monitor.snapshot, drive: selectedDrive).frame(width: 200)
+          StorageCapacityMeter(snapshot: monitor.snapshot, drive: selectedDrive).frame(width: 160)
         }
-      }.padding(.horizontal, BlitzUI.pagePadding).padding(.vertical, 12)
+      }
       Rectangle().fill(BlitzUI.separator).frame(height: 1)
       switch navigation.storagePage {
       case .drive:
@@ -143,6 +138,7 @@ struct StorageCleanupView: View {
   @StateObject private var simulators = SimulatorDevicesModel()
   @State private var repeatPending: [RemovedEntry] = []
   @State private var worktreePending: DeveloperArtifact?
+  @State private var expandedSections: Set<String> = []
 
   private var cacheDetail: String {
     if caches.scannedAt == nil { return "Known caches and old diagnostic reports" }
@@ -206,12 +202,17 @@ struct StorageCleanupView: View {
       }
       .task(id: storage.cleanupFocus) {
         guard let focus = storage.cleanupFocus else { return }
+        expandedSections.formUnion(focus.sectionTitles)
         await Task.yield()
         proxy.scrollTo(focus, anchor: .top)
         storage.cleanupFocus = nil
       }
     }
-    .task { storage.scanCleanupIfNeeded() }
+    .environment(\.cleanupExpandedSections, $expandedSections)
+    .task {
+      storage.scanCleanupIfNeeded()
+      if caches.scannedAt == nil { caches.scan() }
+    }
     .safeAreaInset(edge: .bottom, spacing: 0) {
       if let artifact = worktreePending {
         BlitzConfirmation(
@@ -295,36 +296,110 @@ private struct CleanupScanBar: View {
   }
 }
 
+private struct CleanupExpandedSectionsKey: EnvironmentKey {
+  static let defaultValue: Binding<Set<String>>? = nil
+}
+
+extension EnvironmentValues {
+  var cleanupExpandedSections: Binding<Set<String>>? {
+    get { self[CleanupExpandedSectionsKey.self] }
+    set { self[CleanupExpandedSectionsKey.self] = newValue }
+  }
+}
+
+extension StorageCleanupFocus {
+  var sectionTitles: Set<String> {
+    switch self {
+    case .oldFiles: ["Old downloads and screenshots"]
+    case .largeFiles: ["Large personal files"]
+    case .caches: ["System Data cleanup"]
+    case .simulators: ["Simulated devices"]
+    case .regrown: ["Removed before"]
+    case .projects: ["Dependencies", "Build caches", "Simulator cache"]
+    case .docker: ["Docker"]
+    }
+  }
+}
+
 struct BlitzStorageSection<Content: View>: View {
   let title: String
   let symbol: String
   let detail: String
-  /// Total for the section, absent until it has been measured.
   let trailing: String?
-  /// False when the section has nothing to act on; the header alone states that.
   let showsContent: Bool
   @ViewBuilder let content: Content
+  @Environment(\.cleanupExpandedSections) private var expandedSections
+
+  private var isExpanded: Bool {
+    expandedSections?.wrappedValue.contains(title) ?? true
+  }
 
   var body: some View {
     VStack(spacing: 0) {
-      HStack(spacing: 12) {
-        Image(systemName: symbol).frame(width: 24).foregroundStyle(BlitzUI.secondaryText)
-        VStack(alignment: .leading, spacing: 4) {
-          Text(title).font(BlitzType.headline)
-          Text(detail).font(BlitzType.body).foregroundStyle(BlitzUI.secondaryText)
-            .lineLimit(1).truncationMode(.middle)
+      if let sections = expandedSections, showsContent {
+        Button {
+          if sections.wrappedValue.contains(title) {
+            sections.wrappedValue.remove(title)
+          } else {
+            sections.wrappedValue.insert(title)
+          }
+        } label: {
+          header
         }
-        Spacer()
-        if let trailing {
-          Text(trailing).font(BlitzType.rowTitle).monospacedDigit()
-            .foregroundStyle(BlitzUI.primaryText)
-        }
-      }.padding(16).frame(maxWidth: .infinity, minHeight: 64, alignment: .leading)
-        .accessibilityElement(children: .combine).accessibilityAddTraits(.isHeader)
-      if showsContent {
+        .buttonStyle(.plain)
+        .accessibilityLabel(title + ", " + detail)
+        .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
+        .help(isExpanded ? "Collapse \(title)" : "Expand \(title)")
+      } else {
+        header.accessibilityElement(children: .combine).accessibilityAddTraits(.isHeader)
+      }
+      if showsContent && isExpanded {
         BlitzRowDivider(leading: 0)
         content
       }
     }.blitzTable()
+  }
+
+  private var header: some View {
+    HStack(spacing: 10) {
+      Image(systemName: symbol).frame(width: 22).foregroundStyle(BlitzUI.secondaryText)
+      VStack(alignment: .leading, spacing: 2) {
+        Text(title).font(BlitzType.headline)
+        Text(detail).font(BlitzType.body).foregroundStyle(BlitzUI.secondaryText)
+          .lineLimit(1).truncationMode(.middle)
+      }
+      Spacer()
+      if let trailing {
+        Text(trailing).font(BlitzType.rowTitle).monospacedDigit()
+          .foregroundStyle(BlitzUI.primaryText)
+      }
+      if expandedSections != nil && showsContent {
+        Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+          .font(BlitzType.captionEmphasis).foregroundStyle(BlitzUI.secondaryText)
+          .accessibilityHidden(true)
+      }
+    }.padding(.horizontal, 12).padding(.vertical, 10)
+      .frame(maxWidth: .infinity, minHeight: 54, alignment: .leading)
+      .contentShape(Rectangle())
+  }
+}
+
+struct StoragePageHeader<Capacity: View>: View {
+  @Binding var selection: CleanStoragePage
+  @ViewBuilder let capacity: () -> Capacity
+
+  var body: some View {
+    HStack(spacing: 16) {
+      Text("Storage").font(BlitzType.largeTitle).tracking(-0.4)
+        .foregroundStyle(BlitzUI.primaryText)
+      BlitzSegmentedPicker(
+        title: "Storage", options: CleanStoragePage.allCases,
+        selection: $selection, label: { $0.rawValue }
+      ).frame(width: 280)
+      Spacer(minLength: 8)
+      capacity()
+    }
+    .padding(.horizontal, BlitzUI.pagePadding)
+    .padding(.top, 20).padding(.bottom, 18)
   }
 }

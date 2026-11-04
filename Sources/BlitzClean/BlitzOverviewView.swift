@@ -38,7 +38,7 @@ struct BlitzOverviewView: View {
         oldAge: storage.oldFiles.age.title, largeCount: storage.largeFiles.items.count,
         largeBytes: storage.largeFiles.totalBytes))
     ScrollView {
-      VStack(alignment: .leading, spacing: 24) {
+      VStack(alignment: .leading, spacing: 18) {
         OverviewVitals(monitor: monitor, memory: memory, navigation: navigation)
         OverviewDashboard(
           monitor: monitor, memory: memory, processes: processes, recovery: recovery,

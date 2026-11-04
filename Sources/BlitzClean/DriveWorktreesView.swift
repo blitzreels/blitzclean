@@ -6,6 +6,7 @@ struct DriveWorktreesSection: View {
   let history: CleanupOverviewModel
   let onConfirm: (PendingProcessAction) -> Void
   @State private var showsAll = false
+  @State private var isExpanded = false
 
   private static let limit = 6
 
@@ -20,17 +21,29 @@ struct DriveWorktreesSection: View {
     let shown = showsAll ? worktrees : Array(worktrees.prefix(Self.limit))
     VStack(spacing: 0) {
       HStack(spacing: 12) {
-        BlitzIconTile(symbol: "arrow.triangle.branch", tone: .muted, size: 28)
-        VStack(alignment: .leading, spacing: 3) {
-          Text("Git worktrees").font(.system(size: 14, weight: .semibold))
-          Text(summary(count: worktrees.count, removable: removable.count))
-            .font(BlitzType.body).foregroundStyle(BlitzUI.secondaryText).lineLimit(1)
+        Button {
+          isExpanded.toggle()
+        } label: {
+          HStack(spacing: 10) {
+            BlitzIconTile(symbol: "arrow.triangle.branch", tone: .muted, size: 28)
+            VStack(alignment: .leading, spacing: 3) {
+              Text("Git worktrees").font(BlitzType.headline)
+              Text(summary(count: worktrees.count, removable: removable.count))
+                .font(BlitzType.body).foregroundStyle(BlitzUI.secondaryText).lineLimit(1)
+            }
+            Spacer(minLength: 8)
+            ProgressView().controlSize(.small).opacity(model.isScanning ? 1 : 0)
+            if total > 0 {
+              Text(ByteText.full(total)).font(BlitzType.rowTitle).monospacedDigit()
+            }
+            Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+              .font(BlitzType.captionEmphasis).foregroundStyle(BlitzUI.secondaryText)
+          }.contentShape(Rectangle())
         }
-        Spacer()
-        ProgressView().controlSize(.small).opacity(model.isScanning ? 1 : 0)
-        if total > 0 {
-          Text(ByteText.full(total)).font(BlitzType.rowTitle).monospacedDigit()
-        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Git worktrees")
+        .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
+        .help(isExpanded ? "Collapse Git worktrees" : "Expand Git worktrees")
         if removable.count > 1 {
           Button("Remove \(removable.count) merged") {
             confirm(.init(worktrees: removable, force: false))
@@ -38,8 +51,8 @@ struct DriveWorktreesSection: View {
           .blitzButton(.secondary).controlSize(.small)
           .disabled(!model.deleting.isEmpty)
         }
-      }.padding(16).frame(maxWidth: .infinity, minHeight: 64, alignment: .leading)
-      if !shown.isEmpty {
+      }.padding(12).frame(maxWidth: .infinity, minHeight: 54, alignment: .leading)
+      if isExpanded && !shown.isEmpty {
         BlitzRowDivider(leading: 0)
         ForEach(shown) { worktree in
           row(worktree)
