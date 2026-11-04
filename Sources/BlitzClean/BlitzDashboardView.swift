@@ -247,9 +247,9 @@ private struct BlitzSidebar: View {
       Spacer(minLength: 16)
       item(.settings, shortcut: nil, insight: nil)
     }
-    .padding(.horizontal, 12)
-    .padding(.bottom, 14)
-    .frame(width: 212)
+    .padding(.horizontal, 10)
+    .padding(.bottom, 12)
+    .frame(width: 194)
     .frame(maxHeight: .infinity, alignment: .top)
     .background(BlitzUI.panelBackground)
     .accessibilityElement(children: .contain)
@@ -290,7 +290,7 @@ private struct BlitzSidebar: View {
           BlitzCountBadge(
             count: missingPermissions, label: "\(missingPermissions) permissions to allow")
         }
-      }.frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, insight == nil ? 0 : 3)
+      }.frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, insight == nil ? 0 : 2)
     }
     .blitzButton(selected ? .secondary : .quiet)
     .accessibilityValue(insight?.text ?? "")

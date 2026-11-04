@@ -43,7 +43,7 @@ struct OverviewVitals: View {
   }
 
   var body: some View {
-    HStack(spacing: 12) {
+    HStack(spacing: 10) {
       ForEach(vitals) { vital in
         Button {
           if vital.page == .storage { navigation.storagePage = .drive }
@@ -58,13 +58,13 @@ struct OverviewVitals: View {
   }
 
   private func tile(_ vital: Vital) -> some View {
-    HStack(spacing: 14) {
-      BlitzRingGauge(fraction: vital.fraction, tone: vital.tone, size: 54, lineWidth: 6) {
+    HStack(spacing: 10) {
+      BlitzRingGauge(fraction: vital.fraction, tone: vital.tone, size: 46, lineWidth: 5) {
         Text(PercentText.make(vital.fraction)).font(BlitzNumberFont.value(13)).monospacedDigit()
           .contentTransition(.numericText())
           .animation(.snappy, value: vital.fraction)
       }
-      VStack(alignment: .leading, spacing: 6) {
+      VStack(alignment: .leading, spacing: 4) {
         VStack(alignment: .leading, spacing: 1) {
           Text(vital.page == .storage ? "Disk" : vital.page.rawValue).font(BlitzType.rowTitle)
           Text(vital.caption).font(BlitzType.caption).foregroundStyle(BlitzUI.secondaryText)
@@ -72,14 +72,14 @@ struct OverviewVitals: View {
         }
         if let trend = vital.trend, trend.count > 1 {
           BlitzSparkline(values: BlitzSparkline.thinned(trend, to: 60), tone: vital.tone)
-            .frame(height: 22)
+            .frame(height: 18)
         } else {
           BlitzMeter(fraction: vital.fraction, tone: vital.tone, height: 5)
-            .frame(height: 22, alignment: .bottom)
+            .frame(height: 18, alignment: .bottom)
         }
       }
     }
-    .padding(14)
+    .padding(10)
     .frame(maxWidth: .infinity, alignment: .leading)
     .blitzSurface()
     .accessibilityElement(children: .combine)

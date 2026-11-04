@@ -3,6 +3,11 @@
 Dated decisions, newest first. Later entries override earlier ones. The current rules are in
 [DESIGN.md](DESIGN.md); read this file only to learn why a rule exists.
 
+## November 4 compact interface and Cleanup sections
+
+The user requested a smaller interface throughout the app and a shorter Cleanup page. Shared spacing, controls,
+headings and navigation are more compact. Cleanup sections start collapsed; a direct route opens its section.
+
 ## October 24 confirmation card
 
 The user found the bottom confirmation bar "super ugly": an edge-to-edge strip with a plain text list, a clipped
