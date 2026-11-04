@@ -84,9 +84,11 @@ struct BlitzConfirmation: View {
   let confirmTitle: String
   let onConfirm: () -> Void
   let onCancel: () -> Void
+  var reviewItems: [ConfirmationContent.Item]? = nil
 
   var body: some View {
-    let content = ConfirmationContent.parse(message)
+    let content = reviewItems.map { ConfirmationContent(items: $0, note: message) }
+      ?? ConfirmationContent.parse(message)
     VStack(alignment: .leading, spacing: 14) {
       HStack(alignment: .center, spacing: 12) {
         BlitzIconTile(
@@ -95,7 +97,7 @@ struct BlitzConfirmation: View {
         Text(title).font(.system(size: 15, weight: .semibold))
         Spacer(minLength: 0)
       }
-      if !content.items.isEmpty { itemList(content.items) }
+      if !content.items.isEmpty { itemList(content.items, wrapNames: reviewItems != nil) }
       if !content.note.isEmpty {
         Text(content.note).font(BlitzType.body).foregroundStyle(BlitzUI.secondaryText)
           .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
@@ -121,17 +123,18 @@ struct BlitzConfirmation: View {
     .transition(.move(edge: .bottom).combined(with: .opacity))
   }
 
-  private func itemList(_ items: [ConfirmationContent.Item]) -> some View {
+  private func itemList(_ items: [ConfirmationContent.Item], wrapNames: Bool) -> some View {
     let rows = VStack(spacing: 0) {
       ForEach(Array(items.enumerated()), id: \.offset) { index, item in
-        HStack(spacing: 12) {
+        HStack(alignment: .top, spacing: 12) {
           Text(item.name).font(BlitzType.callout).foregroundStyle(BlitzUI.supportingText)
-            .lineLimit(1).truncationMode(.middle)
+            .lineLimit(wrapNames ? nil : 1).truncationMode(.middle)
+            .textSelection(.enabled)
           Spacer(minLength: 8)
           if let value = item.value {
             Text(value).font(BlitzType.numeric).foregroundStyle(BlitzUI.secondaryText)
           }
-        }.padding(.horizontal, 12).frame(height: 30)
+        }.padding(.horizontal, 12).padding(.vertical, 6).frame(minHeight: 30)
         if index < items.count - 1 { BlitzRowDivider(leading: 12) }
       }
     }
