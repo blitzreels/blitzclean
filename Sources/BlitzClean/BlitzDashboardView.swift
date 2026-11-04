@@ -134,7 +134,7 @@ struct BlitzDashboardView: View {
         permissions: services.permissions, monitor: monitor, processes: processes)
       Rectangle().fill(BlitzUI.separator).frame(width: 1)
       VStack(spacing: 0) {
-        if navigation.page != .recovery {
+        if navigation.page != .recovery && navigation.page != .storage {
           BlitzPageHeader(title: navigation.page.rawValue) {}
           Rectangle().fill(BlitzUI.separator).frame(height: 1)
         }

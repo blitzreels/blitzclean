@@ -13,16 +13,11 @@ struct BlitzStorageView: View {
 
   var body: some View {
     VStack(spacing: 0) {
-      HStack(spacing: 16) {
-        BlitzSegmentedPicker(
-          title: "Storage", options: CleanStoragePage.allCases,
-          selection: $navigation.storagePage, label: { $0.rawValue }
-        ).frame(maxWidth: 320)
-        Spacer()
+      StoragePageHeader(selection: $navigation.storagePage) {
         if navigation.storagePage != .drive {
-          StorageCapacityMeter(snapshot: monitor.snapshot, drive: selectedDrive).frame(width: 200)
+          StorageCapacityMeter(snapshot: monitor.snapshot, drive: selectedDrive).frame(width: 160)
         }
-      }.padding(.horizontal, BlitzUI.pagePadding).padding(.vertical, 12)
+      }
       Rectangle().fill(BlitzUI.separator).frame(height: 1)
       switch navigation.storagePage {
       case .drive:
@@ -386,5 +381,25 @@ struct BlitzStorageSection<Content: View>: View {
     }.padding(.horizontal, 12).padding(.vertical, 10)
       .frame(maxWidth: .infinity, minHeight: 54, alignment: .leading)
       .contentShape(Rectangle())
+  }
+}
+
+struct StoragePageHeader<Capacity: View>: View {
+  @Binding var selection: CleanStoragePage
+  @ViewBuilder let capacity: () -> Capacity
+
+  var body: some View {
+    HStack(spacing: 16) {
+      Text("Storage").font(BlitzType.largeTitle).tracking(-0.4)
+        .foregroundStyle(BlitzUI.primaryText)
+      BlitzSegmentedPicker(
+        title: "Storage", options: CleanStoragePage.allCases,
+        selection: $selection, label: { $0.rawValue }
+      ).frame(width: 280)
+      Spacer(minLength: 8)
+      capacity()
+    }
+    .padding(.horizontal, BlitzUI.pagePadding)
+    .padding(.top, 20).padding(.bottom, 18)
   }
 }
