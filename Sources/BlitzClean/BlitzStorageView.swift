@@ -142,6 +142,7 @@ struct StorageCleanupView: View {
   let onSearchDrives: () -> Void
   @StateObject private var simulators = SimulatorDevicesModel()
   @State private var repeatPending: [RemovedEntry] = []
+  @State private var cacheReview: [CacheCandidate] = []
   @State private var worktreePending: DeveloperArtifact?
 
   private var cacheDetail: String {
@@ -180,7 +181,7 @@ struct StorageCleanupView: View {
             }.font(BlitzType.caption).foregroundStyle(BlitzUI.secondaryText)
               .frame(maxWidth: .infinity, alignment: .leading).padding(16)
             BlitzRowDivider(leading: 0)
-            QuickCleanView(model: caches, history: storage.overview)
+            QuickCleanView(model: caches, history: storage.overview, pendingReview: $cacheReview)
           }
           .id(StorageCleanupFocus.caches)
           SimulatorDevicesView(model: simulators, history: storage.overview)
@@ -224,6 +225,19 @@ struct StorageCleanupView: View {
               .init(artifact: artifact, history: storage.overview, force: false))
             worktreePending = nil
           }, onCancel: { worktreePending = nil })
+      } else if !cacheReview.isEmpty {
+        BlitzConfirmation(
+          title: "Delete \(cacheReview.count) selected items?",
+          message:
+            "\(ByteText.full(cacheReview.reduce(0) { $0 + $1.tree.bytes })) will be checked for cleanup. This permanently removes the selected files. Caches rebuild; diagnostic reports cannot be recovered. Future downloads and builds can take longer.",
+          confirmTitle: "Delete selected files",
+          onConfirm: {
+            caches.selected = Set(cacheReview.map(\.path))
+            cacheReview = []
+            caches.clean(history: storage.overview)
+          }, onCancel: { cacheReview = [] },
+          reviewItems: cacheReview.map { .init(name: $0.path, value: ByteText.full($0.tree.bytes)) }
+        )
       } else if repeatPending.isEmpty {
         DeveloperCleanupActions(model: storage)
       } else {
@@ -234,7 +248,8 @@ struct StorageCleanupView: View {
           onConfirm: {
             storage.repeats.remove(repeatPending)
             repeatPending = []
-          }, onCancel: { repeatPending = [] })
+          }, onCancel: { repeatPending = [] },
+          reviewItems: repeatPending.map { .init(name: $0.target.path, value: nil) })
       }
     }
   }

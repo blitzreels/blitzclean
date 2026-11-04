@@ -98,7 +98,6 @@ struct FolderExplorerView: View {
     .onDeleteCommand { review(.init(items: selected, permanently: false)) }
     .safeAreaInset(edge: .bottom, spacing: 0) {
       if !pendingTrash.isEmpty {
-        let names = pendingTrash.prefix(4).map(\.name).joined(separator: ", ")
         let size = ByteText.full(pendingTrash.compactMap(\.bytes).reduce(0, +))
         let count = pendingTrash.count == 1 ? "this item" : "\(pendingTrash.count) items"
         let owned = pendingTrash.contains { StorageGuidance.read($0.path).kind == .managed }
@@ -108,18 +107,19 @@ struct FolderExplorerView: View {
           : ""
         BlitzConfirmation(
           title: deletesPermanently ? "Permanently delete \(count)?" : "Move \(count) to Trash?",
-          message: names
-            + (deletesPermanently
-              ? "\n\(size) is deleted now, including everything inside folders. This cannot be undone."
-                + ownership
-              : "\nFolders include all their contents. Restore from Trash if needed; empty it to reclaim space."),
+          message: deletesPermanently
+            ? "\(size) is deleted now, including everything inside folders. This cannot be undone."
+              + ownership
+            : "Folders include all their contents. Restore from Trash if needed; empty it to reclaim space.",
           confirmTitle: deletesPermanently ? "Delete \(size)" : "Move to Trash",
           onConfirm: {
             model.remove(.init(items: pendingTrash, permanently: deletesPermanently))
             pendingTrash = []
             inspectedFile = nil
           },
-          onCancel: { pendingTrash = [] })
+          onCancel: { pendingTrash = [] },
+          reviewItems: pendingTrash.map { .init(name: $0.path, value: $0.bytes.map(ByteText.full)) }
+        )
       }
     }
   }

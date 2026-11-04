@@ -142,7 +142,6 @@ extension [RemovedEntry] {
     var notes = [
       "About \(ByteText.full(bytes)). Each folder is checked again for running builds first."
     ]
-    if count <= 4 { notes.insert(map(\.target.path).joined(separator: "\n"), at: 0) }
     if dependencies { notes.append("Dependencies need a reinstall before the next run.") }
     if prune { notes.append("pnpm store prune keeps packages your projects still use.") }
     return (title, notes.joined(separator: "\n\n"))

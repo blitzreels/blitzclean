@@ -3,12 +3,7 @@ import SwiftUI
 struct QuickCleanView: View {
   @ObservedObject var model: QuickCleanModel
   @ObservedObject var history: CleanupOverviewModel
-  @State private var pendingReview: CacheCleanupReview?
-
-  private struct CacheCleanupReview: Identifiable {
-    let id = UUID()
-    let items: [CacheCandidate]
-  }
+  @Binding var pendingReview: [CacheCandidate]
 
   var body: some View {
     let selectedItems = model.selectedItems
@@ -60,22 +55,10 @@ struct QuickCleanView: View {
           progress: model.isCleaning ? "Deleting selected files…" : nil, message: nil,
           actionTitle: "Review cleanup…", emphasis: .secondary,
           isDisabled: selectedItems.isEmpty || isLocked,
-          action: { pendingReview = CacheCleanupReview(items: selectedItems) }
+          action: { pendingReview = selectedItems }
         ).padding(.horizontal, 16)
       }
-      if let review = pendingReview {
-        BlitzConfirmation(
-          title: "Delete \(review.items.count) selected items?",
-          message:
-            "\(ByteText.full(review.items.reduce(0) { $0 + $1.tree.bytes })) will be checked for cleanup. This permanently removes the selected files. Caches rebuild; diagnostic reports cannot be recovered. Future downloads and builds can take longer.\n\n"
-            + review.items.map { $0.rule.title + " / " + $0.displayName }.joined(separator: "\n"),
-          confirmTitle: "Delete selected files",
-          onConfirm: {
-            model.selected = Set(review.items.map(\.path))
-            pendingReview = nil
-            model.clean(history: history)
-          }, onCancel: { pendingReview = nil })
-      }
+
     }
     .task { if model.scannedAt == nil { model.scan() } }
   }

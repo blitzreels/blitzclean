@@ -49,7 +49,7 @@ struct FeedbackFeatureRenderTests {
     while model.isScanning { try await Task.sleep(for: .milliseconds(10)) }
     try write(
       .init(
-        view: AnyView(QuickCleanView(model: model, history: history)),
+        view: AnyView(QuickCleanView(model: model, history: history, pendingReview: .constant([]))),
         directory: directory, name: "system-data-selection"))
   }
 
