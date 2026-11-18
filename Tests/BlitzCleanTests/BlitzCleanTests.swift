@@ -101,6 +101,26 @@ struct QuickCleanTests {
   }
 
   @Test
+  func recentDirectoryRulesOutATreeBeforeItsChildrenAreRead() throws {
+    let root = try fixture()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let directory = root.appendingPathComponent("cache")
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+    try FileManager.default.createSymbolicLink(
+      at: directory.appendingPathComponent("link"), withDestinationURL: root)
+    let cutoff = Date.now.addingTimeInterval(-7 * 86_400)
+    #expect(throws: CacheCleanError.recent) {
+      try CacheCleaner.tree(
+        .init(path: directory.path, deadline: .now.addingTimeInterval(5), olderThan: cutoff))
+    }
+    try age(directory)
+    #expect(throws: CacheCleanError.outsideRoot) {
+      try CacheCleaner.tree(
+        .init(path: directory.path, deadline: .now.addingTimeInterval(5), olderThan: cutoff))
+    }
+  }
+
+  @Test
   func nestedChangesAndActiveFilesBlockCleanup() throws {
     let root = try fixture()
     defer { try? FileManager.default.removeItem(at: root) }

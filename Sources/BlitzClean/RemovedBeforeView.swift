@@ -6,7 +6,7 @@ struct RemovedBeforeView: View {
   @Binding var pending: [RemovedEntry]
   @State private var showsAll = false
 
-  private static let rowLimit = 8
+  private static let rowLimit = 3
 
   private func detail(_ summary: RepeatCleanupModel.Summary) -> String {
     if model.entries.isEmpty { return "Folders you remove appear here when they grow back" }
@@ -24,11 +24,11 @@ struct RemovedBeforeView: View {
 
   var body: some View {
     let summary = model.summary
-    let rows = showsAll ? summary.ordered : Array(summary.ordered.prefix(Self.rowLimit))
+    let rows = showsAll ? summary.ordered : Array(summary.regrown.prefix(Self.rowLimit))
     BlitzStorageSection(
-      title: "Removed before", symbol: "arrow.counterclockwise", detail: detail(summary),
+      title: "Folders that grew back", symbol: "arrow.counterclockwise", detail: detail(summary),
       trailing: summary.regrown.isEmpty ? nil : ByteText.full(summary.regrownBytes),
-      showsContent: true
+      showsContent: !model.entries.isEmpty || model.message != nil
     ) {
       VStack(spacing: 0) {
         HStack(spacing: 10) {
@@ -38,15 +38,15 @@ struct RemovedBeforeView: View {
           Spacer()
           if model.isChecking { ProgressView().controlSize(.small) }
           if summary.ready.count > 1 {
-            Button("Remove \(summary.ready.count) again…") { pending = summary.ready }
-              .blitzButton(.accent).controlSize(.small).disabled(!model.removing.isEmpty)
+            Button("Review \(summary.ready.count) folders…") { pending = summary.ready }
+              .blitzButton(.secondary).controlSize(.small).disabled(!model.removing.isEmpty)
           }
         }.padding(.horizontal, 16).padding(.vertical, 12)
         ForEach(rows) { entry in
           BlitzRowDivider(leading: 16)
           row(entry)
         }
-        if summary.ordered.count > Self.rowLimit {
+        if showsAll || summary.ordered.count > rows.count {
           BlitzRowDivider(leading: 16)
           BlitzShowAllButton(total: summary.ordered.count, noun: "folders", isExpanded: $showsAll)
             .padding(.vertical, 8)
@@ -131,7 +131,6 @@ struct RemovedBeforeView: View {
 
 extension [RemovedEntry] {
   @MainActor func confirmation(_ model: RepeatCleanupModel) -> (title: String, message: String) {
-    let bytes = reduce(0) { $0 + (model.statuses[$1.id]?.bytes ?? 0) }
     let dependencies = contains { $0.target.recipe == .dependencies }
     let prune = contains { $0.target.recipe == .pnpmPrune }
     let title =
@@ -139,13 +138,18 @@ extension [RemovedEntry] {
       ? (first?.target.recipe == .pnpmPrune
         ? "Prune the pnpm store?" : "Remove \(first?.target.title ?? "folder") again?")
       : "Remove \(count) folders again?"
-    var notes = [
-      "About \(ByteText.full(bytes)). Each folder is checked again for running builds first."
-    ]
-    if count <= 4 { notes.insert(map(\.target.path).joined(separator: "\n"), at: 0) }
-    if dependencies { notes.append("Dependencies need a reinstall before the next run.") }
-    if prune { notes.append("pnpm store prune keeps packages your projects still use.") }
-    return (title, notes.joined(separator: "\n\n"))
+    let rows = map { entry in
+      let size = model.statuses[entry.id]?.bytes.map(ByteText.full) ?? "Not measured"
+      let value = entry.target.recipe == .pnpmPrune ? size + " in store" : size
+      return "\(entry.target.path) · \(value)"
+    }
+    var notes = ["Each folder is checked again for running builds before removal."]
+    if dependencies {
+      notes.append("Removed dependencies must be reinstalled before the next run.")
+    }
+    if prune { notes.append("pnpm removes only unused packages from its store.") }
+    return (title, rows.joined(separator: "\n") + "\n\n" + notes.joined(separator: " "))
+
   }
 }
 

@@ -3,7 +3,7 @@ import AppKit
 /// How often each background reader runs, decided in one place. Readers slow down together while another
 /// app is in front and back off further under memory pressure, so BlitzClean never adds load to a Mac that is
 /// already swapping. With no BlitzClean window on screen, only the menu bar figures keep their pace; the
-/// project, memory and recovery scans wait a minute, since nobody is reading them. Pressure protection and
+/// project and memory scans wait a minute, since nobody is reading them. Pressure protection and
 /// the build brake keep their own 2-second sampler, and the cleanup history sync stays at 3 seconds because
 /// it only reads one small file.
 enum RefreshCadence {
@@ -40,7 +40,7 @@ enum RefreshCadence {
       case .system: (2, 6, 6)
       case .processes: (5, 15, 60)
       case .memoryScan: (15, 30, 60)
-      case .recovery: (2, 6, 30)
+      case .recovery: (2, 3, 4)
       case .docker: (20, 60, 120)
       }
     let interval =

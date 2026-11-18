@@ -3,6 +3,26 @@
 Dated decisions, newest first. Later entries override earlier ones. The current rules are in
 [DESIGN.md](DESIGN.md); read this file only to learn why a rule exists.
 
+## November 18 drive analysis
+
+Selecting a capacity ring now answers what occupies that volume. Category bars open its largest files.
+Completed scans provide a baseline for growth. Cleanup review keeps one verified copy and honors kept folders.
+
+## November 18 drive capacity charts
+
+The user wanted to see occupied and remaining space directly. Each connected drive now has a two-part ring
+and explicit used and free amounts, with folder actions below the chart.
+
+## November 18 connected drives
+
+Overview, Storage and the menu bar tray share a volume list. Each drive opens its own folders or largest files.
+The tray remembers whether the drive list is expanded, keeping it compact for people who only watch the startup disk.
+
+## November 18 Mac cleanup
+
+Overview opens Cleanup in one click. Caches come first, with one review for the whole eligible batch.
+Individual selection and scan exclusions expand on demand so a long list cannot bury the action.
+
 ## October 24 confirmation card
 
 The user found the bottom confirmation bar "super ugly": an edge-to-edge strip with a plain text list, a clipped

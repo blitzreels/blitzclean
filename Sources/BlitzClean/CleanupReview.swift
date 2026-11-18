@@ -561,6 +561,17 @@ final class CleanupOverviewModel: ObservableObject {
   var reviewRoots: [String] { scanRequest.roots }
   var reviewMinimumBytes: UInt64 { scanRequest.minimumBytes }
 
+  func selectReviewRoots(_ roots: [String]) {
+    guard !roots.isEmpty, Set(roots) != Set(reviewRoots),
+      deletingPath == nil, queuedFiles.isEmpty
+    else { return }
+    if isScanning { cancelScan() }
+    configureReview(
+      .init(
+        roots: roots, minimumBytes: reviewMinimumBytes,
+        maxEntries: 80_000, entireHierarchy: true))
+  }
+
   func configureReview(_ request: ReviewScanRequest) {
     guard !isScanning, deletingPath == nil, queuedFiles.isEmpty else { return }
     scanRequest = request

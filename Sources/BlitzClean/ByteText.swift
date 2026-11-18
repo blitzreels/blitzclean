@@ -1,6 +1,12 @@
 import Foundation
 
 enum ByteText {
+  static func capacity(_ bytes: UInt64) -> String {
+    guard bytes >= 1_000_000_000_000 else { return compact(bytes) }
+    return (Double(bytes) / 1_000_000_000_000).formatted(.number.precision(.fractionLength(0...2)))
+      + " TB"
+  }
+
   static func compact(_ bytes: UInt64) -> String {
     format((bytes: bytes, fractionDigits: 0))
   }

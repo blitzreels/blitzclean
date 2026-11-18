@@ -13,6 +13,13 @@ struct ConfirmationContentTests {
     #expect(content.note == "Up to 4,5 GB is permanently deleted.")
   }
 
+  @Test func oneReviewedCacheHasItsOwnSizeRow() {
+    let content = ConfirmationContent.parse(
+      "Fixture cache / Example · 4 KB\n\nApps rebuild these files.")
+    #expect(content.items == [.init(name: "Fixture cache / Example", value: "4 KB")])
+    #expect(content.note == "Apps rebuild these files.")
+  }
+
   @Test func pathsWithoutSizesAreItemsAndPlainTextIsANote() {
     #expect(
       ConfirmationContent.parse("/a\n/b\n\nGit checks each.").items.map(\.value) == [nil, nil])

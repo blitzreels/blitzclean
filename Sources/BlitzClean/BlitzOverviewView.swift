@@ -24,22 +24,10 @@ struct BlitzOverviewView: View {
   }
 
   var body: some View {
-    let detached = processes.threads.filter(\.isDetached)
-    let findings = AuditFindings(
-      progress: audit.progress,
-      cleanup: .init(
-        models: .init(caches: cleanup, storage: storage, repeats: repeats, docker: docker)),
-      quickBytes: cleanup.quickBytes, canClean: cleanup.canClean,
-      pressure: processes.pressure, detachedCount: detached.count,
-      detachedBytes: detached.reduce(0) { $0 + $1.memoryBytes },
-      recoveryCount: recovery.attentionCount,
-      personalFiles: .init(
-        oldCount: storage.oldFiles.visibleItems.count, oldBytes: storage.oldFiles.totalBytes,
-        oldAge: storage.oldFiles.age.title, largeCount: storage.largeFiles.items.count,
-        largeBytes: storage.largeFiles.totalBytes))
     ScrollView {
       VStack(alignment: .leading, spacing: 24) {
         OverviewVitals(monitor: monitor, memory: memory, navigation: navigation)
+        ConnectedDrivesView(compact: false, open: navigation.openDrive)
         OverviewDashboard(
           monitor: monitor, memory: memory, processes: processes, recovery: recovery,
           navigation: navigation, storage: storage, drive: drive, history: history,
@@ -75,6 +63,22 @@ struct BlitzOverviewView: View {
           }, onCancel: { pending = nil })
       }
     }
+  }
+
+  private var findings: AuditFindings {
+    let detached = processes.threads.filter(\.isDetached)
+    return AuditFindings(
+      progress: audit.progress,
+      cleanup: .init(
+        models: .init(caches: cleanup, storage: storage, repeats: repeats, docker: docker)),
+      quickBytes: cleanup.quickBytes, canClean: cleanup.canClean,
+      pressure: processes.pressure, detachedCount: detached.count,
+      detachedBytes: detached.reduce(0) { $0 + $1.memoryBytes },
+      recoveryCount: recovery.attentionCount,
+      personalFiles: .init(
+        oldCount: storage.oldFiles.visibleItems.count, oldBytes: storage.oldFiles.totalBytes,
+        oldAge: storage.oldFiles.age.title, largeCount: storage.largeFiles.items.count,
+        largeBytes: storage.largeFiles.totalBytes))
   }
 
   private func perform(_ action: AuditAction) {

@@ -16,10 +16,13 @@ struct MediaDuplicateResult: Sendable {
 
 enum MediaDuplicateScanner {
   static func scan(_ files: [ReviewFile]) -> MediaDuplicateResult {
+    compare(files.filter { ["Video", "Image"].contains($0.kind) })
+  }
+
+  static func compare(_ files: [ReviewFile]) -> MediaDuplicateResult {
     var seen = Set<String>()
     let unique = files.filter {
       $0.logicalBytes > 0 && seen.insert("\($0.device):\($0.inode)").inserted
-        && ["Video", "Image"].contains($0.kind)
     }
     let candidates = Dictionary(grouping: unique, by: \.logicalBytes).values
       .filter { $0.count > 1 }.sorted {

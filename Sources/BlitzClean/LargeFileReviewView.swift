@@ -151,6 +151,14 @@ struct LargeFileReviewView: View {
         .background(BlitzUI.panelBackground)
     }
     .task { model.refreshIfNeeded() }
+    .onChange(of: model.reviewRoots) {
+      pendingTrash = []
+      pendingExport = []
+      media.selected = []
+      media.invalidateDuplicates()
+      duplicateOnly = false
+      result = nil
+    }
     .onChange(of: model.scannedAt) { _, _ in
       media.invalidateDuplicates()
       duplicateOnly = false

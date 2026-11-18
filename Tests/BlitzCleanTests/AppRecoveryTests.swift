@@ -67,6 +67,7 @@ struct AppRecoveryTests {
     #expect(report.resumeSent)
     #expect(report.after.count == 1)
     #expect(await driver.resumedIDs == [42])
+    #expect(await driver.observations == 1)
   }
 
   @Test func revivedWithoutAccessibilityOnceTheProcessKeepsRunning() async {
@@ -358,6 +359,7 @@ struct AppRecoveryTests {
     #expect(await engine(stuck).revive(app).outcome == .notResponding)
     let healthy = ScriptedRecoveryDriver([42: [running(.noHangReported)]])
     #expect(await engine(healthy).revive(app).outcome == .alreadyRunning)
+    #expect(await healthy.resumedIDs.isEmpty)
   }
 
   @MainActor
