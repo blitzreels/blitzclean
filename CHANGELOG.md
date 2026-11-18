@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.8.0 - 2026-11-18
 
 - See used and free space for each connected drive, including external SSDs, in Overview, Storage and the menu bar.
 - Select a drive to explore its largest files, compare folder growth between scans and review duplicate files and build folders.
