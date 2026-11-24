@@ -204,13 +204,13 @@ struct DeveloperCleanupActions: View {
         BlitzConfirmation(
           title: "Delete selected items permanently?",
           message:
-            "\(selected.count) items, \(ByteText.full(bytes)). This cannot be undone. Rebuild and activity checks run before deletion; changed or busy items are skipped.\n\n"
-            + selected.map(\.path).joined(separator: "\n"),
+            "\(selected.count) items, \(ByteText.full(bytes)). This cannot be undone. Rebuild and activity checks run before deletion; changed or busy items are skipped.",
           confirmTitle: "Delete permanently",
           onConfirm: {
             showsConfirmation = false
             model.cleanSelected()
-          }, onCancel: { showsConfirmation = false })
+          }, onCancel: { showsConfirmation = false },
+          reviewItems: selected.map { .init(name: $0.path, value: ByteText.full($0.bytes)) })
       }
     }
   }
