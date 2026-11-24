@@ -62,14 +62,20 @@ enum RestartReportParser {
           of: #"^panic\(cpu \d+ caller 0x[0-9a-f]+\): "#, with: "", options: .regularExpression))
     let processes = body["processByPid"] as? [String: [String: Any]] ?? [:]
     let resident = processes.values.reduce(UInt64(0)) {
-      $0 + UInt64(max(0, ($1["residentMemoryBytes"] as? Int) ?? 0))
+      let bytes = UInt64(max(0, ($1["residentMemoryBytes"] as? Int) ?? 0))
+      let sum = $0.addingReportingOverflow(bytes)
+      return sum.overflow ? .max : sum.partialValue
     }
+    // Some panics, such as macOS 27 watchdog reports, have no memoryStatus: free memory is unknown.
     let status = body["memoryStatus"] as? [String: Any]
     let pages = status?["memoryPages"] as? [String: Any]
-    let pageSize = UInt64(status?["pageSize"] as? Int ?? 16_384)
-    let free = UInt64(pages?["free"] as? Int ?? Int.max / 2) * pageSize
+    let pageSize = UInt64(max(0, status?["pageSize"] as? Int ?? 16_384))
+    let free = (pages?["free"] as? Int).map {
+      let bytes = UInt64(max(0, $0)).multipliedReportingOverflow(by: pageSize)
+      return bytes.overflow ? UInt64.max : bytes.partialValue
+    }
     let memoryRanOut =
-      free < 256 * 1_024 * 1_024
+      free.map { $0 < 256 * 1_024 * 1_024 } ?? false
       || (input.physicalMemory > 0 && Double(resident) > Double(input.physicalMemory) * 1.3)
     let top = processes.compactMap { pid, process -> RestartReport.Process? in
       guard let name = process["procname"] as? String, name != "kernel_task",

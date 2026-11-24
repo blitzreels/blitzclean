@@ -43,6 +43,42 @@ struct RestartReportTests {
     #expect(report.title.contains("because memory ran out"))
   }
 
+  /// A macOS 27 watchdog panic has no memoryStatus or processByPid. Reading it used to trap at launch.
+  @Test func panicWithoutMemoryStatusIsASystemError() throws {
+    let header =
+      #"{"bug_type":"210","timestamp":"2026-11-20 15:53:08.00 +0200","os_version":"macOS 27.2.1"}"#
+    let body =
+      #"{"panicString":"panic(cpu 13 caller 0xfffffe0038ff71e0): watchdog timeout: no checkins from watchdogd in 92 seconds\nDebugger message: panic","binaryImages":[],"notes":[]}"#
+    let report = try #require(
+      RestartReportParser.panic(
+        .init(id: "panic-base.panic", text: header + "\n" + body, physicalMemory: UInt64(36 * gib)))
+    )
+    #expect(!report.memoryRanOut)
+    #expect(report.reason == "watchdog timeout: no checkins from watchdogd in 92 seconds")
+    #expect(report.top.isEmpty)
+    #expect(report.title.contains("after a system error"))
+  }
+
+  @Test func outOfRangeMemoryNumbersDoNotTrap() throws {
+    let header = #"{"bug_type":"210","timestamp":"2026-11-20 15:53:08.00 +0200"}"#
+    let body: [String: Any] = [
+      "memoryStatus": ["pageSize": Int.max, "memoryPages": ["free": Int.max]],
+      "processByPid": [
+        "1": ["procname": "a", "residentMemoryBytes": Int.max],
+        "2": ["procname": "b", "residentMemoryBytes": Int.max],
+        "3": ["procname": "c", "residentMemoryBytes": Int.max],
+      ],
+    ]
+    let data = try JSONSerialization.data(withJSONObject: body)
+    let report = try #require(
+      RestartReportParser.panic(
+        .init(
+          id: "panic-large.panic", text: header + "\n" + String(decoding: data, as: UTF8.self),
+          physicalMemory: UInt64(36 * gib))))
+    #expect(report.residentBytes == .max)
+    #expect(report.memoryRanOut)
+  }
+
   @Test func scannerKeepsSummariesAndCountsEarlierMemoryKills() throws {
     let folder = FileManager.default.temporaryDirectory.appendingPathComponent("panic-\(UUID())")
     try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
