@@ -81,7 +81,7 @@ explaining why to [DESIGN-HISTORY.md](DESIGN-HISTORY.md). Never leave two rules 
   session starts again, memory cleaner apps (Quit) and apps macOS flagged for 30 GB+ of disk writes.
 - Overview’s header opens Storage → Cleanup directly. Cleanup leads with a review of eligible caches by size.
   Choose items opens individual selection, including diagnostic reports. The confirmation lists each reviewed item.
-- **Storage**: Cleanup sections and the Drive page’s Git worktrees section start collapsed. Their headers show the summary and expand on click; a route to a section opens it.
+- **Storage**: Cleanup sections and the Drives page’s Git worktrees section start collapsed. Their headers show the summary and expand on click; a route to a section opens it.
   Drives lists connected volumes with free and total space, Browse folders and Largest files.
   Each drive has a capacity ring with its percent used in the center and labeled used and free amounts.
   Periwinkle marks used space and mint marks free space in Overview, Storage and the compact tray charts.

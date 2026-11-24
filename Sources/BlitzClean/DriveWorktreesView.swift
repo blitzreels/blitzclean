@@ -38,10 +38,14 @@ struct DriveWorktreesSection: View {
             }
             Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
               .font(BlitzType.captionEmphasis).foregroundStyle(BlitzUI.secondaryText)
+              .accessibilityHidden(true)
           }.contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("Git worktrees")
+        .accessibilityLabel(
+          ["Git worktrees", summary(count: worktrees.count, removable: removable.count)]
+            .joined(separator: ", ") + (total > 0 ? ", " + ByteText.full(total) : "")
+        )
         .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
         .help(isExpanded ? "Collapse Git worktrees" : "Expand Git worktrees")
         if removable.count > 1 {

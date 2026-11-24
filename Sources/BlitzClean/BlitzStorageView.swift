@@ -212,6 +212,16 @@ struct StorageCleanupView: View {
   @State private var worktreePending: DeveloperArtifact?
   @State private var expandedSections: Set<String> = []
 
+  /// Collapsed sections hide their rows, so the header carries the scan result.
+  private var cacheDetail: String {
+    if caches.scannedAt == nil || (caches.isScanning && caches.candidates.isEmpty) {
+      return "Checking cache folders and reports…"
+    }
+    if caches.candidates.isEmpty { return "No eligible caches or reports" }
+    let count = caches.candidates.count
+    return "\(count) eligible \(count == 1 ? "item" : "items") · caches 7+ days, reports 30+ days"
+  }
+
   var body: some View {
     ScrollViewReader { proxy in
       ScrollView {
@@ -222,8 +232,9 @@ struct StorageCleanupView: View {
             worktrees: worktrees.model)
           BlitzStorageSection(
             title: "Caches and diagnostic reports", symbol: "archivebox",
-            detail: "Caches unchanged for 7 days and reports older than 30 days",
-            trailing: nil, showsContent: true
+            detail: cacheDetail,
+            trailing: caches.candidates.isEmpty ? nil : ByteText.full(caches.totalBytes),
+            showsContent: true
           ) {
             QuickCleanView(model: caches, history: storage.overview)
           }.id(StorageCleanupFocus.caches)
@@ -266,6 +277,7 @@ struct StorageCleanupView: View {
     .task {
       storage.scanCleanupIfNeeded()
       if caches.scannedAt == nil { caches.scan() }
+      docker.refreshIfNeeded()
     }
     .safeAreaInset(edge: .bottom, spacing: 0) {
       if let artifact = worktreePending {
@@ -383,7 +395,9 @@ struct BlitzStorageSection<Content: View>: View {
   let title: String
   let symbol: String
   let detail: String
+  /// Total for the section, absent until it has been measured.
   let trailing: String?
+  /// False when the section has nothing to act on; the header alone states that.
   let showsContent: Bool
   @ViewBuilder let content: Content
   @Environment(\.cleanupExpandedSections) private var expandedSections
@@ -405,7 +419,7 @@ struct BlitzStorageSection<Content: View>: View {
           header
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(title + ", " + detail)
+        .accessibilityLabel([title, detail, trailing].compactMap { $0 }.joined(separator: ", "))
         .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
         .help(isExpanded ? "Collapse \(title)" : "Expand \(title)")
       } else {

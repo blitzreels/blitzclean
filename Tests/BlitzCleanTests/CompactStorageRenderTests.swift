@@ -36,11 +36,11 @@ struct CompactStorageRenderTests {
           Spacer()
         }.padding(BlitzUI.pagePadding)
       }
-      .environment(\.cleanupExpandedSections, .constant([]))
-      .frame(width: 720, height: 420)
+      .environment(\.cleanupExpandedSections, .constant(["Caches and diagnostic reports"]))
+      .frame(width: 720, height: 560)
       .background(BlitzUI.canvasBackground).blitzTheme()
       let host = NSHostingView(rootView: view)
-      host.frame = NSRect(x: 0, y: 0, width: 720, height: 420)
+      host.frame = NSRect(x: 0, y: 0, width: 720, height: 560)
       let window = NSWindow(
         contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
       window.appearance = NSAppearance(named: .darkAqua)
