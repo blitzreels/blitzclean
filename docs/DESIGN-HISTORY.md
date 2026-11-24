@@ -23,6 +23,11 @@ The tray remembers whether the drive list is expanded, keeping it compact for pe
 Overview opens Cleanup in one click. Caches come first, with one review for the whole eligible batch.
 Individual selection and scan exclusions expand on demand so a long list cannot bury the action.
 
+## November 4 compact interface and Cleanup sections
+
+The user requested a smaller interface throughout the app and a shorter Cleanup page. Shared spacing, controls,
+headings and navigation are more compact. Cleanup sections start collapsed; a direct route opens its section.
+
 ## October 24 confirmation card
 
 The user found the bottom confirmation bar "super ugly": an edge-to-edge strip with a plain text list, a clipped

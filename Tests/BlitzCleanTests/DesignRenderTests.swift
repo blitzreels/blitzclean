@@ -60,7 +60,38 @@ struct DesignRenderTests {
         workspaces: WorkspaceController(), services: services
       )
       try await write(view, to: directory.appendingPathComponent("\(page.rawValue).png"))
+      try await write(
+        view, to: directory.appendingPathComponent("\(page.rawValue)-minimum.png"),
+        size: .init(width: 920, height: 640), captureBottom: true)
     }
+    navigation.page = .storage
+    for storagePage in [CleanStoragePage.browse, .cleanup] {
+      navigation.storagePage = storagePage
+      let view = BlitzDashboardView(
+        monitor: monitor, memory: memory, cleanup: QuickCleanModel(),
+        storage: StorageBreakdownModel(), navigation: navigation,
+        developerBrowser: DeveloperBrowserModel(), processes: processes,
+        workspaces: WorkspaceController(), services: services)
+      try await write(
+        view, to: directory.appendingPathComponent("Storage-\(storagePage.rawValue)-minimum.png"),
+        size: .init(width: 920, height: 640), captureBottom: true)
+    }
+    for focus in [
+      StorageCleanupFocus.oldFiles, .largeFiles, .caches, .simulators, .regrown, .projects, .docker,
+    ] {
+      let storage = StorageBreakdownModel()
+      storage.cleanupFocus = focus
+      navigation.storagePage = .cleanup
+      let view = BlitzDashboardView(
+        monitor: monitor, memory: memory, cleanup: QuickCleanModel(),
+        storage: storage, navigation: navigation,
+        developerBrowser: DeveloperBrowserModel(), processes: processes,
+        workspaces: WorkspaceController(), services: services)
+      try await write(
+        view, to: directory.appendingPathComponent("Cleanup-\(focus)-minimum.png"),
+        size: .init(width: 920, height: 640))
+    }
+    if ProcessInfo.processInfo.environment["BLITZCLEAN_MINIMUM_AUDIT"] == "1" { return }
     try await write(
       BlitzTrayView(
         monitor: monitor, memory: memory, recovery: recovery, navigation: navigation,
@@ -102,7 +133,7 @@ struct DesignRenderTests {
 
   private func write(
     _ view: some View, to url: URL, wait: Duration = .seconds(2),
-    size: CGSize = .init(width: 1080, height: 760)
+    size: CGSize = .init(width: 1080, height: 760), captureBottom: Bool = false
   ) async throws {
     let host = NSHostingView(rootView: view.frame(width: size.width, height: size.height))
     host.frame = NSRect(origin: .zero, size: size)
@@ -120,9 +151,27 @@ struct DesignRenderTests {
         colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
     rep.size = size
     host.cacheDisplay(in: host.bounds, to: rep)
-    window.orderOut(nil)
     let data = try #require(rep.representation(using: .png, properties: [:]))
     try data.write(to: url)
+    if captureBottom {
+      func scrollViews(_ view: NSView) -> [NSScrollView] {
+        (view as? NSScrollView).map { [$0] } ?? view.subviews.flatMap(scrollViews)
+      }
+      for scroll in scrollViews(host) {
+        guard let document = scroll.documentView,
+          document.bounds.height > scroll.contentView.bounds.height + 1
+        else { continue }
+        scroll.contentView.scroll(
+          to: NSPoint(x: 0, y: max(0, document.bounds.height - scroll.contentView.bounds.height)))
+        scroll.reflectScrolledClipView(scroll.contentView)
+      }
+      try await Task.sleep(for: .milliseconds(250))
+      host.layoutSubtreeIfNeeded()
+      host.cacheDisplay(in: host.bounds, to: rep)
+      let bottom = try #require(rep.representation(using: .png, properties: [:]))
+      try bottom.write(to: url.deletingPathExtension().appendingPathExtension("bottom.png"))
+    }
+    window.orderOut(nil)
   }
 }
 

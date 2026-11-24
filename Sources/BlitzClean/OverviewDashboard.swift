@@ -51,9 +51,9 @@ struct OverviewDashboard: View {
         BlitzIconTile(
           symbol: problem.symbol,
           tone: Self.tone(problem.urgency),
-          size: 36)
+          size: 32)
         VStack(alignment: .leading, spacing: 4) {
-          Text(problem.title).font(.system(size: 17, weight: .semibold))
+          Text(problem.title).font(BlitzType.title)
           Text(problem.detail).font(BlitzType.callout).foregroundStyle(BlitzUI.secondaryText)
             .fixedSize(horizontal: false, vertical: true)
         }
@@ -71,7 +71,7 @@ struct OverviewDashboard: View {
       if problem.id == "disk", let removal = drive.removal { removalProgress(removal) }
       if let includes = problem.includes {
         Text(includes).font(BlitzType.caption).foregroundStyle(BlitzUI.tertiaryText)
-          .padding(.leading, 50).fixedSize(horizontal: false, vertical: true)
+          .padding(.leading, 46).fixedSize(horizontal: false, vertical: true)
       }
       if !problem.more.isEmpty {
         HStack(spacing: 16) {
@@ -80,9 +80,9 @@ struct OverviewDashboard: View {
               .font(BlitzType.captionEmphasis).foregroundStyle(BlitzUI.supportingText)
               .blitzPointingHand()
           }
-        }.padding(.leading, 50)
+        }.padding(.leading, 46)
       }
-    }.blitzCard(padding: 20)
+    }.blitzCard(padding: 16)
   }
 
   /// Deleting takes a while (an iOS version can take a minute), so the card shows each step and the
@@ -103,7 +103,7 @@ struct OverviewDashboard: View {
           ? "Freed \(ByteText.compact(removal.freed)) so far · \(ByteText.compact(monitor.snapshot.diskAvailable)) free now"
           : "\(ByteText.compact(monitor.snapshot.diskAvailable)) free now · iOS versions take up to a minute each"
       ).font(BlitzType.caption).monospacedDigit().foregroundStyle(BlitzUI.secondaryText)
-    }.padding(.leading, 50)
+    }.padding(.leading, 46)
   }
 
   private static func tone(_ urgency: Int) -> BlitzStatusTone {
@@ -116,15 +116,15 @@ struct OverviewDashboard: View {
 
   private var allGood: some View {
     HStack(spacing: 14) {
-      BlitzIconTile(symbol: "checkmark", tone: .good, size: 36)
+      BlitzIconTile(symbol: "checkmark", tone: .good, size: 32)
       VStack(alignment: .leading, spacing: 4) {
-        Text("Your Mac is fine").font(.system(size: 17, weight: .semibold))
+        Text("Your Mac is fine").font(BlitzType.title)
         Text(
           "Nothing to do. BlitzClean keeps watching and warns you before disk or memory runs out."
         ).font(BlitzType.callout).foregroundStyle(BlitzUI.secondaryText)
       }
       Spacer()
-    }.blitzCard(padding: 20)
+    }.blitzCard(padding: 16)
   }
 
   // MARK: Problems

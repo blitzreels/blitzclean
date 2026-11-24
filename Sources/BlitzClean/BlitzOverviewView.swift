@@ -25,7 +25,7 @@ struct BlitzOverviewView: View {
 
   var body: some View {
     ScrollView {
-      VStack(alignment: .leading, spacing: 24) {
+      VStack(alignment: .leading, spacing: 18) {
         OverviewVitals(monitor: monitor, memory: memory, navigation: navigation)
         ConnectedDrivesView(compact: false, open: navigation.openDrive)
         OverviewDashboard(
