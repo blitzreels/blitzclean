@@ -101,6 +101,7 @@ enum CacheCleaner {
   struct TreeRequest {
     let path: String
     let deadline: Date
+    var olderThan: Date? = nil
   }
 
   static func tree(_ request: TreeRequest) throws -> CacheTree {
@@ -120,6 +121,7 @@ enum CacheCleaner {
       guard type == S_IFREG || type == S_IFDIR else { throw CacheCleanError.outsideRoot }
       bytes += AllocatedSize.of(info)
       newest = max(newest, Date(timeIntervalSince1970: Double(info.st_mtimespec.tv_sec)))
+      if let cutoff = request.olderThan, newest >= cutoff { throw CacheCleanError.recent }
       let identity =
         "\(path)|\(info.st_dev)|\(info.st_ino)|\(info.st_size)|\(info.st_mtimespec.tv_sec)|\(info.st_mtimespec.tv_nsec)|\(info.st_mode)\n"
       hasher.update(data: Data(identity.utf8))
@@ -168,7 +170,7 @@ enum CacheCleaner {
     guard let owners = try? processes() else {
       return .init(candidates: [], notes: [CacheCleanError.unverified.localizedDescription])
     }
-    for rule in request.rules {
+    rules: for rule in request.rules {
       guard FileManager.default.fileExists(atPath: rule.path) else { continue }
       guard Date.now < deadline else {
         notes.append("Scan time limit reached. Some caches were not measured.")
@@ -184,24 +186,26 @@ enum CacheCleaner {
         notes.append("\(rule.title): folder could not be read or is a link.")
         continue
       }
+      let cutoff = request.date.addingTimeInterval(-Double(rule.kind.minimumAgeDays) * 86_400)
       for child in children.sorted() {
+        if Date.now >= deadline {
+          notes.append("Scan time limit reached. Some caches were not measured.")
+          break rules
+        }
         let path = rule.path + "/" + child
         guard rule.accepts(path) else { continue }
         do {
           let contents = try tree(
-            .init(path: path, deadline: min(deadline, .now.addingTimeInterval(8))))
+            .init(
+              path: path, deadline: min(deadline, .now.addingTimeInterval(8)), olderThan: cutoff))
           let candidate = CacheCandidate(path: path, rule: rule, tree: contents)
           try validateLocation(candidate)
-          guard
-            contents.newest
-              < request.date.addingTimeInterval(-Double(rule.kind.minimumAgeDays) * 86_400),
-            contents.bytes > 0
-          else { continue }
-          candidates.append(candidate)
+          if contents.bytes > 0 { candidates.append(candidate) }
+        } catch CacheCleanError.recent {
+          continue
         } catch {
           notes.append("\(rule.title) / \(child): \(error.localizedDescription)")
         }
-        if Date.now >= deadline { break }
       }
     }
     return .init(candidates: candidates.sorted { $0.tree.bytes > $1.tree.bytes }, notes: notes)
@@ -315,8 +319,18 @@ final class QuickCleanModel: ObservableObject {
   }
 
   func clean(history: CleanupOverviewModel) {
-    guard !isCleaning, !isScanning, !selectedItems.isEmpty else { return }
-    let items = selectedItems
+    cleanReviewed(.init(items: selectedItems, history: history))
+  }
+
+  struct Review {
+    let items: [CacheCandidate]
+    let history: CleanupOverviewModel
+  }
+
+  func cleanReviewed(_ review: Review) {
+    guard !isBusy, !review.items.isEmpty else { return }
+    let items = review.items
+    let history = review.history
     isCleaning = true
     completed = 0
     total = items.count
@@ -352,8 +366,13 @@ final class QuickCleanModel: ObservableObject {
       result = .init(
         removedCount: removed.count, skippedCount: failures.count,
         removedBytes: removedBytes, availableGain: gain)
+      let removedSummary =
+        removed.isEmpty
+        ? "No items removed."
+        : "Removed \(removed.count) \(removed.count == 1 ? "item" : "items") · \(ByteText.full(removedBytes))."
       status =
-        "Cleaned \(removed.count) items · \(gain.map(ByteText.full) ?? "unmeasured") more disk space available.\(failures.isEmpty ? "" : " \(failures.count) kept; see details.") Other disk activity affects this measurement."
+        failures.isEmpty
+        ? removedSummary : removedSummary + " Kept \(failures.count). See details below."
       isCleaning = false
       activeTitle = nil
     }

@@ -51,13 +51,13 @@ enum CleanPage: String, CaseIterable, Identifiable {
 }
 
 enum CleanStoragePage: String, CaseIterable {
-  case drive = "Drive"
+  case drive = "Drives"
   case browse = "Browse"
   case cleanup = "Cleanup"
 
   static func restored(_ value: String?) -> Self {
     switch value {
-    case "Mac", "Inventory": .drive
+    case "Drive", "Mac", "Inventory": .drive
     case "Caches", "Dependencies": .cleanup
     case "Files & media", "Files": .browse
     default: value.flatMap(Self.init(rawValue:)) ?? .drive
@@ -81,6 +81,14 @@ final class CleanNavigation: ObservableObject {
   }
   @Published var storagePage: CleanStoragePage {
     didSet { defaults.set(storagePage.rawValue, forKey: "navigation.storagePage") }
+  }
+
+  @Published var driveDestination: DriveDestination?
+
+  func openDrive(_ destination: DriveDestination) {
+    driveDestination = destination
+    storagePage = destination.action == .breakdown ? .drive : .browse
+    page = .storage
   }
 
   init(_ defaults: UserDefaults = .standard) {
@@ -135,7 +143,15 @@ struct BlitzDashboardView: View {
       Rectangle().fill(BlitzUI.separator).frame(width: 1)
       VStack(spacing: 0) {
         if navigation.page != .recovery && navigation.page != .storage {
-          BlitzPageHeader(title: navigation.page.rawValue) {}
+          BlitzPageHeader(title: navigation.page.rawValue) {
+            if navigation.page == .overview {
+              Button("Review storage cleanup", systemImage: "internaldrive") {
+                storage.cleanupFocus = .caches
+                navigation.storagePage = .cleanup
+                navigation.page = .storage
+              }.blitzButton(.secondary)
+            }
+          }
           Rectangle().fill(BlitzUI.separator).frame(height: 1)
         }
         pageContent
@@ -161,11 +177,6 @@ struct BlitzDashboardView: View {
       services.permissions.refresh()
       services.recovery.refreshPermission()
       Task { await memory.configureNotifications(requestPermission: false) }
-    }
-    .onChange(of: memory.scannedAt) {
-      guard navigation.page != .recovery else { return }
-      let apps = memory.apps.filter(\.isRecoveryEligible)
-      Task { await services.recovery.noteProcessStates(apps) }
     }
   }
 

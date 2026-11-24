@@ -67,6 +67,9 @@ enum RemovalGate {
     guard path.hasPrefix("/"), !components.isEmpty,
       !components.contains(where: { $0.isEmpty || $0 == "." || $0 == ".." })
     else { throw Refusal.notNormalized }
+    if DriveKeptFolders.blocksRemoval(path) {
+      throw Refusal.protectedLocation("This location is protected by Keep always in drive cleanup.")
+    }
     if let reason = protection(path) { throw Refusal.protectedLocation(reason) }
     let parent = (path as NSString).deletingLastPathComponent
     guard ReviewFile.canonicalPath(parent) == parent else { throw Refusal.linkedParent }

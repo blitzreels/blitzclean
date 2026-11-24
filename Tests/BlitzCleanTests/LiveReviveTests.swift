@@ -51,6 +51,18 @@ struct LiveReviveTests {
     print("live hang: AX trusted \(AXIsProcessTrusted()), flagged \(model.attentionCount)")
   }
 
+  @Test func windowCheckDetectsAnIdleFrozenApp() async throws {
+    guard let identifier = ProcessInfo.processInfo.environment["BLITZCLEAN_LIVE_WINDOW_HANG"] else {
+      return
+    }
+    let app = try #require(runningApp(identifier))
+    try #require(AXIsProcessTrusted())
+    let model = AppRecoveryModel(defaults: TestDefaults("live-frozen-window").defaults)
+    await model.scan([app])
+    #expect(model.check(for: app)?.health == .unresponsive)
+    #expect(model.attentionCount == 1)
+  }
+
   private func runningApp(_ identifier: String) -> MemoryApp? {
     MemoryAppProvider().descriptors().first { $0.bundleIdentifier == identifier }.map {
       MemoryApp(

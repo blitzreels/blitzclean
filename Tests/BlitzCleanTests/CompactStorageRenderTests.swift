@@ -18,7 +18,9 @@ struct CompactStorageRenderTests {
         VStack(spacing: 12) {
           if page == .cleanup {
             ForEach(
-              ["System Data cleanup", "Dependencies", "Removed before", "Docker"], id: \.self
+              [
+                "Caches and diagnostic reports", "Dependencies", "Folders that grew back", "Docker",
+              ], id: \.self
             ) { title in
               BlitzStorageSection(
                 title: title, symbol: "shippingbox", detail: "Sample data", trailing: "2 GB",

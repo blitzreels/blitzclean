@@ -95,9 +95,6 @@ final class AppRecoveryModel: ObservableObject {
   private var lastCrashScan = Date.distantPast
   private var loadingCrashes = false
   static let refreshInterval: TimeInterval = 2
-  /// A frozen-window result from the accessibility probe outlives one WindowServer "no hang"
-  /// reading, so the two-second process-state loop doesn't flicker it away between window checks.
-  static let hangHoldInterval: TimeInterval = 6
   private var permissionWait: Task<Void, Never>?
   private var dismissedCrashes: Set<String>
 
@@ -119,7 +116,8 @@ final class AppRecoveryModel: ObservableObject {
   }
 
   func refreshPermission() {
-    accessibilityEnabled = AXIsProcessTrusted()
+    let trusted = AXIsProcessTrusted()
+    if trusted != accessibilityEnabled { accessibilityEnabled = trusted }
   }
 
   func openAccessibilitySettings() {
@@ -155,11 +153,30 @@ final class AppRecoveryModel: ObservableObject {
 
   func activity(for app: MemoryApp) -> RecoveryActivity? { activity[app.processID] }
 
+  func monitorRunningApps() async {
+    var nextWindowCheck = ContinuousClock.now
+    while !Task.isCancelled {
+      let context = RefreshCadence.current
+      let apps = RecoveryAppRoster.merge(
+        .init(descriptors: MemoryAppProvider().descriptors(), measured: []))
+      if context.visibility == .foreground || ContinuousClock.now >= nextWindowCheck {
+        nextWindowCheck = .now.advanced(by: .seconds(8))
+        await scan(apps)
+      } else {
+        await noteProcessStates(apps)
+      }
+      do { try await Task.sleep(for: .seconds(RefreshCadence.interval(.recovery, context))) } catch
+      { return }
+    }
+  }
+
   /// Reads process state only, so stopped apps surface without window checks.
   func noteProcessStates(_ apps: [MemoryApp]) async {
     prune(to: apps)
     for app in apps where activity[app.processID] == nil {
+      let checkedAt = check(for: app)?.date
       let state = await engine.processState(app)
+      guard activity[app.processID] == nil, check(for: app)?.date == checkedAt else { continue }
       let previous = check(for: app)
       switch state {
       case let state? where state.needsAttention:
@@ -168,10 +185,7 @@ final class AppRecoveryModel: ObservableObject {
         checks[app.processID] = nil
         results[app.processID] = nil
       default:
-        if previous?.health == .stopped
-          || (previous?.health == .unresponsive && state == .running
-            && Date.now.timeIntervalSince(previous?.date ?? .distantPast) >= Self.hangHoldInterval)
-        {
+        if previous?.health == .stopped {
           checks[app.processID] = nil
           results[app.processID] = nil
         }
@@ -226,7 +240,12 @@ final class AppRecoveryModel: ObservableObject {
     let engine = self.engine
     var windowChecks: [MemoryApp] = []
     for app in pending {
-      switch await engine.processState(app) {
+      let state = await engine.processState(app)
+      guard activity[app.processID] == .checking else {
+        finishCheck(app)
+        continue
+      }
+      switch state {
       case let state? where state.needsAttention:
         store(app, state)
         finishCheck(app)
@@ -288,17 +307,6 @@ final class AppRecoveryModel: ObservableObject {
     }
   }
 
-  func showApp(_ app: MemoryApp) {
-    guard let running = NSRunningApplication(processIdentifier: app.processID),
-      !running.isTerminated, running.bundleURL == app.bundleURL,
-      let launch = running.launchDate, launch == app.launchDate
-    else {
-      status = "\(app.name) has quit or restarted."
-      return
-    }
-    running.activate(options: [])
-  }
-
   func reopen(_ crash: RecentCrash) {
     dismiss(crash)
     NSWorkspace.shared.openApplication(
@@ -343,14 +351,16 @@ final class AppRecoveryModel: ObservableObject {
 
   private func prune(to apps: [MemoryApp]) {
     let live = Dictionary(apps.map { ($0.processID, $0) }, uniquingKeysWith: { first, _ in first })
-    checks = checks.filter {
+    let liveChecks = checks.filter {
       live[$0.key]?.launchDate == $0.value.app.launchDate
         && live[$0.key]?.bundleURL == $0.value.app.bundleURL
     }
-    results = results.filter {
+    if liveChecks.count != checks.count { checks = liveChecks }
+    let liveResults = results.filter {
       live[$0.key]?.launchDate == $0.value.app.launchDate
         && live[$0.key]?.bundleURL == $0.value.app.bundleURL
     }
+    if liveResults.count != results.count { results = liveResults }
   }
 
   private func loadCrashes(running apps: [MemoryApp]) async {

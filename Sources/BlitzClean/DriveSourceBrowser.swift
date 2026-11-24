@@ -5,7 +5,8 @@ struct DriveSourceBrowser: View {
   @ObservedObject var model: CleanupOverviewModel
   let blocked: Bool
   let onBrowseFolders: () -> Void
-  @State private var drives: [StorageDrive] = []
+  @ObservedObject private var inventory = ConnectedDrivesModel.shared
+  private var drives: [StorageDrive] { inventory.drives }
 
   private var roots: Set<String> { Set(model.reviewRoots) }
   private var allDrives: Bool { roots == Set(drives.flatMap(\.scanRoots)) }
@@ -23,12 +24,13 @@ struct DriveSourceBrowser: View {
           HStack(spacing: 2) {
             BlitzChip(
               title: "All drives", symbol: "square.stack.3d.up", isSelected: allDrives,
-              action: { open(drives.flatMap(\.scanRoots)) })
+              action: { model.selectReviewRoots(drives.flatMap(\.scanRoots)) })
             ForEach(drives) { drive in
               BlitzChip(
                 title: drive.name,
                 symbol: drive.internalDisk ? "internaldrive" : "externaldrive",
-                isSelected: roots == Set(drive.scanRoots), action: { open(drive.scanRoots) })
+                isSelected: roots == Set(drive.scanRoots),
+                action: { model.selectReviewRoots(drive.scanRoots) })
             }
             BlitzChip(
               title: customFolder.map { PathName.last($0) }
@@ -48,21 +50,12 @@ struct DriveSourceBrowser: View {
           .lineLimit(1).truncationMode(.middle).textSelection(.enabled)
       }
     }
-    .task { drives = StorageDrives.mounted() }
-  }
-
-  private func open(_ roots: [String]) {
-    guard !roots.isEmpty, Set(roots) != Set(model.reviewRoots) else { return }
-    model.cancelScan()
-    model.configureReview(
-      .init(
-        roots: roots, minimumBytes: model.reviewMinimumBytes,
-        maxEntries: 80_000, entireHierarchy: true))
+    .task { inventory.refresh() }
   }
 
   private func chooseFolder() {
     guard let path = Finder.chooseFolder() else { return }
-    open([path])
+    model.selectReviewRoots([path])
   }
 
 }

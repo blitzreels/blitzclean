@@ -253,10 +253,16 @@ struct AppRecoveryEngine: Sendable {
     do {
       try Task.checkCancellation()
       let target = try await driver.resolve(app)
-      let first = try await driver.observe(target)
+      let first =
+        target.process.stopped
+        ? RecoveryObservation(process: target.process, response: .noReply)
+        : try await driver.observe(target)
       before.append(first)
       if !first.process.stopped, first.response == .responding {
         return report(.alreadyRunning, "The window responded. No restart was needed.")
+      }
+      if !first.process.stopped, first.response == .noHangReported {
+        return report(.alreadyRunning, "The process is running and macOS reports no hang.")
       }
       try Task.checkCancellation()
       try await driver.resume(target)
@@ -264,7 +270,7 @@ struct AppRecoveryEngine: Sendable {
       let deadline = ContinuousClock.now.advanced(by: .seconds(3))
       for attempt in 0..<8 {
         guard ContinuousClock.now < deadline else { break }
-        try await driver.pause(.milliseconds(attempt == 0 ? 150 : 500))
+        if attempt > 0 { try await driver.pause(.milliseconds(250)) }
         let observation = try await driver.observe(target)
         after.append(observation)
         guard !observation.process.stopped else { continue }
