@@ -58,7 +58,8 @@ explaining why to [DESIGN-HISTORY.md](DESIGN-HISTORY.md). Never leave two rules 
   caption (free disk, free RAM and its top app…) and a status dot at warning or critical. Memory, CPU and
   Storage add a 3-point meter of how full they are.
 - **Overview**: a row of three vitals (Memory, CPU, Disk: ring gauge with the percentage, one caption, a
-  15-minute sparkline or a meter), each opening its page; below it only problems, one card each, worst first (`OverviewProblems.order`). A card states the problem,
+  15-minute sparkline or a meter), each opening its page. Connected drives follows with the same capacity readings
+  and per-drive actions as Storage. Below it, problems appear one card each, worst first (`OverviewProblems.order`). A card states the problem,
   one sentence on why it matters and what the button does, one large button with the amount ("Free up to
   10 GB", "Close idle · 9 GB", "See agents", "Pause", "Revive"), a quiet line naming what it touches and a few
   quiet links for things that need a look first. Free deletes old iOS simulators the simulator service lists,
@@ -78,11 +79,21 @@ explaining why to [DESIGN-HISTORY.md](DESIGN-HISTORY.md). Never leave two rules 
   Memory ends with Background load: login services that hold memory or keep failing (Turn Off, confirmed;
   the plist moves to `LaunchAgents/Disabled by BlitzClean`), virtual machines, tool servers every agent
   session starts again, memory cleaner apps (Quit) and apps macOS flagged for 30 GB+ of disk writes.
-- **Storage**: Drive (whole disk by logical groups, each unit with one action matching its consequence),
-  Browse (folders and largest files, Move to Trash or Delete permanently) and Cleanup. Data an owning app
+- Overview’s header opens Storage → Cleanup directly. Cleanup leads with a review of eligible caches by size.
+  Choose items opens individual selection, including diagnostic reports. The confirmation lists each reviewed item.
+- **Storage**: Drives lists connected volumes with free and total space, Browse folders and Largest files.
+  Each drive has a capacity ring with its percent used in the center and labeled used and free amounts.
+  Periwinkle marks used space and mint marks free space in Overview, Storage and the compact tray charts.
+  Select a ring to see measured categories, then select a bar for the largest files and media thumbnails.
+  What grew compares top-level folders between completed scans of that volume. Review cleanup compares file
+  contents, identifies build folders and lets people protect a folder with Keep always.
+  Additional mounted volumes expand on demand. The startup disk breakdown follows the list.
+  Browse offers folder and file review with Move to Trash or Delete permanently. Cleanup lists reclaimable items.
+  Data an owning app
   manages is shown with where to remove it. iOS downloads macOS protects are named, not offered.
 - **Revive apps**: regular apps plus any app that is paused or not responding; never a BlitzClean copy. Hangs
   come from the WindowServer flag (`WindowServerHangProbe`), with the Accessibility probe as a second signal.
+  Monitoring continues with the dashboard closed. Revive keeps the current window in front.
   Each row has Revive; Force Quit appears only on rows with a problem.
 - **Projects**: an agent card (sessions per tool, memory held, room for more; no room while memory is at warning
   or worse), then Repositories (one card per Git repository, one row per active worktree with branch, changes,
@@ -92,6 +103,7 @@ explaining why to [DESIGN-HISTORY.md](DESIGN-HISTORY.md). Never leave two rules 
   responding"), three ring gauges (Memory, CPU, Storage) that open their pages, one card holding the problem
   and the one fix it can run (absent when nothing is wrong), the three largest memory users with meters, and a
   footer of Emergency controls, Revive apps only while an app needs it, and Open BlitzClean.
+  Connected drives below the gauges expands on demand and remembers the choice. Its actions match Storage.
 - **Menu bar**: the full-color app icon, as BlitzRecorder shows it, then the chosen readings. A dot on the
   icon is amber or red while memory is at risk and mint while an update is ready. The dev build shows only its
   icon and DEV while the released app runs.

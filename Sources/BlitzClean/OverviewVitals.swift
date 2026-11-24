@@ -66,7 +66,8 @@ struct OverviewVitals: View {
       }
       VStack(alignment: .leading, spacing: 6) {
         VStack(alignment: .leading, spacing: 1) {
-          Text(vital.page == .storage ? "Disk" : vital.page.rawValue).font(BlitzType.rowTitle)
+          Text(vital.page == .storage ? "Startup disk" : vital.page.rawValue).font(
+            BlitzType.rowTitle)
           Text(vital.caption).font(BlitzType.caption).foregroundStyle(BlitzUI.secondaryText)
             .monospacedDigit().lineLimit(1).contentTransition(.numericText())
         }

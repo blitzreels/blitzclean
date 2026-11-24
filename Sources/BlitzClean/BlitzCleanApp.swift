@@ -8,7 +8,6 @@ struct BlitzCleanApp: App {
   @StateObject private var storageBreakdown = StorageBreakdownModel()
   @StateObject private var dockerStorage = DockerStorageModel()
   @StateObject private var memoryRescue = MemoryRescueModel()
-  @StateObject private var appRecovery = AppRecoveryModel()
   @StateObject private var permissions = PermissionsModel()
   @StateObject private var devProcesses = DevProcessModel()
   @StateObject private var folderExplorer = FolderExplorerModel()
@@ -21,7 +20,7 @@ struct BlitzCleanApp: App {
   var body: some Scene {
     MenuBarExtra {
       BlitzTrayView(
-        monitor: monitor, memory: memoryRescue, recovery: appRecovery,
+        monitor: monitor, memory: memoryRescue, recovery: appDelegate.recovery,
         navigation: cleanNavigation, updates: appDelegate.updates, processes: devProcesses)
     } label: {
       MenuBarHealthLabel(
@@ -46,7 +45,7 @@ struct BlitzCleanApp: App {
           storage: storageBreakdown, navigation: cleanNavigation,
           developerBrowser: developerBrowser, processes: devProcesses, workspaces: workspaces,
           services: .init(
-            recovery: appRecovery, permissions: permissions, docker: dockerStorage,
+            recovery: appDelegate.recovery, permissions: permissions, docker: dockerStorage,
             folders: folderExplorer,
             launchAtLogin: launchAtLogin, updates: appDelegate.updates,
             restarts: appDelegate.restarts)
@@ -86,6 +85,7 @@ struct BlitzCleanApp: App {
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
+  let recovery = AppRecoveryModel()
   let updates = AppUpdateController()
   /// Created at launch: macOS deletes panic reports within about half an hour of a restart.
   let restarts = RestartReportModel()
@@ -121,6 +121,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     NSApp.appearance = NSAppearance(named: .darkAqua)
+    Task { await recovery.monitorRunningApps() }
     updates.start()
     EmergencyControlsLauncher.start()
   }

@@ -25,6 +25,10 @@ struct BlitzTrayView: View {
       header
       VStack(alignment: .leading, spacing: 14) {
         gauges
+        ConnectedDrivesView(compact: true) { destination in
+          navigation.openDrive(destination)
+          openWindow.dashboard()
+        }
         attention
         topConsumers
       }.padding(.horizontal, 12).padding(.bottom, 14)

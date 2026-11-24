@@ -1,37 +1,61 @@
 import Darwin
 import Foundation
 
-struct StorageDrive: Identifiable, Sendable {
+struct StorageDrive: Identifiable, Equatable, Sendable {
   let path: String
   let name: String
   let internalDisk: Bool
+  let browsable: Bool
   let available: UInt64
   let total: UInt64
+  var volumeID: String? = nil
   var id: String { path }
+  var usedBytes: UInt64? {
+    guard total > 0, available <= total else { return nil }
+    return total - available
+  }
+
   var scanRoots: [String] {
     path == "/" ? ["/", "/System/Volumes/Data"] : [path]
   }
 }
 
 enum StorageDrives {
-  static func mounted() -> [StorageDrive] {
+  static func mounted(includeAdditional: Bool = false) -> [StorageDrive] {
     let keys: Set<URLResourceKey> = [
       .volumeNameKey, .volumeIsInternalKey, .volumeIsLocalKey, .volumeIsBrowsableKey,
-      .volumeAvailableCapacityKey, .volumeTotalCapacityKey,
+      .volumeAvailableCapacityKey, .volumeTotalCapacityKey, .volumeUUIDStringKey,
     ]
     return
       (FileManager.default.mountedVolumeURLs(
-        includingResourceValuesForKeys: Array(keys), options: [.skipHiddenVolumes]) ?? [])
+        includingResourceValuesForKeys: Array(keys),
+        options: includeAdditional ? [] : [.skipHiddenVolumes]) ?? [])
       .compactMap { url in
         guard let values = try? url.resourceValues(forKeys: keys),
-          values.volumeIsLocal == true, values.volumeIsBrowsable != false
+          (values.volumeIsBrowsable != false && (includeAdditional || values.volumeIsLocal == true))
+            || (includeAdditional && url.path.hasPrefix("/Volumes/")
+              && values.volumeIsInternal != true && values.volumeIsLocal == true)
         else { return nil }
         return StorageDrive(
           path: url.path, name: values.volumeName ?? url.lastPathComponent,
           internalDisk: values.volumeIsInternal == true,
+          browsable: values.volumeIsBrowsable != false,
           available: UInt64(max(0, values.volumeAvailableCapacity ?? 0)),
-          total: UInt64(max(0, values.volumeTotalCapacity ?? 0)))
-      }.sorted { $0.path < $1.path }
+          total: values.volumeAvailableCapacity == nil
+            ? 0 : UInt64(max(0, values.volumeTotalCapacity ?? 0)), volumeID: values.volumeUUIDString
+        )
+      }.sorted {
+        if ($0.path == "/") != ($1.path == "/") { return $0.path == "/" }
+        if $0.browsable != $1.browsable { return $0.browsable }
+        return $0.path.localizedStandardCompare($1.path) == .orderedAscending
+      }
+  }
+
+  static func containing(_ input: (path: String, drives: [StorageDrive])) -> StorageDrive? {
+    input.drives.filter {
+      if $0.path == "/" { return input.path.hasPrefix("/") && !input.path.hasPrefix("/Volumes/") }
+      return input.path == $0.path || input.path.hasPrefix($0.path + "/")
+    }.max { $0.path.count < $1.path.count }
   }
 
   static var roots: [String] { mounted().flatMap(\.scanRoots) }
@@ -45,6 +69,7 @@ struct DriveScanProgress: Sendable {
   let unreadablePaths: [String]
   let currentPath: String
   let complete: Bool
+  var contents: DriveContents? = nil
   let elapsed: TimeInterval
 }
 
@@ -58,6 +83,7 @@ struct LargestFileHeap {
   private func identity(_ file: ReviewFile) -> String { "\(file.device):\(file.inode)" }
 
   mutating func insert(_ file: ReviewFile) {
+    guard capacity > 0, files.count < capacity || file.bytes > files[0].bytes else { return }
     let key = identity(file)
     guard capacity > 0, !identities.contains(key) else { return }
     if files.count < capacity {
@@ -95,6 +121,7 @@ enum DriveFileScanner {
     let roots: [String]
     let minimumBytes: UInt64
     let resultLimit: Int
+    var categorize = false
     let progress: @Sendable (DriveScanProgress) -> Void
   }
 
@@ -102,6 +129,8 @@ enum DriveFileScanner {
     let start = Date.now
     var lastPublish = Date.distantPast
     var heap = LargestFileHeap(capacity: request.resultLimit)
+    var composition = DriveContents()
+    var largest: [DriveFileCategory: LargestFileHeap] = [:]
     var folderBytes: [String: UInt64] = [:]
     var visited = 0
     var unreadable = 0
@@ -120,6 +149,7 @@ enum DriveFileScanner {
     for root in requestedRoots {
       guard let path = ReviewFile.canonicalPath(root) else {
         unreadable += 1
+        composition.incompleteFolders.insert("/")
         if errors.count < 20 { errors.append(root) }
         continue
       }
@@ -128,13 +158,16 @@ enum DriveFileScanner {
         walkers.append(walker)
       } else {
         unreadable += 1
+        composition.incompleteFolders.insert("/")
         if errors.count < 20 { errors.append(path) }
       }
     }
     func snapshot(_ complete: Bool) -> DriveScanProgress {
-      DriveScanProgress(
+      if request.categorize { composition.largest = largest.mapValues(\.sorted) }
+      return DriveScanProgress(
         files: heap.sorted, folderBytes: folderBytes, visited: visited, unreadable: unreadable,
         unreadablePaths: errors, currentPath: currentPath, complete: complete,
+        contents: request.categorize ? composition : nil,
         elapsed: Date.now.timeIntervalSince(start))
     }
     while !walkers.isEmpty && !Task.isCancelled {
@@ -153,6 +186,9 @@ enum DriveFileScanner {
           }
           if entry.kind == .unreadable || entry.kind == .unreadableDirectory {
             unreadable += 1
+            if request.categorize {
+              composition.markUnreadable((path: currentPath, root: walker.root))
+            }
             if errors.count < 20 { errors.append(currentPath) }
           }
           guard entry.kind == .file, let metadata = entry.metadata else { continue }
@@ -173,8 +209,21 @@ enum DriveFileScanner {
             modifiedAt: Date(timeIntervalSince1970: Double(metadata.st_mtimespec.tv_sec)),
             device: metadata.st_dev, inode: metadata.st_ino, logicalBytes: metadata.st_size,
             modifiedNanoseconds: Int64(metadata.st_mtimespec.tv_nsec))
+          if request.categorize, counted > 0 {
+            let category = DriveFileCategory.classify(relative)
+            composition.bytes[category, default: 0] += counted
+            if category == .builds, let folder = DriveFileCategory.buildFolder(file.path) {
+              composition.buildFolders[folder, default: 0] += counted
+            }
+            largest[category, default: LargestFileHeap(capacity: DriveContents.fileLimit)].insert(
+              file)
+          }
           heap.insert(file)
         }
+      }
+      for walker in walkers where walker.finished && !walker.completed {
+        unreadable += 1
+        composition.incompleteFolders.insert("/")
       }
       walkers.removeAll(where: \.finished)
       if Date.now.timeIntervalSince(lastPublish) >= 0.75 {

@@ -49,6 +49,7 @@ final class StorageBreakdownModel: ObservableObject {
   }
 
   func scanCleanupIfNeeded() {
+    guard !isScanning, !isCleaning else { return }
     if incompleteMeasurements == 0, let scannedAt,
       Date.now.timeIntervalSince(scannedAt) < Self.automaticScanInterval
     {

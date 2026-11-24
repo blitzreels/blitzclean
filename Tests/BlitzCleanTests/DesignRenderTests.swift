@@ -80,7 +80,7 @@ struct DesignRenderTests {
     try await write(
       DriveBreakdownView(
         model: storage.drive, worktrees: DeveloperBrowserModel(), history: storage.overview,
-        onBrowse: { _ in }, onCleanup: { _ in }
+        startupName: "Macintosh HD", onDrive: { _ in }, onBrowse: { _ in }, onCleanup: { _ in }
       )
       .background(BlitzUI.canvasBackground).environment(\.colorScheme, .dark),
       to: directory.appendingPathComponent("Storage drive.png"),

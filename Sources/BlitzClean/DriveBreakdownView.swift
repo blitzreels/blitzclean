@@ -5,6 +5,8 @@ struct DriveBreakdownView: View {
   @ObservedObject var model: DriveBreakdownModel
   let worktrees: DeveloperBrowserModel
   let history: CleanupOverviewModel
+  let startupName: String
+  let onDrive: (DriveDestination) -> Void
   let onBrowse: (String) -> Void
   let onCleanup: (StorageCleanupRoute) -> Void
   @State private var pending: [DriveUnit] = []
@@ -42,6 +44,7 @@ struct DriveBreakdownView: View {
     ScrollViewReader { proxy in
       ScrollView {
         LazyVStack(alignment: .leading, spacing: 12) {
+          ConnectedDrivesView(compact: false, open: onDrive)
           summary(bands)
           DriveWorktreesSection(
             model: worktrees, history: history, onConfirm: { pendingAction = $0 })
@@ -93,7 +96,7 @@ struct DriveBreakdownView: View {
     return VStack(alignment: .leading, spacing: 14) {
       HStack(alignment: .center, spacing: 10) {
         BlitzIconTile(symbol: "internaldrive.fill", tone: .muted, size: 36)
-        Text("Macintosh HD").font(BlitzType.title)
+        Text(startupName).font(BlitzType.title).lineLimit(1).truncationMode(.middle)
         if let capacity {
           Text("\(ByteText.full(capacity.available)) free of \(ByteText.compact(capacity.total))")
             .font(BlitzType.callout).foregroundStyle(BlitzUI.supportingText).monospacedDigit()

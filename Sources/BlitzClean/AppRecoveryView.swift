@@ -7,7 +7,6 @@ struct AppRecoveryView: View {
   @State private var search = ""
   @State private var liveApps: [MemoryApp] = []
   @State private var regularIDs: Set<Int32> = []
-  @State private var scanTask: Task<Void, Never>?
   @State private var forceQuitCandidate: MemoryApp?
   @StateObject private var forceQuit = ForceQuitModel()
 
@@ -45,6 +44,11 @@ struct AppRecoveryView: View {
     let listing = listing
     return VStack(spacing: 0) {
       BlitzPageHeader(title: "Revive apps", detail: summary) {
+        if !model.accessibilityEnabled {
+          Button("Allow window checks…") { model.openAccessibilitySettings() }
+            .blitzButton(.quiet)
+            .help("Allow Accessibility to detect frozen windows before macOS flags the app.")
+        }
         Button {
           scan(force: true)
         } label: {
@@ -106,38 +110,25 @@ struct AppRecoveryView: View {
     }
     .task {
       memory.refresh()
-      while !Task.isCancelled {
-        refreshLiveApps()
-        await model.noteProcessStates(eligibleApps)
-        scheduleScan(force: false)
-        do { try await Task.sleep(for: .seconds(RefreshCadence.interval(.recovery))) } catch {
-          break
-        }
-      }
+      scan(force: false)
     }
-    .onDisappear {
-      scanTask?.cancel()
-      scanTask = nil
-    }
+    .onChange(of: model.isScanning) { if model.isScanning { refreshLiveApps() } }
     .onChange(of: memory.scannedAt) { refreshLiveApps() }
     .onReceive(
       NSWorkspace.shared.notificationCenter.publisher(
         for: NSWorkspace.didLaunchApplicationNotification)
     ) { _ in
-      refreshLiveApps()
-      scheduleScan(force: false)
+      scan(force: false)
     }
     .onReceive(
       NSWorkspace.shared.notificationCenter.publisher(
         for: NSWorkspace.didTerminateApplicationNotification)
     ) { _ in
-      refreshLiveApps()
-      scheduleScan(force: false)
+      scan(force: false)
     }
     .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification))
     { _ in
-      refreshLiveApps()
-      scheduleScan(force: true)
+      scan(force: true)
     }
   }
 
@@ -230,25 +221,16 @@ struct AppRecoveryView: View {
     model.refreshPermission()
   }
 
-  private func scheduleScan(force: Bool) {
-    let apps = eligibleApps
-    if scanTask == nil || !model.isScanning {
-      scanTask = Task { await model.scan(apps, force: force) }
-    } else if force {
-      Task { await model.scan(apps, force: true) }
-    }
-  }
-
   private func scan(force: Bool) {
     refreshLiveApps()
-    scheduleScan(force: force)
+    let apps = eligibleApps
+    Task { await model.scan(apps, force: force) }
   }
 
   private func revive(_ app: MemoryApp) {
     Task {
       if let report = await model.revive(app) {
         memory.recordRecovery(report)
-        if report.outcome == .revived || report.outcome == .alreadyRunning { model.showApp(app) }
       }
     }
   }
@@ -264,8 +246,7 @@ struct AppRecoveryView: View {
     Task {
       if let message = await forceQuit.runAndDescribe(app) { model.status = message }
       memory.refresh()
-      refreshLiveApps()
-      scheduleScan(force: true)
+      scan(force: true)
     }
   }
 }

@@ -63,7 +63,7 @@ struct ConfirmationContent: Equatable {
   static func parse(_ message: String) -> Self {
     let blocks = message.components(separatedBy: "\n\n")
     let lines = blocks[0].split(separator: "\n").map(String.init)
-    guard lines.count > 1
+    guard lines.count > 1 || (blocks.count > 1 && lines.first?.contains(" · ") == true)
     else { return .init(items: [], note: message) }
     let items = lines.map { line -> Item in
       guard let range = line.range(of: " · ", options: .backwards) else {

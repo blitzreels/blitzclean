@@ -91,6 +91,7 @@ struct FolderExplorerView: View {
     }
     .task { model.loadIfNeeded() }
     .onChange(of: model.path) {
+      pendingTrash = []
       visibleCount = 200
       inspectedFile = nil
     }
